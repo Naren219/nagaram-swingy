@@ -18,7 +18,7 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden;background:#05070a;color:var(--chalk);
     font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Noto Sans Tamil",sans-serif;
-    -webkit-user-select:none;user-select:none;touch-action:none}
+    -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
   canvas{display:block}
   #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
 
@@ -141,22 +141,40 @@
   #touch{position:fixed;inset:0;z-index:6;pointer-events:none;display:none}
   body.touch #touch{display:block}
   body.touch #help{display:none}
-  .tstick{position:absolute;left:24px;bottom:96px;width:120px;height:120px;border:1px solid var(--hair);
-    border-radius:50%;background:rgba(10,12,13,.35);pointer-events:auto;touch-action:none}
-  .tstick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+  /* The stick visual is display-only: the whole left region of the screen is
+     the stick zone, and the base floats to wherever the thumb lands. */
+  #tStick{position:absolute;left:max(26px,env(safe-area-inset-left));bottom:106px;width:120px;height:120px;
+    border:1px solid var(--hair);border-radius:50%;background:rgba(10,12,13,.30);
+    opacity:.55;transition:opacity .18s;pointer-events:none}
+  #tStick.live{opacity:1;transition:none}
+  #tStick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
     border-radius:50%;background:rgba(232,169,43,.45);border:1px solid var(--turmeric)}
   .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
     display:flex;align-items:center;justify-content:center;background:rgba(10,12,13,.42);
     color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
     -webkit-user-select:none;user-select:none;touch-action:none}
   .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
-  #tWeb{right:22px;bottom:88px;width:88px;height:88px;color:var(--turmeric)}
-  #tJump{right:124px;bottom:74px;width:62px;height:62px}
-  #tZip{right:40px;bottom:192px;width:56px;height:56px}
-  #tTuck{right:126px;bottom:154px;width:56px;height:56px}
+  #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--turmeric)}
+  #tJump{right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:66px;width:64px;height:64px}
+  #tZip{right:calc(max(22px,env(safe-area-inset-right)) + 52px);bottom:198px;width:56px;height:56px}
+  #tTuck{right:calc(max(22px,env(safe-area-inset-right)) + 134px);bottom:148px;width:56px;height:56px}
+  #tBoard{left:50%;transform:translateX(-50%);bottom:96px;height:44px;width:auto;
+    padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
+  #tBoard.show{display:flex}
+
+  /* ---- landscape only on touch ---- */
+  #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:18px;background:#05070a}
+  #rotate .ph{width:64px;height:38px;border:2px solid var(--turmeric);border-radius:7px;
+    animation:phTurn 1.8s ease-in-out infinite}
+  @keyframes phTurn{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
+  #rotate p{font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.7}
+  @media (orientation: portrait){body.touch #rotate{display:flex}}
 
   @media (max-width:760px){#help,#mapwrap{display:none}.cell{min-width:88px;padding:10px 13px}
     .v{font-size:20px}#band{height:62px}#tbar{bottom:62px}}
+  /* phone landscape: the minimap would sit on the button cluster */
+  @media (max-height:500px){body.touch #mapwrap{display:none}}
 </style>
 </head>
 <body>
@@ -199,12 +217,14 @@
   </div>
 </div>
 <div id="touch">
-  <div class="tstick" id="tStick"><div class="nub"></div></div>
+  <div id="tStick"><div class="nub"></div></div>
   <div class="tbtn" id="tWeb">web</div>
   <div class="tbtn" id="tJump">jump</div>
   <div class="tbtn" id="tZip">zip</div>
   <div class="tbtn" id="tTuck">dive</div>
+  <div class="tbtn" id="tBoard">board aircraft</div>
 </div>
+<div id="rotate"><div class="ph"></div><p>rotate to landscape</p></div>
 <div id="pbtn"><i></i><i></i></div>
 <div id="pause">
   <h3>PAUSED</h3>
@@ -244,9 +264,13 @@ const rint = (a, b) => Math.floor(a + R() * (b - a + 1));
 const pick = (arr) => arr[Math.floor(R() * arr.length)];
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
+/* a coarse pointer at boot means a phone or tablet: spend fewer pixels and a
+   smaller shadow map so the input loop never fights the GPU for frame time */
+const COARSE = matchMedia('(pointer: coarse)').matches;
+
 /* ---------------------------------------------------------- renderer */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.setPixelRatio(Math.min(devicePixelRatio, COARSE ? 1.25 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -324,7 +348,7 @@ let envDirty = true;
 /* ---------------------------------------------------------- lighting */
 const sun = new THREE.DirectionalLight(0xffe9c4, 2.4);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(COARSE ? 1024 : 2048, COARSE ? 1024 : 2048);
 sun.shadow.camera.near = 1; sun.shadow.camera.far = 900;
 sun.shadow.camera.left = -135; sun.shadow.camera.right = 135;
 sun.shadow.camera.top = 135; sun.shadow.camera.bottom = -135;
@@ -1584,7 +1608,7 @@ function stepPhysics(h, inp) {
       player.rideLo.y = DECK_Y;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
-      toast('riding · space to drop · A/D to walk');
+      toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk');
     }
   }
   if (player.riding) {
@@ -2169,11 +2193,30 @@ addEventListener('contextmenu', e => e.preventDefault());
 gate.addEventListener('click', () => {
   started = true;
   initAudio();
+  if (touchOn) {
+    /* go fullscreen and hold landscape where the platform allows it; where it
+       doesn't (iPhone Safari), the rotate overlay carries the message */
+    try {
+      const de = document.documentElement;
+      const lock = () => {
+        try {
+          const l = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape');
+          if (l && l.catch) l.catch(() => {});
+        } catch (e2) {}
+      };
+      const fs = de.requestFullscreen ? de.requestFullscreen({ navigationUI: 'hide' }) : null;
+      if (fs && fs.then) fs.then(lock, lock); else lock();
+    } catch (err) {}
+    gate.classList.add('gone');
+    toast('left: move · drag: look · hold web to swing');
+    toastT = 4.5;
+    return;                              // no pointer lock on touch
+  }
   try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) { /* no lock */ }
   /* some embeds disallow pointer lock — fall back to plain mouse-delta look */
   setTimeout(() => {
     if (document.pointerLockElement !== renderer.domElement) {
-      if (!touchOn) setFreeLook(true);   // touch has its own look; no steering ring
+      setFreeLook(true);
       gate.classList.add('gone');
     }
   }, 450);
@@ -2255,10 +2298,17 @@ function setPhoto(on) {
 }
 
 /* ---------------------------------------------------------------
-   TOUCH — a left stick for movement, hold-buttons for web / jump /
-   zip / dive, and drag-anywhere-else to look. The buttons drive the
-   same key states and edge flags as the keyboard, so every input
-   path downstream stays single.
+   TOUCH — the whole left region of the screen is a floating
+   movement stick (the base appears wherever the thumb lands),
+   hold-buttons on the right drive the same key states and edge
+   flags as the keyboard, and any other drag looks. The web button
+   doubles as an aim surface: keep it held to stay attached and drag
+   the same thumb to steer the swing — without that, holding a line
+   would cost you the camera, which is most of the game.
+
+   Every active pointer is tracked window-level by id rather than by
+   per-element listeners: a finger sliding off a button still
+   releases it, so no control can ever wedge on.
    --------------------------------------------------------------- */
 let touchOn = false;
 function enableTouch() {
@@ -2266,68 +2316,79 @@ function enableTouch() {
   document.body.classList.add('touch');
   if (freeLook) { freeLook = false; lookEl.classList.remove('on'); document.body.classList.remove('freelook'); }
 }
-if (matchMedia('(pointer: coarse)').matches) enableTouch();
-const tstick = { id: -1, x: 0, y: 0 };        // unit deflection, +y = down-screen
-{
-  const stickEl = document.getElementById('tStick'), nubEl = stickEl.querySelector('.nub');
-  const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch (err) {} };
-  function bindHold(id, down, up) {
-    const el = document.getElementById(id);
-    el.addEventListener('pointerdown', e => {
-      e.preventDefault(); e.stopPropagation();
-      capture(el, e); el.classList.add('on'); down();
-    });
-    const end = () => { el.classList.remove('on'); up(); };
-    el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', end);
-  }
-  bindHold('tWeb',
-    () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
-    () => { held[0] = false; releaseWeb(0); });
-  bindHold('tJump',
-    () => { jumpEdge = true; keys['Space'] = true; },
-    () => { keys['Space'] = false; });
-  bindHold('tZip', () => { keys['KeyQ'] = true; }, () => { keys['KeyQ'] = false; });
-  bindHold('tTuck', () => { keys['ShiftLeft'] = true; }, () => { keys['ShiftLeft'] = false; });
-  stickEl.addEventListener('pointerdown', e => {
+if (COARSE) enableTouch();
+const tstick = { id: -1, x: 0, y: 0, cx: 0, cy: 0 };   // unit deflection, +y = down-screen
+const STICK_R = 52;                                     // px of travel for full deflection
+const tPtr = new Map();                                 // pointerId -> {role, ...}
+const stickEl = document.getElementById('tStick');
+const nubEl = stickEl.querySelector('.nub');
+const boardEl = document.getElementById('tBoard');
+const hasLook = () => { for (const a of tPtr.values()) if (a.role === 'look') return true; return false; };
+function bindHold(id, down, up, aims) {
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', e => {
     e.preventDefault(); e.stopPropagation();
-    tstick.id = e.pointerId; capture(stickEl, e);
+    tPtr.set(e.pointerId, { role: 'btn', el, up, aims, px: e.clientX, py: e.clientY });
+    el.classList.add('on'); down();
   });
-  stickEl.addEventListener('pointermove', e => {
-    if (e.pointerId !== tstick.id) return;
-    const r = stickEl.getBoundingClientRect();
-    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
-    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
-    const l = Math.hypot(dx, dy), s = l > 1 ? 1 / l : 1;
-    tstick.x = dx * s; tstick.y = dy * s;
-    nubEl.style.transform = 'translate(' + tstick.x * 36 + 'px,' + tstick.y * 36 + 'px)';
-  });
-  const stickEnd = e => {
-    if (e.pointerId !== tstick.id) return;
-    tstick.id = -1; tstick.x = tstick.y = 0; nubEl.style.transform = '';
-  };
-  stickEl.addEventListener('pointerup', stickEnd);
-  stickEl.addEventListener('pointercancel', stickEnd);
 }
-/* any other touch drags the view */
-let lookId = -1, lookPX = 0, lookPY = 0;
+bindHold('tWeb',
+  () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
+  () => { held[0] = false; releaseWeb(0); },
+  true);                                                // held web thumb also aims
+bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; });
+bindHold('tZip', () => { keys['KeyQ'] = true; }, () => { keys['KeyQ'] = false; });
+bindHold('tTuck', () => { keys['ShiftLeft'] = true; }, () => { keys['ShiftLeft'] = false; });
+bindHold('tBoard', () => { mountEdge = true; }, () => {});
 addEventListener('pointerdown', e => {
   if (e.pointerType !== 'touch') return;
   enableTouch();
-  if (!started || paused || lookId !== -1) return;
-  if (e.target.closest && e.target.closest('.tbtn,.tstick,#pbtn,#pause,#gate')) return;
-  lookId = e.pointerId; lookPX = e.clientX; lookPY = e.clientY;
+  if (!started || paused) return;
+  if (e.target.closest && e.target.closest('.tbtn,#pbtn,#pause,#gate')) return;
+  if (e.clientX < innerWidth * 0.42 && tstick.id === -1) {
+    tstick.id = e.pointerId; tstick.cx = e.clientX; tstick.cy = e.clientY;
+    tPtr.set(e.pointerId, { role: 'stick' });
+    stickEl.classList.add('live');
+    stickEl.style.left = (e.clientX - 60) + 'px';
+    stickEl.style.top = (e.clientY - 60) + 'px';
+    stickEl.style.bottom = 'auto';
+  } else if (!hasLook()) {
+    tPtr.set(e.pointerId, { role: 'look', px: e.clientX, py: e.clientY });
+  }
 });
 addEventListener('pointermove', e => {
-  if (e.pointerId !== lookId) return;
-  const ts = sens * 1.9;
-  yaw += (e.clientX - lookPX) * ts;
-  pitch = clamp(pitch - (e.clientY - lookPY) * ts, -PITCH_MAX, PITCH_MAX);
-  lookPX = e.clientX; lookPY = e.clientY;
+  const a = tPtr.get(e.pointerId); if (!a) return;
+  if (a.role === 'stick') {
+    const dx = e.clientX - tstick.cx, dy = e.clientY - tstick.cy;
+    const l = Math.hypot(dx, dy), m = l > STICK_R ? STICK_R / l : 1;
+    tstick.x = (dx * m) / STICK_R; tstick.y = (dy * m) / STICK_R;
+    nubEl.style.transform = 'translate(' + dx * m * 0.77 + 'px,' + dy * m * 0.77 + 'px)';
+  } else if (a.role === 'look' || (a.role === 'btn' && a.aims)) {
+    const ts = sens * 1.9;
+    yaw += (e.clientX - a.px) * ts;
+    pitch = clamp(pitch - (e.clientY - a.py) * ts, -PITCH_MAX, PITCH_MAX);
+    a.px = e.clientX; a.py = e.clientY;
+  }
 });
-const lookEnd = e => { if (e.pointerId === lookId) lookId = -1; };
-addEventListener('pointerup', lookEnd);
-addEventListener('pointercancel', lookEnd);
+function tEnd(e) {
+  const a = tPtr.get(e.pointerId); if (!a) return;
+  tPtr.delete(e.pointerId);
+  if (a.role === 'stick') {
+    tstick.id = -1; tstick.x = tstick.y = 0;
+    stickEl.classList.remove('live');
+    stickEl.style.left = stickEl.style.top = stickEl.style.bottom = '';
+    nubEl.style.transform = '';
+  } else if (a.role === 'btn') { a.el.classList.remove('on'); a.up(); }
+}
+addEventListener('pointerup', tEnd);
+addEventListener('pointercancel', tEnd);
+/* rotating back to portrait mid-game: pause rather than play blind behind
+   the rotate overlay */
+try {
+  matchMedia('(orientation: portrait)').addEventListener('change', ev => {
+    if (ev.matches && touchOn && started) setPaused(true);
+  });
+} catch (e) {}
 
 /* ---- settings persistence ---- */
 const SAVE_KEY = 'nagaram.settings';
@@ -2762,6 +2823,14 @@ function frame() {
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
+  /* contextual board button: only when an aircraft is actually in reach */
+  if (touchOn) {
+    let nearPl = false;
+    if (!player.riding && !photoMode) for (const pl of planes) {
+      if ((player.p.x - pl.p.x) ** 2 + (player.p.y - pl.p.y) ** 2 + (player.p.z - pl.p.z) ** 2 < 15 * 15) { nearPl = true; break; }
+    }
+    if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
+  }
   renderer.render(scene, camera);
 }
 frame();
