@@ -1861,7 +1861,7 @@ function releaseWeb(i) {
   const other = player.webs[1 - i];
   if (!other.on && !player.grounded && !player.riding && !player.inWater && player.v.y > 12) {
     flipN = player.v.y > 21 ? 2 : 1;
-    flipDur = flipN > 1 ? 1.25 : 0.85;
+    flipDur = flipN > 1 ? 2.2 : 1.4;
     flipT = 0;
   }
 }
@@ -1992,10 +1992,21 @@ function smoothEuler(o, x, y, z, k) {
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
 let runPhase = 0;
-/* somersault state: rotation about the rig's side axis, layered on top of the
-   normal orientation so camera and physics never see it */
-let flipT = 1e9, flipDur = 1, flipN = 1;
+/* Somersault state: rotation about the rig's side axis, layered on top of the
+   smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
+   quaternion back through the orientation slerp corrupted the base and made
+   the spin rate erratic. flipA is the applied angle in radians. */
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
+const rigBaseQ = new THREE.Quaternion();
+/* trapezoidal position profile: soft ramp in and out, constant tumble between.
+   A somersault conserves its rate — smoothstep's mid-flip whip read as a glitch. */
+function trapEase(p, r) {
+  const vmax = 1 / (1 - r);
+  if (p < r) return vmax * p * p / (2 * r);
+  if (p > 1 - r) { const q = 1 - p; return 1 - vmax * q * q / (2 * r); }
+  return vmax * (p - r / 2);
+}
 
 let rigY = 0.44;
 function poseRig(dt, inp) {
@@ -2019,21 +2030,26 @@ function poseRig(dt, inp) {
   _bx.applyAxisAngle(_bz, player.bank); _by.applyAxisAngle(_bz, player.bank);
   _bm.makeBasis(_bx, _by, _bz);
   rigQ.setFromRotationMatrix(_bm);
-  rig.quaternion.slerp(rigQ, 1 - Math.exp(-11 * dt));
+  rigBaseQ.slerp(rigQ, 1 - Math.exp(-11 * dt));
+  rig.quaternion.copy(rigBaseQ);
 
-  /* layered somersault: eased so it winds up and lands softly; a full turn is
-     the identity, so completion is seamless. Ground, wall, water or a fresh
-     line cancels it and the slerp above recovers the pose. */
-  if (flipT < flipDur) {
-    if (player.grounded || player.clinging || player.riding || player.inWater ||
-        player.webs[0].on || player.webs[1].on) {
-      flipT = flipDur;
-    } else {
+  /* layered somersault: constant-rate tumble with soft ends, applied on top of
+     the base so the orientation filter never sees it. Ground, wall, water or a
+     fresh line interrupts it — the applied angle then unwinds to the nearest
+     full turn instead of snapping to identity. */
+  if (flipT < flipDur || flipA !== 0) {
+    const interrupted = player.grounded || player.clinging || player.riding ||
+      player.inWater || player.webs[0].on || player.webs[1].on;
+    if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      const fp = Math.min(flipT / flipDur, 1);
-      _fq.setFromAxisAngle(_fx, TAU * flipN * sstep(0, 1, fp));
-      rig.quaternion.multiply(_fq);
+      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, 0.22);
+    } else {
+      flipT = flipDur;
+      const turn = Math.round(flipA / TAU) * TAU;
+      flipA = damp(flipA, turn, 16, dt);
+      if (Math.abs(flipA - turn) < 0.03) flipA = 0;
     }
+    if (flipA !== 0) { _fq.setFromAxisAngle(_fx, flipA); rig.quaternion.multiply(_fq); }
   }
 
   const swinging = player.webs[0].on || player.webs[1].on;
@@ -2055,12 +2071,13 @@ function poseRig(dt, inp) {
     smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
     smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
   } else if (flipT < flipDur) {
-    /* tucked ball for the somersault */
-    smoothEuler(spine, 0.5, 0, 0, k);
-    smoothEuler(shoulderL, 2.3, 0, -0.3, k); smoothEuler(shoulderR, 2.3, 0, 0.3, k);
-    smoothEuler(elbowL, -2.0, 0, 0, k); smoothEuler(elbowR, -2.0, 0, 0, k);
-    smoothEuler(hipL, -2.1, 0, -0.1, k); smoothEuler(hipR, -2.1, 0, 0.1, k);
-    smoothEuler(kneeL, 2.4, 0, 0, k); smoothEuler(kneeR, 2.4, 0, 0, k);
+    /* tucked ball for the somersault — snappier than the other transitions so
+       the tuck forms before the tumble picks up speed */
+    smoothEuler(spine, 0.5, 0, 0, 22);
+    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
+    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
+    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
+    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
