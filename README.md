@@ -28,7 +28,8 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 
 Other things to know:
 
-- Aircraft crossing the city are valid web anchors — latch one and it tows you.
+- Aircraft crossing the city are valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
+- Release a swing while climbing hard and the body throws itself into a somersault — a violent release doubles it. No button; it's earned by the swing.
 - Time of day flows continuously through dawn, noon, evening, and a long night; T skips ahead to the next.
 - A slow monsoon breeze wanders over the city. Drag and lift run on airspeed, not ground speed, so gliding up-wind and down-wind feel different.
 - Sensitivity, assist, mute, shadows, and the time of day persist across visits (localStorage).
