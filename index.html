@@ -1856,6 +1856,14 @@ function releaseWeb(i) {
   if (!w.on) return;
   w.on = false;
   if (player.v.y > 0.5) { player.v.y += 2.4; }
+  /* A hard upward release throws the body into a somersault — earned by the
+     swing, never a button. Pure rig theatre: the trajectory is untouched. */
+  const other = player.webs[1 - i];
+  if (!other.on && !player.grounded && !player.riding && !player.inWater && player.v.y > 12) {
+    flipN = player.v.y > 21 ? 2 : 1;
+    flipDur = flipN > 1 ? 1.25 : 0.85;
+    flipT = 0;
+  }
 }
 
 /* =====================================================================
@@ -1984,6 +1992,10 @@ function smoothEuler(o, x, y, z, k) {
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
 let runPhase = 0;
+/* somersault state: rotation about the rig's side axis, layered on top of the
+   normal orientation so camera and physics never see it */
+let flipT = 1e9, flipDur = 1, flipN = 1;
+const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 
 let rigY = 0.44;
 function poseRig(dt, inp) {
@@ -2009,6 +2021,21 @@ function poseRig(dt, inp) {
   rigQ.setFromRotationMatrix(_bm);
   rig.quaternion.slerp(rigQ, 1 - Math.exp(-11 * dt));
 
+  /* layered somersault: eased so it winds up and lands softly; a full turn is
+     the identity, so completion is seamless. Ground, wall, water or a fresh
+     line cancels it and the slerp above recovers the pose. */
+  if (flipT < flipDur) {
+    if (player.grounded || player.clinging || player.riding || player.inWater ||
+        player.webs[0].on || player.webs[1].on) {
+      flipT = flipDur;
+    } else {
+      flipT += dt;
+      const fp = Math.min(flipT / flipDur, 1);
+      _fq.setFromAxisAngle(_fx, TAU * flipN * sstep(0, 1, fp));
+      rig.quaternion.multiply(_fq);
+    }
+  }
+
   const swinging = player.webs[0].on || player.webs[1].on;
   const k = 14;
   if (player.clinging) {
@@ -2027,6 +2054,13 @@ function poseRig(dt, inp) {
     smoothEuler(hipL, -s * 0.85 * amp, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp, 0, 0, k);
     smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
     smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
+  } else if (flipT < flipDur) {
+    /* tucked ball for the somersault */
+    smoothEuler(spine, 0.5, 0, 0, k);
+    smoothEuler(shoulderL, 2.3, 0, -0.3, k); smoothEuler(shoulderR, 2.3, 0, 0.3, k);
+    smoothEuler(elbowL, -2.0, 0, 0, k); smoothEuler(elbowR, -2.0, 0, 0, k);
+    smoothEuler(hipL, -2.1, 0, -0.1, k); smoothEuler(hipR, -2.1, 0, 0.1, k);
+    smoothEuler(kneeL, 2.4, 0, 0, k); smoothEuler(kneeR, 2.4, 0, 0, k);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
