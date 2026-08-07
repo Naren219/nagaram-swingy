@@ -134,6 +134,27 @@
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
     background:#05070a;font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.8}
   #load.gone{display:none}
+  /* ---- photo mode: nothing between the eye and the city ---- */
+  body.photo #hud,body.photo #pbtn{display:none}
+
+  /* ---- touch controls (shown once a touch is seen) ---- */
+  #touch{position:fixed;inset:0;z-index:6;pointer-events:none;display:none}
+  body.touch #touch{display:block}
+  body.touch #help{display:none}
+  .tstick{position:absolute;left:24px;bottom:96px;width:120px;height:120px;border:1px solid var(--hair);
+    border-radius:50%;background:rgba(10,12,13,.35);pointer-events:auto;touch-action:none}
+  .tstick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+    border-radius:50%;background:rgba(232,169,43,.45);border:1px solid var(--turmeric)}
+  .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
+    display:flex;align-items:center;justify-content:center;background:rgba(10,12,13,.42);
+    color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
+    -webkit-user-select:none;user-select:none;touch-action:none}
+  .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
+  #tWeb{right:22px;bottom:88px;width:88px;height:88px;color:var(--turmeric)}
+  #tJump{right:124px;bottom:74px;width:62px;height:62px}
+  #tZip{right:40px;bottom:192px;width:56px;height:56px}
+  #tTuck{right:126px;bottom:154px;width:56px;height:56px}
+
   @media (max-width:760px){#help,#mapwrap{display:none}.cell{min-width:88px;padding:10px 13px}
     .v{font-size:20px}#band{height:62px}#tbar{bottom:62px}}
 </style>
@@ -162,6 +183,7 @@
       <tr><td>Q</td><td>zip to anchor</td></tr>
       <tr><td>E</td><td>cling to wall &middot; board an aircraft</td></tr>
       <tr><td>T / F / M</td><td>time of day · assist · mute</td></tr>
+      <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
     </table>
     <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
@@ -175,6 +197,13 @@
     <div class="cell grow"></div>
     <div class="cell" id="zone"><div class="en">temple ward</div></div>
   </div>
+</div>
+<div id="touch">
+  <div class="tstick" id="tStick"><div class="nub"></div></div>
+  <div class="tbtn" id="tWeb">web</div>
+  <div class="tbtn" id="tJump">jump</div>
+  <div class="tbtn" id="tZip">zip</div>
+  <div class="tbtn" id="tTuck">dive</div>
 </div>
 <div id="pbtn"><i></i><i></i></div>
 <div id="pause">
@@ -315,30 +344,8 @@ const TOD = [
   { name: 'dawn', sun: [0.88, 0.13, -0.30], sunC: 0xffcf9a, sunI: 2.1, top: 0x3f6f9e, mid: 0xc0b6c4, bot: 0xf3cbb0,
     hemiS: 0xdcc8c6, hemiG: 0x4d4238, hemiI: 0.66, fog: 0xd9c7c0, fogD: 0.00145, night: 0.35, cloud: 0.6, exp: 1.08 }
 ];
-let todIdx = 1;
+let todIdx = 1;                      // seeds the facade uniforms; applyDay() takes over per-frame
 const facadeShaders = [];
-function applyTOD(i) {
-  const t = TOD[i]; todIdx = i;
-  const d = V3(t.sun[0], t.sun[1], t.sun[2]).normalize();
-  skyUni.uSun.value.copy(d);
-  skyUni.uSunCol.value.setHex(t.sunC);
-  skyUni.uTop.value.setHex(t.top); skyUni.uMid.value.setHex(t.mid); skyUni.uBot.value.setHex(t.bot);
-  skyUni.uCloud.value = t.cloud;
-  sun.color.setHex(t.sunC); sun.intensity = t.sunI;
-  hemi.color.setHex(t.hemiS); hemi.groundColor.setHex(t.hemiG); hemi.intensity = t.hemiI;
-  scene.fog.color.setHex(t.fog); scene.fog.density = t.fogD;
-  renderer.toneMappingExposure = t.exp;
-  for (const s of facadeShaders) s.uniforms.uNight.value = t.night;
-  if (typeof waterUni !== 'undefined' && waterUni) {
-    waterUni.uSun.value.copy(d); waterUni.uSunCol.value.setHex(t.sunC);
-    waterUni.uNight.value = t.night;
-    waterUni.uFogColor.value.copy(scene.fog.color);
-    waterUni.uFogDensity.value = t.fogD;
-    waterUni.uDeep.value.copy(SRGB(t.night > 0.7 ? 0x04141c : 0x0b3a46));
-    waterUni.uShallow.value.copy(SRGB(t.night > 0.7 ? 0x0a2b34 : 0x1d7f80));
-  }
-  envDirty = true;
-}
 
 /* =====================================================================
    WORLD LAYOUT
@@ -897,6 +904,62 @@ const waterMat = new THREE.ShaderMaterial({
 }
 
 /* =====================================================================
+   CONTINUOUS TIME OF DAY
+   The four presets become anchors on a slow clock; every lighting input
+   is blended between the two adjacent presets each frame, so dusk and
+   dawn actually happen instead of being a keypress most players never
+   find. T skips to the next anchor.
+   ===================================================================== */
+const TODC = TOD.map(t => ({
+  sun: V3(t.sun[0], t.sun[1], t.sun[2]).normalize(),
+  sunC: new THREE.Color(t.sunC), top: new THREE.Color(t.top),
+  mid: new THREE.Color(t.mid), bot: new THREE.Color(t.bot),
+  hemiS: new THREE.Color(t.hemiS), hemiG: new THREE.Color(t.hemiG),
+  fog: new THREE.Color(t.fog),
+  sunI: t.sunI, hemiI: t.hemiI, fogD: t.fogD, night: t.night, cloud: t.cloud, exp: t.exp
+}));
+/* night appears twice so it holds as a plateau instead of peaking for an
+   instant — the night city is the best-looking state, let it breathe */
+const DAY_SEQ = [3, 0, 1, 2, 2];                  // dawn -> noon -> evening -> night (held)
+const DAY_POS = [0, 0.30, 0.55, 0.72, 0.90, 1];   // where each anchor sits on the clock
+const DAY_LEN = 600;                        // seconds per full cycle
+let dayT = 0.55, curNight = TOD[1].night, lastEnvT = -10;
+const DEEP_DAY = SRGB(0x0b3a46), DEEP_NIGHT = SRGB(0x04141c);
+const SHAL_DAY = SRGB(0x1d7f80), SHAL_NIGHT = SRGB(0x0a2b34);
+function daySeg() { let k = 0; while (dayT >= DAY_POS[k + 1]) k++; return k; }
+function applyDay() {
+  const k = daySeg();
+  const a = TODC[DAY_SEQ[k]], b = TODC[DAY_SEQ[(k + 1) % DAY_SEQ.length]];
+  const f = sstep(0, 1, (dayT - DAY_POS[k]) / (DAY_POS[k + 1] - DAY_POS[k]));
+  skyUni.uSun.value.lerpVectors(a.sun, b.sun, f).normalize();
+  skyUni.uSunCol.value.copy(a.sunC).lerp(b.sunC, f);
+  skyUni.uTop.value.copy(a.top).lerp(b.top, f);
+  skyUni.uMid.value.copy(a.mid).lerp(b.mid, f);
+  skyUni.uBot.value.copy(a.bot).lerp(b.bot, f);
+  skyUni.uCloud.value = lerp(a.cloud, b.cloud, f);
+  sun.color.copy(skyUni.uSunCol.value); sun.intensity = lerp(a.sunI, b.sunI, f);
+  hemi.color.copy(a.hemiS).lerp(b.hemiS, f);
+  hemi.groundColor.copy(a.hemiG).lerp(b.hemiG, f);
+  hemi.intensity = lerp(a.hemiI, b.hemiI, f);
+  scene.fog.color.copy(a.fog).lerp(b.fog, f);
+  scene.fog.density = lerp(a.fogD, b.fogD, f);
+  renderer.toneMappingExposure = lerp(a.exp, b.exp, f);
+  curNight = lerp(a.night, b.night, f);
+  for (const s of facadeShaders) s.uniforms.uNight.value = curNight;
+  waterUni.uSun.value.copy(skyUni.uSun.value);
+  waterUni.uSunCol.value.copy(skyUni.uSunCol.value);
+  waterUni.uNight.value = curNight;
+  waterUni.uFogColor.value.copy(scene.fog.color);
+  waterUni.uFogDensity.value = scene.fog.density;
+  const nf = sstep(0.55, 0.85, curNight);
+  waterUni.uDeep.value.copy(DEEP_DAY).lerp(DEEP_NIGHT, nf);
+  waterUni.uShallow.value.copy(SHAL_DAY).lerp(SHAL_NIGHT, nf);
+  /* the env cubemap only feeds glass reflections — an occasional refresh is
+     plenty, and re-rendering it every frame would be pure waste */
+  if (T - lastEnvT > 5) { lastEnvT = T; envDirty = true; }
+}
+
+/* =====================================================================
    MONUMENTS  (gopurams, vimana, mandapam, walls, tank, bridges, masts)
    ===================================================================== */
 const monParts = [];
@@ -1405,6 +1468,18 @@ const DRAG_AIR = 0.0042, DRAG_TUCK = 0.0024, DRAG_GLIDE = 0.0105, LIFT_K = 0.011
 const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
 
+/* Wind: a slowly wandering horizontal vector. It never touches the solver —
+   it only changes which velocity feeds the aero model, so drag and lift see
+   airspeed instead of ground speed. Gliding becomes a negotiation with the
+   monsoon breeze rather than a solved function of your own motion. */
+const WIND = V3();
+function updateWind(t) {
+  const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
+  const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)   // strength swells
+                        + 1.1 * Math.sin(t * 0.0053));          // and dies away
+  WIND.set(Math.cos(a) * s, 0, Math.sin(a) * s);
+}
+
 const player = {
   p: V3(-46, 96, -230), v: V3(4, 0, 20),
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
@@ -1540,19 +1615,23 @@ function stepPhysics(h, inp) {
   player.clinging = !!inp.cling && player.contact && !player.inWater;
 
   /* ---- forces ---- */
-  const spd = V.length();
   let ax = 0, ay = -G, az = 0;
+
+  /* the aero model runs on airspeed: velocity relative to the wind */
+  const wfx = player.inWater ? 0 : WIND.x, wfz = player.inWater ? 0 : WIND.z;
+  const rvx = V.x - wfx, rvy = V.y, rvz = V.z - wfz;
+  const rs = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
   let cd = DRAG_AIR;
   if (inp.tuck) cd = DRAG_TUCK;
   if (inp.glide && !onGround) cd = DRAG_GLIDE;
   if (player.inWater) cd = 0.16;
-  ax -= cd * spd * V.x; ay -= cd * spd * V.y; az -= cd * spd * V.z;
+  ax -= cd * rs * rvx; ay -= cd * rs * rvy; az -= cd * rs * rvz;
   if (player.inWater) ay += G * 1.35;
 
   /* ---- wing: angle-of-attack lift ---- */
-  if (inp.glide && !onGround && spd > 9 && !player.inWater) {
-    _tmp.copy(V).multiplyScalar(1 / spd);                       // flight dir
+  if (inp.glide && !onGround && rs > 9 && !player.inWater) {
+    _tmp.set(rvx / rs, rvy / rs, rvz / rs);                     // airflow dir
     _tmp2.copy(inp.fwd);                                        // chord dir
     const cosA = clamp(_tmp.dot(_tmp2), -1, 1);
     const alpha = Math.acos(cosA);
@@ -1560,7 +1639,7 @@ function stepPhysics(h, inp) {
     const perp = _tmp2.clone().addScaledVector(_tmp, -cosA);
     if (perp.lengthSq() > 1e-6) {
       perp.normalize();
-      const L = LIFT_K * spd * spd * cl;
+      const L = LIFT_K * rs * rs * cl;
       ax += perp.x * L; ay += perp.y * L; az += perp.z * L;
     }
   }
@@ -2062,7 +2141,7 @@ function setPaused(on) {
   for (const k of Object.keys(keys)) delete keys[k];
   if (windGain) windGain.gain.value = on ? 0 : windGain.gain.value;
   if (ambBus) ambBus.gain.value = on ? 0 : 1;
-  if (!on && !freeLook) {
+  if (!on && !freeLook && !touchOn) {
     /* Browsers refuse a lock request for about a second after Esc. If it never
        lands, drop into cursor steering rather than leaving the player with no
        look control at all. */
@@ -2093,7 +2172,10 @@ gate.addEventListener('click', () => {
   try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) { /* no lock */ }
   /* some embeds disallow pointer lock — fall back to plain mouse-delta look */
   setTimeout(() => {
-    if (document.pointerLockElement !== renderer.domElement) { setFreeLook(true); gate.classList.add('gone'); }
+    if (document.pointerLockElement !== renderer.domElement) {
+      if (!touchOn) setFreeLook(true);   // touch has its own look; no steering ring
+      gate.classList.add('gone');
+    }
   }, 450);
 });
 
@@ -2101,6 +2183,7 @@ const toastEl = document.getElementById('toast');
 let toastT = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('on'); toastT = 1.6; }
 function setFreeLook(on) {
+  if (on && touchOn) return;   // drag-look serves touch; the cursor ring would fight it
   freeLook = on;
   lookEl.classList.toggle('on', on);
   document.body.classList.toggle('freelook', on);
@@ -2151,7 +2234,7 @@ function freeLookStep(dt) {
   pitch = clamp(pitch - rateY * 0.78 * dt, -PITCH_MAX, PITCH_MAX);
 }
 addEventListener('mousedown', e => {
-  if (!locked()) return;
+  if (!locked() || photoMode) return;
   /* holding keeps trying: a shot fired a frame before an anchor comes into
      view now connects the instant it does, instead of silently failing */
   if (e.button === 0) { held[0] = true; if (fireWebAt(0, aimPt)) thwip(); }
@@ -2162,19 +2245,136 @@ addEventListener('mouseup', e => {
   if (e.button === 2) { held[1] = false; releaseWeb(1); }
 });
 addEventListener('blur', () => { held[0] = held[1] = false; });
+
+/* ---- photo mode: HUD gone, player and aircraft frozen, city still alive ---- */
+let photoMode = false;
+function setPhoto(on) {
+  photoMode = on;
+  document.body.classList.toggle('photo', on);
+  toast(on ? 'photo mode · C to exit' : 'photo mode off');
+}
+
+/* ---------------------------------------------------------------
+   TOUCH — a left stick for movement, hold-buttons for web / jump /
+   zip / dive, and drag-anywhere-else to look. The buttons drive the
+   same key states and edge flags as the keyboard, so every input
+   path downstream stays single.
+   --------------------------------------------------------------- */
+let touchOn = false;
+function enableTouch() {
+  if (touchOn) return; touchOn = true;
+  document.body.classList.add('touch');
+  if (freeLook) { freeLook = false; lookEl.classList.remove('on'); document.body.classList.remove('freelook'); }
+}
+if (matchMedia('(pointer: coarse)').matches) enableTouch();
+const tstick = { id: -1, x: 0, y: 0 };        // unit deflection, +y = down-screen
+{
+  const stickEl = document.getElementById('tStick'), nubEl = stickEl.querySelector('.nub');
+  const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch (err) {} };
+  function bindHold(id, down, up) {
+    const el = document.getElementById(id);
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      capture(el, e); el.classList.add('on'); down();
+    });
+    const end = () => { el.classList.remove('on'); up(); };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+  bindHold('tWeb',
+    () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
+    () => { held[0] = false; releaseWeb(0); });
+  bindHold('tJump',
+    () => { jumpEdge = true; keys['Space'] = true; },
+    () => { keys['Space'] = false; });
+  bindHold('tZip', () => { keys['KeyQ'] = true; }, () => { keys['KeyQ'] = false; });
+  bindHold('tTuck', () => { keys['ShiftLeft'] = true; }, () => { keys['ShiftLeft'] = false; });
+  stickEl.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    tstick.id = e.pointerId; capture(stickEl, e);
+  });
+  stickEl.addEventListener('pointermove', e => {
+    if (e.pointerId !== tstick.id) return;
+    const r = stickEl.getBoundingClientRect();
+    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+    const l = Math.hypot(dx, dy), s = l > 1 ? 1 / l : 1;
+    tstick.x = dx * s; tstick.y = dy * s;
+    nubEl.style.transform = 'translate(' + tstick.x * 36 + 'px,' + tstick.y * 36 + 'px)';
+  });
+  const stickEnd = e => {
+    if (e.pointerId !== tstick.id) return;
+    tstick.id = -1; tstick.x = tstick.y = 0; nubEl.style.transform = '';
+  };
+  stickEl.addEventListener('pointerup', stickEnd);
+  stickEl.addEventListener('pointercancel', stickEnd);
+}
+/* any other touch drags the view */
+let lookId = -1, lookPX = 0, lookPY = 0;
+addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  enableTouch();
+  if (!started || paused || lookId !== -1) return;
+  if (e.target.closest && e.target.closest('.tbtn,.tstick,#pbtn,#pause,#gate')) return;
+  lookId = e.pointerId; lookPX = e.clientX; lookPY = e.clientY;
+});
+addEventListener('pointermove', e => {
+  if (e.pointerId !== lookId) return;
+  const ts = sens * 1.9;
+  yaw += (e.clientX - lookPX) * ts;
+  pitch = clamp(pitch - (e.clientY - lookPY) * ts, -PITCH_MAX, PITCH_MAX);
+  lookPX = e.clientX; lookPY = e.clientY;
+});
+const lookEnd = e => { if (e.pointerId === lookId) lookId = -1; };
+addEventListener('pointerup', lookEnd);
+addEventListener('pointercancel', lookEnd);
+
+/* ---- settings persistence ---- */
+const SAVE_KEY = 'nagaram.settings';
+function saveSettings() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      sens, assist, muted, shadowsOn, dayT,
+      help: document.getElementById('help').classList.contains('hide')
+    }));
+  } catch (e) {}
+}
+function loadSettings() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+  if (!s) return;
+  if (typeof s.sens === 'number') sens = clamp(s.sens, 0.0009, 0.0130);
+  if (typeof s.assist === 'boolean') assist = s.assist;
+  if (typeof s.muted === 'boolean') muted = s.muted;
+  if (typeof s.shadowsOn === 'boolean') { shadowsOn = s.shadowsOn; sun.castShadow = shadowsOn; }
+  if (typeof s.dayT === 'number' && isFinite(s.dayT)) dayT = ((s.dayT % 1) + 1) % 1;
+  if (s.help) document.getElementById('help').classList.add('hide');
+}
+addEventListener('pagehide', saveSettings);
+
 addEventListener('keydown', e => {
   if (keys[e.code] === undefined || !keys[e.code]) {
     if (e.code === 'Space') jumpEdge = true;
     if (e.code === 'KeyE') mountEdge = true;
-    if (e.code === 'KeyT') applyTOD((todIdx + 1) % TOD.length);
-    if (e.code === 'KeyF') assist = !assist;
-    if (e.code === 'KeyH') document.getElementById('help').classList.toggle('hide');
-    if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; }
-    if (e.code === 'KeyP') { shadowsOn = !shadowsOn; sun.castShadow = shadowsOn; }
+    if (e.code === 'KeyT') {
+      /* time now flows continuously; T skips ahead to the next distinct preset */
+      const k = daySeg();
+      let nk = k + 1;
+      while (DAY_SEQ[nk % DAY_SEQ.length] === DAY_SEQ[k]) nk++;
+      dayT = DAY_POS[nk] % 1;
+      toast(TOD[DAY_SEQ[nk % DAY_SEQ.length]].name);
+      saveSettings();
+    }
+    if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
+    if (e.code === 'KeyC') setPhoto(!photoMode);
+    if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); saveSettings(); }
+    if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
+    if (e.code === 'KeyP') { shadowsOn = !shadowsOn; sun.castShadow = shadowsOn; saveSettings(); }
     if (e.code === 'KeyR') respawn();
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
       sens = clamp(sens * (e.code === 'BracketRight' ? 1.18 : 1 / 1.18), 0.0009, 0.0130);
       toast('look sensitivity ' + Math.round(sens / 0.0034 * 100) + '%');
+      saveSettings();
     }
   }
   keys[e.code] = true;
@@ -2307,7 +2507,7 @@ function updateAudio(dt) {
      inside it, or the quietest place on the map is the loudest */
   const trafficN = clamp(1 - dCore / 620, 0, 1) * clamp((dCore - 95) / 95, 0, 1)
                  * clamp(1 - dSea / 90, 0, 1);
-  const night = TOD[todIdx].night;
+  const night = curNight;
 
   /* nearest aircraft, for engine noise and for riding */
   let eng = 0;
@@ -2440,7 +2640,7 @@ const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck
 const sunOff = V3();
 
 document.getElementById('load').classList.add('gone');
-applyTOD(1);
+loadSettings();   // applyDay() runs on the first frame with whatever dayT survived
 
 function frame() {
   requestAnimationFrame(frame);
@@ -2460,45 +2660,54 @@ function frame() {
 
   /* ---- gather input ---- */
   const anyWeb = player.webs[0].on || player.webs[1].on;
-  const f = keys['KeyW'] ? 1 : 0, b = keys['KeyS'] ? 1 : 0;
-  const l = keys['KeyA'] ? 1 : 0, r = keys['KeyD'] ? 1 : 0;
+  let fb = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
+  let rl = (keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0);
+  if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
   inp.fwd.copy(camFwd);
-  inp.mzRaw = f - b;
+  inp.mzRaw = fb;
   let mfx = 0, mfz = 0;
-  if (!anyWeb) { mfx += camFwd.x * (f - b); mfz += camFwd.z * (f - b); }
-  mfx += camRight.x * (r - l); mfz += camRight.z * (r - l);
+  if (!anyWeb) { mfx += camFwd.x * fb; mfz += camFwd.z * fb; }
+  mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
   inp.jump = jumpEdge; jumpEdge = false;
   inp.glide = !!keys['Space'] && !player.grounded && !player.inWater;
   inp.tuck = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
-  inp.reelIn = anyWeb && f > 0; inp.reelOut = anyWeb && b > 0;
+  inp.reelIn = anyWeb && fb > 0.25; inp.reelOut = anyWeb && fb < -0.25;
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
   inp.mount = mountEdge; mountEdge = false;
 
   /* ---- fixed-step physics ---- */
-  acc += dt;
-  let n = 0;
-  /* Physics is a fixed 120 Hz accumulator, but the display samples it at
-     whatever rate the monitor runs. On anything that isn't an exact multiple
-     the substep count alternates (1,2,2,1,...) and the rendered position
-     advances unevenly — which reads as constant shake. Interpolate between the
-     last two physics states by the leftover accumulator instead. */
-  updatePlanes(dt);   // hulls move first: riders and latched anchors read them
-  while (acc >= SUB && n < 10) {
-    pPrev.copy(player.p);
-    stepPhysics(SUB, inp); acc -= SUB; n++; inp.jump = false;
+  updateWind(T);
+  if (!photoMode) dayT = (dayT + dt / DAY_LEN) % 1;
+  applyDay();
+  if (photoMode) {
+    /* the player and aircraft freeze for the shot; the rest of the city lives on */
+    acc = 0; pPrev.copy(player.p); pRender.copy(player.p);
+  } else {
+    acc += dt;
+    let n = 0;
+    /* Physics is a fixed 120 Hz accumulator, but the display samples it at
+       whatever rate the monitor runs. On anything that isn't an exact multiple
+       the substep count alternates (1,2,2,1,...) and the rendered position
+       advances unevenly — which reads as constant shake. Interpolate between the
+       last two physics states by the leftover accumulator instead. */
+    updatePlanes(dt);   // hulls move first: riders and latched anchors read them
+    while (acc >= SUB && n < 10) {
+      pPrev.copy(player.p);
+      stepPhysics(SUB, inp); acc -= SUB; n++; inp.jump = false;
+    }
+    if (n === 0) pPrev.copy(player.p);
+    pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));
+    if (player.p.y < -40) respawn();
   }
-  if (n === 0) pPrev.copy(player.p);
-  pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));
-  if (player.p.y < -40) respawn();
 
   /* ---- aim preview ---- */
   /* Solved every frame, not every 80 ms: while sweeping the view the old
      preview lagged a fifth of a second behind the crosshair, which is what
      made scanning for a building feel unreliable. */
-  aimPt = findAnchor(camFwd, camRight, camUp, player.p, aimPt);
+  aimPt = photoMode ? null : findAnchor(camFwd, camRight, camUp, player.p, aimPt);
   aimOk = !!aimPt;
   for (let i = 0; i < 2; i++) {
     if (held[i] && !player.webs[i].on && aimPt && fireWebAt(i, aimPt)) thwip();
@@ -2528,11 +2737,11 @@ function frame() {
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);
   beacon.rotation.y = T * 0.9;
-  const nite = TOD[todIdx].night;
+  const nite = curNight;
   beacon.visible = nite > 0.2; beacon.material.opacity = 0.055 * nite;
   lampGlow.material.color.setRGB(1, 0.95, 0.8).multiplyScalar(0.25 + nite * 0.75);
 
-  poseRig(dt, inp);
+  if (!photoMode) poseRig(dt, inp);
   updateCamera(dt);
   if (aimMark.visible) aimMark.quaternion.copy(camera.quaternion);   // billboard after the camera settles
 
@@ -2552,8 +2761,7 @@ function frame() {
 
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
-  drawMinimap();
-  updateHUD(dt);
+  if (!photoMode) { drawMinimap(); updateHUD(dt); }
   renderer.render(scene, camera);
 }
 frame();
