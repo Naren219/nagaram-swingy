@@ -154,10 +154,14 @@
     color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
     -webkit-user-select:none;user-select:none;touch-action:none}
   .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
+  /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
+     which double as aim surfaces while held. Everything a player needs DURING
+     a swing — zip and dive — sits on the left, because the right thumb is
+     pinned on the web button for the whole arc. */
   #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--turmeric)}
   #tJump{right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:66px;width:64px;height:64px}
-  #tZip{right:calc(max(22px,env(safe-area-inset-right)) + 52px);bottom:198px;width:56px;height:56px}
-  #tTuck{right:calc(max(22px,env(safe-area-inset-right)) + 134px);bottom:148px;width:56px;height:56px}
+  #tZip{left:max(26px,env(safe-area-inset-left));bottom:246px;width:60px;height:60px;color:var(--lock)}
+  #tTuck{left:calc(max(26px,env(safe-area-inset-left)) + 92px);bottom:236px;width:60px;height:60px}
   #tBoard{left:50%;transform:translateX(-50%);bottom:96px;height:44px;width:auto;
     padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
   #tBoard.show{display:flex}
@@ -2336,7 +2340,8 @@ bindHold('tWeb',
   () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
   () => { held[0] = false; releaseWeb(0); },
   true);                                                // held web thumb also aims
-bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; });
+bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; },
+  true);                                                // a held glide steers with the same thumb
 bindHold('tZip', () => { keys['KeyQ'] = true; }, () => { keys['KeyQ'] = false; });
 bindHold('tTuck', () => { keys['ShiftLeft'] = true; }, () => { keys['ShiftLeft'] = false; });
 bindHold('tBoard', () => { mountEdge = true; }, () => {});
