@@ -24,7 +24,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
-**Touch devices** get their own controls: a movement stick on the left, hold-buttons for web / jump / zip / dive on the right, and drag anywhere else to look.
+**Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows): the left region of the screen is a floating movement stick that appears wherever your thumb lands; hold-buttons on the right cover web / jump / zip / dive; dragging anywhere else looks. The **web button doubles as an aim surface** — keep it held to stay attached and drag the same thumb to steer the swing. A **board aircraft** button appears whenever a plane is in reach. Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
 
 Other things to know:
 
