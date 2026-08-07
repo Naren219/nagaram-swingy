@@ -19,11 +19,19 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | Shift | tuck & dive |
 | Q | zip to anchor |
 | E | cling to wall · board an aircraft |
-| T / F / M | time of day · swing assist · mute |
+| T / F / M | skip time of day · swing assist · mute |
+| C | photo mode (HUD hidden, player frozen, city alive) |
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
-Aircraft crossing the city are valid web anchors — latch one and it tows you.
+**Touch devices** get their own controls: a movement stick on the left, hold-buttons for web / jump / zip / dive on the right, and drag anywhere else to look.
+
+Other things to know:
+
+- Aircraft crossing the city are valid web anchors — latch one and it tows you.
+- Time of day flows continuously through dawn, noon, evening, and a long night; T skips ahead to the next.
+- A slow monsoon breeze wanders over the city. Drag and lift run on airspeed, not ground speed, so gliding up-wind and down-wind feel different.
+- Sensitivity, assist, mute, shadows, and the time of day persist across visits (localStorage).
 
 ## Deploy to Cloudflare Pages
 
