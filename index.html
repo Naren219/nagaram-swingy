@@ -427,8 +427,6 @@ function genCity() {
           case 'tech': h = rnd(58, 168); kind = 'glass'; break;
           default: h = rnd(12, 30);
         }
-        /* scattered high-rises: keeps the street low-rise while giving the
-           skyline enough vertical structure to swing between */
         /* scattered high-rises give the skyline enough vertical structure to
            swing between, but the heritage quarters stay deliberately low */
         if (dist !== 'tech') {
@@ -1242,10 +1240,9 @@ const vMeshes = [];
 for (const [geo, n, spd] of [[V_AUTO, 130, [7, 12]], [V_CAR, 120, [9, 16]], [V_BUS, 34, [7, 11]], [V_TRUCK, 40, [6, 10]]]) {
   const im = new THREE.InstancedMesh(geo, vegMat, n);
   im.castShadow = true; im.frustumCulled = false; scene.add(im); vMeshes.push(im);
-  const base = vehicles.length;
   for (let i = 0; i < n; i++) {
     const s = pick(segs);
-    vehicles.push({ mesh: vMeshes.length - 1, idx: i, seg: s, t: rnd(s.a, s.b), dir: R() < 0.5 ? 1 : -1, v: rnd(spd[0], spd[1]), base });
+    vehicles.push({ mesh: vMeshes.length - 1, idx: i, seg: s, t: rnd(s.a, s.b), dir: R() < 0.5 ? 1 : -1, v: rnd(spd[0], spd[1]) });
   }
 }
 function updateTraffic(dt) {
@@ -1344,7 +1341,6 @@ function updatePlanes(dt) {
   }
 }
 /* local offset -> world, so a latched anchor rides the hull */
-const _pw = V3();
 function planePoint(pl, lx, ly, lz, out) {
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
   return out.set(pl.p.x + lx * c + lz * sn, pl.p.y + ly, pl.p.z - lx * sn + lz * c);
@@ -1717,9 +1713,6 @@ function findAnchor(fwd, right, up, o, prev) {
   }
   return best;
 }
-function fireWeb(i, fwd, right, up) {
-  return fireWebAt(i, findAnchor(fwd, right, up, player.p));
-}
 /* the crosshair, the world marker and the actual shot all consume the SAME
    candidate, so what you see highlighted is exactly what you get */
 function fireWebAt(i, a) {
@@ -1988,7 +1981,7 @@ let yaw = -0.4, pitch = -0.08, camDist = 7.2, curDist = 7.2;
 let sens = 0.0034;                       // rad per pixel, adjustable with [ and ]
 let ptrX = 0, ptrY = 0, ptrSeen = false;
 const camFwd = V3(0, 0, -1), camRight = V3(1, 0, 0), camUp = V3(0, 1, 0);
-const pivot = V3(), camPos = V3(), camPosS = V3(-46, 100, -220), lookS = V3();
+const pivot = V3(), camPos = V3(), camPosS = V3(-46, 100, -220);
 let camRoll = 0, fovS = 62;
 function updateCamDirs() {
   /* Right-handed, Y-up: screen-right is cross(forward, worldUp) and screen-up
@@ -2193,7 +2186,9 @@ addEventListener('keyup', e => {
 function respawn() {
   player.p.set(-46, 96, -230); player.v.set(6, 0, 22);
   player.webs[0].on = player.webs[1].on = false;
+  player.webs[0].pl = player.webs[1].pl = null;
   player.clinging = false;
+  player.riding = null;   // without this, R while riding snaps you back onto the hull
 }
 
 /* ---- audio ---- */
@@ -2397,7 +2392,6 @@ function drawMinimap() {
   const S = mapCan.width, Z = 2.0;
   mctx.clearRect(0, 0, S, S);
   mctx.save();
-  const f = 720 / (MAPR * 2) * Z;
   mctx.translate(S / 2, S / 2);
   mctx.scale(Z, Z);
   mctx.drawImage(mapBase, -360 - player.p.x * (720 / (MAPR * 2)), -360 - player.p.z * (720 / (MAPR * 2)));
