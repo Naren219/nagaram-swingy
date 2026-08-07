@@ -154,10 +154,14 @@
     color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
     -webkit-user-select:none;user-select:none;touch-action:none}
   .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
+  /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
+     which double as aim surfaces while held. Everything a player needs DURING
+     a swing — zip and dive — sits on the left, because the right thumb is
+     pinned on the web button for the whole arc. */
   #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--turmeric)}
   #tJump{right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:66px;width:64px;height:64px}
-  #tZip{right:calc(max(22px,env(safe-area-inset-right)) + 52px);bottom:198px;width:56px;height:56px}
-  #tTuck{right:calc(max(22px,env(safe-area-inset-right)) + 134px);bottom:148px;width:56px;height:56px}
+  #tZip{left:max(26px,env(safe-area-inset-left));bottom:246px;width:60px;height:60px;color:var(--lock)}
+  #tTuck{left:calc(max(26px,env(safe-area-inset-left)) + 92px);bottom:236px;width:60px;height:60px}
   #tBoard{left:50%;transform:translateX(-50%);bottom:96px;height:44px;width:auto;
     padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
   #tBoard.show{display:flex}
@@ -1588,6 +1592,24 @@ function solveContacts(p) {
   if (p.y < RAD) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
 }
 
+/* Which hull E would board right now. A web latched to a hull is boarding
+   access from any distance — you are literally attached, so E climbs the line
+   aboard. Without one, E reaches the nearest point on a hull's box, not its
+   centre: a centre test fails from a wingtip anchor even with the line winched
+   to minimum. The mobile board button shows exactly when this returns a hull. */
+function boardablePlane(P) {
+  for (const w of player.webs) if (w.on && w.pl) return w.pl;
+  let near = null, nd = 15 * 15;
+  for (const pl of planes) {
+    const dx = Math.max(Math.abs(P.x - pl.p.x) - PLANE_HX, 0);
+    const dy = Math.max(Math.abs(P.y - pl.p.y) - PLANE_HY, 0);
+    const dz = Math.max(Math.abs(P.z - pl.p.z) - PLANE_HZ, 0);
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d < nd) { nd = d; near = pl; }
+  }
+  return near;
+}
+
 const _pp = V3(), _tmp = V3(), _tmp2 = V3();
 function stepPhysics(h, inp) {
   const P = player.p, V = player.v;
@@ -1595,11 +1617,7 @@ function stepPhysics(h, inp) {
 
   /* ---- riding an aircraft ---- */
   if (!player.riding && inp.mount) {
-    let near = null, nd = 15 * 15;
-    for (const pl of planes) {
-      const d = (P.x - pl.p.x) ** 2 + (P.y - pl.p.y) ** 2 + (P.z - pl.p.z) ** 2;
-      if (d < nd) { nd = d; near = pl; }
-    }
+    const near = boardablePlane(P);
     if (near) {
       worldToPlane(near, P.x, P.y, P.z, player.rideLo);
       /* snap onto the spine of the fuselage rather than wherever you grabbed */
@@ -2336,7 +2354,8 @@ bindHold('tWeb',
   () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
   () => { held[0] = false; releaseWeb(0); },
   true);                                                // held web thumb also aims
-bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; });
+bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; },
+  true);                                                // a held glide steers with the same thumb
 bindHold('tZip', () => { keys['KeyQ'] = true; }, () => { keys['KeyQ'] = false; });
 bindHold('tTuck', () => { keys['ShiftLeft'] = true; }, () => { keys['ShiftLeft'] = false; });
 bindHold('tBoard', () => { mountEdge = true; }, () => {});
@@ -2823,12 +2842,9 @@ function frame() {
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
-  /* contextual board button: only when an aircraft is actually in reach */
+  /* contextual board button: shown exactly when E would board */
   if (touchOn) {
-    let nearPl = false;
-    if (!player.riding && !photoMode) for (const pl of planes) {
-      if ((player.p.x - pl.p.x) ** 2 + (player.p.y - pl.p.y) ** 2 + (player.p.z - pl.p.z) ** 2 < 15 * 15) { nearPl = true; break; }
-    }
+    const nearPl = !player.riding && !photoMode && !!boardablePlane(player.p);
     if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
   }
   renderer.render(scene, camera);

@@ -24,7 +24,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
-**Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows): the left region of the screen is a floating movement stick that appears wherever your thumb lands; hold-buttons on the right cover web / jump / zip / dive; dragging anywhere else looks. The **web button doubles as an aim surface** — keep it held to stay attached and drag the same thumb to steer the swing. A **board aircraft** button appears whenever a plane is in reach. Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
+**Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows) split the controls by hand role. The right thumb owns the two held primaries: **web** and **jump/glide**, and both double as aim surfaces — keep the button held and drag the same thumb to steer. The left hand owns movement plus everything you need *during* a swing, while the right thumb is pinned on the web: a floating stick that appears wherever the thumb lands (steer + winch), with **zip** and **dive** just above it. A **board aircraft** button appears whenever a plane is in reach. Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
 
 Other things to know:
 
