@@ -81,7 +81,7 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 48 checks across a desktop pass, a landscape-touch pass, and a portrait pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 70 checks across a desktop pass, a landscape-touch pass, and a portrait pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
 ```sh
 npm install                       # one devDependency: playwright
