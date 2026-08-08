@@ -11,6 +11,34 @@ const REEL = 15, SUB = 1 / 120;
    it only changes which velocity feeds the aero model, so drag and lift see
    airspeed instead of ground speed. Gliding becomes a negotiation with the
    monsoon breeze rather than a solved function of your own motion. */
+/* Thermals — columns of rising air over the sun-baked marina sand, the tech
+   park's glass and concrete, and the maidan. They are the VERTICAL component of
+   the wind rather than a bespoke force, so the existing drag and lift model
+   does all the work: a glider climbs because the air it is flying through is
+   climbing, and spreading the wings to glide catches the rise harder than
+   falling does (higher drag coefficient, same air). Gliding gains altitude;
+   plummeting through one only slows you down. */
+const THERMALS = [
+  { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
+  { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
+  { x: -300, z: -140, r: 52 },                              // the maidan
+];
+const THERM_V = 36;        // m/s of rise on the axis
+const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
+function thermalAt(x, y, z) {
+  let v = 0;
+  for (const t of THERMALS) {
+    const dx = x - t.x, dz = z - t.z;
+    const d2 = dx * dx + dz * dz, r2 = t.r * t.r;
+    if (d2 >= r2) continue;
+    const core = 1 - d2 / r2;                                  // strongest on the axis
+    const alt = 1 - sstep(THERM_TOP * 0.55, THERM_TOP, y);
+    const w = THERM_V * core * alt;
+    if (w > v) v = w;
+  }
+  return v;
+}
+
 const WIND = V3();
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
@@ -171,8 +199,10 @@ function stepPhysics(h, inp) {
   let ax = 0, ay = -G, az = 0;
 
   /* the aero model runs on airspeed: velocity relative to the wind */
-  const wfx = player.inWater ? 0 : WIND.x, wfz = player.inWater ? 0 : WIND.z;
-  const rvx = V.x - wfx, rvy = V.y, rvz = V.z - wfz;
+  const calm = player.inWater;
+  const wfx = calm ? 0 : WIND.x, wfz = calm ? 0 : WIND.z;
+  const wfy = calm ? 0 : thermalAt(P.x, P.y, P.z);
+  const rvx = V.x - wfx, rvy = V.y - wfy, rvz = V.z - wfz;
   const rs = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
   let cd = DRAG_AIR;

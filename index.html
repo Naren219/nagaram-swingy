@@ -1582,6 +1582,34 @@ const REEL = 15, SUB = 1 / 120;
    it only changes which velocity feeds the aero model, so drag and lift see
    airspeed instead of ground speed. Gliding becomes a negotiation with the
    monsoon breeze rather than a solved function of your own motion. */
+/* Thermals — columns of rising air over the sun-baked marina sand, the tech
+   park's glass and concrete, and the maidan. They are the VERTICAL component of
+   the wind rather than a bespoke force, so the existing drag and lift model
+   does all the work: a glider climbs because the air it is flying through is
+   climbing, and spreading the wings to glide catches the rise harder than
+   falling does (higher drag coefficient, same air). Gliding gains altitude;
+   plummeting through one only slows you down. */
+const THERMALS = [
+  { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
+  { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
+  { x: -300, z: -140, r: 52 },                              // the maidan
+];
+const THERM_V = 36;        // m/s of rise on the axis
+const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
+function thermalAt(x, y, z) {
+  let v = 0;
+  for (const t of THERMALS) {
+    const dx = x - t.x, dz = z - t.z;
+    const d2 = dx * dx + dz * dz, r2 = t.r * t.r;
+    if (d2 >= r2) continue;
+    const core = 1 - d2 / r2;                                  // strongest on the axis
+    const alt = 1 - sstep(THERM_TOP * 0.55, THERM_TOP, y);
+    const w = THERM_V * core * alt;
+    if (w > v) v = w;
+  }
+  return v;
+}
+
 const WIND = V3();
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
@@ -1742,8 +1770,10 @@ function stepPhysics(h, inp) {
   let ax = 0, ay = -G, az = 0;
 
   /* the aero model runs on airspeed: velocity relative to the wind */
-  const wfx = player.inWater ? 0 : WIND.x, wfz = player.inWater ? 0 : WIND.z;
-  const rvx = V.x - wfx, rvy = V.y, rvz = V.z - wfz;
+  const calm = player.inWater;
+  const wfx = calm ? 0 : WIND.x, wfz = calm ? 0 : WIND.z;
+  const wfy = calm ? 0 : thermalAt(P.x, P.y, P.z);
+  const rvx = V.x - wfx, rvy = V.y - wfy, rvz = V.z - wfz;
   const rs = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
   let cd = DRAG_AIR;
@@ -1948,6 +1978,64 @@ function releaseWeb(i) {
   }
 }
 
+/* =====================================================================
+   THERMAL MOTES
+   A thermal you cannot see is a thermal nobody finds. Dust and chaff torn
+   off the hot sand mark each column: they rise, swirl, and recycle at the
+   bottom. Read-only decoration — the physics is in thermalAt().
+   ===================================================================== */
+const MOTE_GEO = new THREE.BoxGeometry(1.5, 0.08, 0.95);
+const moteMat = new THREE.MeshLambertMaterial({
+  vertexColors: false, color: SRGB(0xd8c49a), transparent: true, opacity: 0.5, depthWrite: false });
+const MOTES_PER = 62;
+const motes = [];
+const moteMesh = new THREE.InstancedMesh(MOTE_GEO, moteMat, THERMALS.length * MOTES_PER);
+moteMesh.frustumCulled = false; moteMesh.castShadow = false;
+scene.add(moteMesh);
+for (const t of THERMALS) {
+  for (let i = 0; i < MOTES_PER; i++) {
+    motes.push({
+      t,
+      rad: Math.sqrt(rnd(0.02, 0.85)) * t.r,   // sqrt keeps them evenly spread, not clumped on the axis
+      ang: rnd(0, TAU),
+      ph: rnd(0, 1),                            // where it is in its climb
+      spin: rnd(0.6, 2.4) * (R() < 0.5 ? -1 : 1),
+      rise: rnd(0.55, 1.0)                      // fraction of the column climbed per cycle time
+    });
+  }
+}
+/* A faint haze column so a thermal is legible from across the bay, not just
+   when you are inside it. Same trick as the lighthouse beam: a translucent
+   shell that never writes depth. */
+const MOTE_TOP = 190, MOTE_CYCLE = 26;
+for (const t of THERMALS) {
+  const haze = new THREE.Mesh(
+    new THREE.CylinderGeometry(t.r * 0.30, t.r * 0.80, MOTE_TOP, 18, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xe8d3a6, transparent: true, opacity: 0.05,
+      side: THREE.DoubleSide, depthWrite: false }));
+  haze.position.set(t.x, MOTE_TOP / 2 + 3, t.z);
+  haze.frustumCulled = false;
+  scene.add(haze);
+}
+function updateMotes(t) {
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = V3();
+  for (let i = 0; i < motes.length; i++) {
+    const o = motes[i];
+    const p = (o.ph + (t / MOTE_CYCLE) * o.rise) % 1;
+    const y = 4 + p * MOTE_TOP;
+    /* the column leans and narrows as it climbs, so it reads as a rising body
+       of air rather than a cylinder of confetti */
+    const swirl = o.ang + y * 0.018 + t * 0.06;
+    const spread = 1 - 0.45 * p;
+    v.set(o.t.x + Math.cos(swirl) * o.rad * spread, y, o.t.z + Math.sin(swirl) * o.rad * spread);
+    e.set(t * o.spin, swirl, Math.sin(t * o.spin * 0.7) * 0.9);
+    /* fade in at the bottom and out at the top instead of popping */
+    const s = 1.9 * sstep(0, 0.06, p) * (1 - sstep(0.74, 1, p));
+    m.compose(v, q.setFromEuler(e), V3(s, s, s));
+    moteMesh.setMatrixAt(i, m);
+  }
+  moteMesh.instanceMatrix.needsUpdate = true;
+}
 /* =====================================================================
    CHARACTER RIG
    ===================================================================== */
@@ -2947,6 +3035,7 @@ function frame() {
   /* ---- world ---- */
   updateTraffic(dt);
   updateProps(T);
+  updateMotes(T);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);
   beacon.rotation.y = T * 0.9;

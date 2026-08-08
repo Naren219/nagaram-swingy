@@ -256,6 +256,48 @@ const server = http.createServer((req, res) => {
     });
     check('no NaN in any geometry', nan === 0, nan + ' meshes affected');
 
+    /* Thermals. Climb rate is measured with the position pinned inside the
+       column: unpinned, a 30 m/s glide leaves a 64 m thermal in two seconds and
+       the reading silently becomes 'air outside a thermal' (it did, first try). */
+    const therm = await page.evaluate(() => {
+      const was = paused; paused = true;              // stop frame() stepping underneath us
+      function climb({ x, z, glide, pitch = 0.10, hold = 90, secs = 8 }) {
+        player.riding = null; player.clinging = false; player.grounded = false;
+        player.webs[0].on = player.webs[1].on = false;
+        player.p.set(x, hold, z); player.v.set(30, 0, 0);
+        const i = { fwd: V3(Math.cos(pitch), Math.sin(pitch), 0), mx: 0, mz: 0, mzRaw: 0, jump: false,
+          glide, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false, mount: false };
+        WIND.set(0, 0, 0);
+        for (let k = 0, n = Math.round(secs / SUB); k < n; k++) {
+          player.grounded = false; stepPhysics(SUB, i); player.p.set(x, hold, z);
+        }
+        return +player.v.y.toFixed(1);
+      }
+      const T = THERMALS[0];
+      const out = {
+        core: +thermalAt(T.x, 90, T.z).toFixed(1),
+        outside: +thermalAt(T.x + T.r + 5, 90, T.z).toFixed(1),
+        ceiling: +thermalAt(T.x, 240, T.z).toFixed(1),
+        glideIn: climb({ x: T.x, z: T.z, glide: true }),
+        glideOut: climb({ x: 0, z: -400, glide: true }),
+        fallIn: climb({ x: T.x, z: T.z, glide: false }),
+        fallOut: climb({ x: 0, z: -400, glide: false }),
+      };
+      paused = was; respawn();
+      return out;
+    });
+    check('thermal is bounded: lift at the core, none outside or above',
+      therm.core > 0 && therm.outside === 0 && therm.ceiling === 0,
+      'core ' + therm.core + ' m/s');
+    check('gliding inside a thermal GAINS altitude', therm.glideIn > 2,
+      therm.glideIn + ' m/s climb vs ' + therm.glideOut + ' outside');
+    check('gliding outside still sinks', therm.glideOut < 0);
+    check('falling through a thermal does not climb', therm.fallIn < 0,
+      therm.fallIn + ' m/s');
+    check('but a thermal does slow a fall', therm.fallIn > therm.fallOut,
+      therm.fallIn + ' vs ' + therm.fallOut + ' m/s outside');
+    check('spreading the wings beats falling through', therm.glideIn > therm.fallIn + 10);
+
     /* settings persistence across reload */
     await page.evaluate(() => { sens = 0.0071; assist = false; saveSettings(); });
     await page.reload({ waitUntil: 'load' });
