@@ -218,6 +218,44 @@ const server = http.createServer((req, res) => {
     await page.screenshot({ path: SHOTS + '/flip.png' });
     await page.evaluate(() => { flipT = 1e9; paused = false; respawn(); });
 
+    /* gopuram gateways: a gopuram is a gate, so the passage must be passable
+       and the piers/lintel around it must not be. Rays start inside the
+       courtyard and shoot outward, isolating the precinct from city clutter. */
+    const gates = await page.evaluate(() => {
+      const shot = (ox, oy, oz, dx, dy, dz, t) => { const h = rayHit(ox, oy, oz, dx, dy, dz, t); return h ? +h.t.toFixed(1) : null; };
+      return {
+        northOpen:   shot(0, 4, -100, 0, 0, -1, 40),
+        northPier:   shot(8, 4, -100, 0, 0, -1, 40),
+        northLintel: shot(0, 9, -100, 0, 0, -1, 40),
+        eastOpen:    shot(100, 4, 0, 1, 0, 0, 36),
+        archOpen:    shot(34, 3, -100, 0, 0, -1, 36),
+        wallSolid:   shot(55, 3, -100, 0, 0, -1, 36),
+        aboveArch:   shot(34, 9, -100, 0, 0, -1, 36),
+        inPrecinct:  buildings.filter(b => Math.abs(b.x) < 132 && Math.abs(b.z) < 132).length,
+        gateW: +(GOPURAMS[0].gap).toFixed(1), gateH: +(GOPURAMS[0].openH).toFixed(1)
+      };
+    });
+    check('gopuram gateway is open through the middle', gates.northOpen === null && gates.eastOpen === null,
+      'clear ' + gates.gateW + ' m wide x ' + gates.gateH + ' m high');
+    check('gate piers still block', gates.northPier !== null, 'hit at ' + gates.northPier + ' m');
+    check('gate lintel still blocks above the opening', gates.northLintel !== null, 'hit at ' + gates.northLintel + ' m');
+    check('prakaram arches are passable', gates.archOpen === null);
+    check('wall between arches is solid', gates.wallSolid !== null, 'hit at ' + gates.wallSolid + ' m');
+    check('wall above an arch is solid', gates.aboveArch !== null, 'hit at ' + gates.aboveArch + ' m');
+    check('no buildings inside the prakaram', gates.inPrecinct === 0, gates.inPrecinct + ' found');
+
+    /* merged-geometry NaN scan: two undefined fields once poisoned a whole mesh */
+    const nan = await page.evaluate(() => {
+      let bad = 0;
+      scene.traverse(o => {
+        const g = o.geometry; if (!g || !g.attributes || !g.attributes.position) return;
+        const a = g.attributes.position.array;
+        for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) { bad++; break; }
+      });
+      return bad;
+    });
+    check('no NaN in any geometry', nan === 0, nan + ' meshes affected');
+
     /* settings persistence across reload */
     await page.evaluate(() => { sens = 0.0071; assist = false; saveSettings(); });
     await page.reload({ waitUntil: 'load' });

@@ -424,6 +424,10 @@ function addBuilding(x, z, w, d, h, c, kind) {
 
 /* --- temple precinct (reserved) --- */
 const TEMPLE = { x: 0, z: 0, r: 104 };
+/* The prakaram is a square wall at +/-132, but the build exclusion was a circle
+   of radius 126 — so the courtyard corners filled with houses, on top of the
+   plaza the ground texture already paints there. Keep the whole precinct clear. */
+const PRECINCT = 140;
 
 function genCity() {
   for (let cx = -EXT; cx <= EXT; cx += PITCH) {
@@ -453,6 +457,7 @@ function genCity() {
       for (const [ox, oz, w, d] of lots) {
         const x = cx + ox + rnd(-2.5, 2.5), z = cz + oz + rnd(-2.5, 2.5);
         if (Math.hypot(x, z) < TEMPLE.r + 22) continue;
+        if (Math.abs(x) < PRECINCT && Math.abs(z) < PRECINCT) continue;
         if (Math.abs(z - riverZ(x)) < RIVER_HW + 14) continue;
         if (x + w / 2 > SAND_X - 4) continue;
         let h, kind = 'res', c;
@@ -491,20 +496,61 @@ const GOPURAMS = [
   { x: 0, z: -132, rot: 0, h: 68 }, { x: 0, z: 132, rot: PI, h: 64 },
   { x: -132, z: 0, rot: -PI / 2, h: 58 }, { x: 132, z: 0, rot: PI / 2, h: 58 }
 ];
+/* A gopuram is architecturally a GATEWAY, so these are gates, not solid blocks.
+   Both the collision boxes below and the mesh builder derive the passage from
+   these two fractions — one source of truth, so what you see through the arch
+   is exactly what you can fly through. */
+const GATE_W = 0.34;      // clear width, as a fraction of the long axis
+const GATE_H = 0.80;      // clear height, as a fraction of the plinth
 for (const g of GOPURAMS) {
   const wide = Math.abs(Math.cos(g.rot)) > 0.5;
   const bw = wide ? 24 : 15, bd = wide ? 15 : 24;
   g.bw = bw; g.bd = bd;                 // needed later by the gopuram mesh builder
+  /* the passage runs through the SHORT axis; the piers stand either side of it
+     along the long axis, which is the one lying in the prakaram wall */
+  const lng = Math.max(bw, bd);
+  const plinth = g.h * 0.14, baseH = g.h * 0.35;
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  const off = (gap + pierW) / 2;
+  g.wide = wide; g.gap = gap; g.openH = openH;
   landmarks.push({ type: 'gopuram', ...g, bw, bd });
-  addBox(g.x, 0, g.z, bw, g.h * 0.35, bd);
-  addBox(g.x, g.h * 0.35, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
+  for (const sgn of [-1, 1]) {
+    if (wide) addBox(g.x + sgn * off, 0, g.z, pierW, baseH, bd);
+    else      addBox(g.x, 0, g.z + sgn * off, bw, baseH, pierW);
+  }
+  /* lintel: solid again above the opening, so the tower still rests on something */
+  if (wide) addBox(g.x, openH, g.z, gap, baseH - openH, bd);
+  else      addBox(g.x, openH, g.z, bw, baseH - openH, gap);
+  addBox(g.x, baseH, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
   addBox(g.x, g.h * 0.70, g.z, bw * 0.46, g.h * 0.30, bd * 0.46);
 }
-/* prakaram walls */
-const PW = 132;
+/* prakaram walls. Pierced, or the gopuram gates would open onto a fence: the
+   centre opening clears the gate itself, the flanking ones are low arches that
+   reward threading at speed. [offset along the wall, clear width, clear height] */
+const PW = 132, WALL_H = 11;
+const WALL_GAPS = [[-74, 9, 7.4], [-34, 9, 7.4], [0, 15, WALL_H], [34, 9, 7.4], [74, 9, 7.4]];
 for (const [ax, az, w, d] of [[0, -PW, 224, 6], [0, PW, 224, 6], [-PW, 0, 6, 224], [PW, 0, 6, 224]]) {
-  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: 11 });
-  addBox(ax, 0, az, w, 11, d);
+  const along = w > d;                  // true when the wall runs along x
+  const L = along ? w : d, th = along ? d : w;
+  /* solid runs are whatever is left between the openings */
+  const edges = [-L / 2];
+  for (const [o, gw] of WALL_GAPS) edges.push(o - gw / 2, o + gw / 2);
+  edges.push(L / 2);
+  const segs = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    if (edges[i + 1] - edges[i] > 0.01) segs.push([edges[i], edges[i + 1]]);
+  }
+  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: WALL_H, along, th, segs, gaps: WALL_GAPS });
+  for (const [a, b] of segs) {
+    const c = (a + b) / 2, len = b - a;
+    if (along) addBox(ax + c, 0, az, len, WALL_H, th);
+    else       addBox(ax, 0, az + c, th, WALL_H, len);
+  }
+  for (const [o, gw, gh] of WALL_GAPS) {
+    if (gh >= WALL_H) continue;         // full-height opening needs no lintel
+    if (along) addBox(ax + o, gh, az, gw, WALL_H - gh, th);
+    else       addBox(ax, gh, az + o, th, WALL_H - gh, gw);
+  }
 }
 landmarks.push({ type: 'vimana', x: 0, z: 0, h: 44 });
 addBox(0, 0, 0, 34, 16, 34); addBox(0, 16, 0, 22, 16, 22); addBox(0, 32, 0, 12, 12, 12);
@@ -1006,10 +1052,20 @@ const SPH = new THREE.SphereGeometry(1, 10, 8);
 
 function gopuramParts(h, lng, shrt) {
   const p = [], tiers = 9, plinth = h * 0.14, tierH = (h - plinth) / (tiers + 1.1);
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng, plinth, shrt), color: STONE });
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 1.06, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
-  /* gateway void suggested by two dark jambs */
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 0.26, plinth * 0.92, shrt * 1.02), color: 0x2a2723 });
+  /* The base is a real gateway: two piers with a passage between them. The
+     numbers come from GATE_W / GATE_H, the same pair the collision boxes use,
+     and nothing overhangs into the void — so the opening you can see through
+     is exactly the opening you can fly through. */
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  for (const sgn of [-1, 1]) {
+    const cx = sgn * (gap + pierW) / 2;
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW, plinth, shrt), color: STONE });
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW * 1.04, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
+    /* jamb, flush with the pier face rather than proud of it */
+    p.push({ geo: BOXB, matrix: M4(sgn * (gap / 2 + 0.3), 0, 0, 0.6, openH, shrt * 1.01), color: 0x2a2723 });
+  }
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap, plinth - openH, shrt), color: STONE });
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap * 1.02, 0.7, shrt * 1.02), color: 0xcf6a4a });
   let y = plinth, w = lng * 0.94, d = shrt * 0.94;
   for (let i = 0; i < tiers; i++) {
     const w1 = w * 0.885, d1 = d * 0.885;
@@ -1046,13 +1102,35 @@ for (const g of GOPURAMS) {
 /* prakaram walls, capped with a red-and-white kumkum stripe */
 for (const l of landmarks) {
   if (l.type !== 'wall') continue;
-  push([{ geo: BOXB, matrix: M4(l.x, 0, l.z, l.w, l.h, l.d), color: LIME },
-        { geo: BOXB, matrix: M4(l.x, l.h, l.z, l.w * 1.04, 0.8, l.d * 2.6), color: 0xcf6a4a }]);
-  const along = l.w > l.d;
-  const n = 26;
-  for (let i = 0; i < n; i++) {
-    const t = (-0.5 + (i + 0.5) / n);
-    push([{ geo: BOXB, matrix: M4(l.x + (along ? t * l.w : 0), 0, l.z + (along ? 0 : t * l.w), along ? 3.2 : l.d * 1.6, l.h * 0.97, along ? l.d * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+  const along = l.along, th = l.th, H = l.h;
+  /* built from the same segment list the collision boxes came from, so a gap
+     you can see is a gap you can pass */
+  const slab = (cen, len, y, hgt, color) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, y, pz, along ? len : th, hgt, along ? th : len), color }]);
+  };
+  const cap = (cen, len) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, H, pz, along ? len * 1.02 : th * 2.6, 0.8, along ? th * 2.6 : len * 1.02), color: 0xcf6a4a }]);
+  };
+  for (const [a, b] of l.segs) {
+    const len = b - a, cen = (a + b) / 2;
+    slab(cen, len, 0, H, LIME);
+    cap(cen, len);
+    /* kumkum stripes, spaced along each run rather than the whole wall */
+    const n = Math.max(1, Math.round(len / 8.6));
+    for (let i = 0; i < n; i++) {
+      const t = a + (i + 0.5) * (len / n);
+      const px = l.x + (along ? t : 0), pz = l.z + (along ? 0 : t);
+      push([{ geo: BOXB, matrix: M4(px, 0, pz, along ? 3.2 : th * 1.6, H * 0.97, along ? th * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+    }
+  }
+  /* lintel over each low opening */
+  for (const [o, gw, gh] of l.gaps) {
+    if (gh >= H) continue;
+    slab(o, gw, gh, H - gh, LIME);
+    cap(o, gw);
+    slab(o, gw * 1.01, gh, 0.6, 0xcf6a4a);
   }
 }
 /* vimana over the sanctum */
