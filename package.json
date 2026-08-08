@@ -1,0 +1,10 @@
+{
+  "name": "nagaram",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based third-person web-swinging sandbox",
+  "scripts": {
+    "build": "node tools/build.js",
+    "check": "node tools/build.js --check"
+  }
+}
