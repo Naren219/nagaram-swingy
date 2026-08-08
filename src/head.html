@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NAGARAM — web-swing sandbox</title>
+<!-- gopuram mark, inline so the page still makes zero extra requests -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20fill=%22%23171a1c%22/%3E%3Cpath%20d=%22M6%2027h20L22%209h-3l-1-4h-4l-1%204H10z%22%20fill=%22%23e8a92b%22/%3E%3Crect%20x=%2214%22%20y=%2215%22%20width=%224%22%20height=%2212%22%20fill=%22%23d5352b%22/%3E%3C/svg%3E">
+<style>
+  :root{
+    --granite:#171a1c;      /* Mahabalipuram granite */
+    --chalk:#efe7d6;        /* temple lime wash */
+    --vermilion:#d5352b;    /* kumkum stripe */
+    --turmeric:#e8a92b;     /* gopuram band */
+    --malachite:#1f7a63;    /* Bay of Bengal */
+    --ink:rgba(10,12,13,.72);
+    --hair:rgba(239,231,214,.22);
+    --lock:#3ef0ff;         /* target cyan — nothing else in the palette is cool */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#05070a;color:var(--chalk);
+    font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Noto Sans Tamil",sans-serif;
+    -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
+  canvas{display:block}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
+
+  /* ---- speed vignette ---- */
+  #rush{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:4;
+    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(4,10,14,.85) 100%);
+    transition:opacity .12s linear}
+
+  /* ---- inscription band: the signature element ---- */
+  #band{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:stretch;
+    height:74px;background:linear-gradient(0deg,rgba(8,10,11,.9),rgba(8,10,11,.35));
+    border-top:1px solid var(--hair)}
+  #band::before{content:"";position:absolute;top:-3px;left:0;right:0;height:2px;
+    background:repeating-linear-gradient(90deg,var(--vermilion) 0 26px,var(--turmeric) 26px 34px,transparent 34px 60px);
+    opacity:.75}
+  .cell{flex:0 0 auto;padding:12px 20px 10px;border-right:1px solid var(--hair);min-width:118px}
+  .cell:last-child{border-right:0}
+  .k{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;opacity:.55;white-space:nowrap}
+  .k b{font-weight:500;letter-spacing:.02em;opacity:.85}
+  .v{font:600 26px/1.05 ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:5px;
+    font-variant-numeric:tabular-nums}
+  .v small{font-size:11px;opacity:.5;font-weight:400;margin-left:3px}
+  #vTen .v{color:var(--turmeric)}
+  #vSpd .v{color:var(--chalk)}
+  .grow{flex:1 1 auto;border-right:0}
+  #zone{padding:14px 20px;text-align:right;opacity:.8}
+  #zone .en{font-size:15px;letter-spacing:.22em;text-transform:uppercase;opacity:.75}
+
+  /* ---- tension bar ---- */
+  #tbar{position:absolute;left:0;bottom:74px;height:2px;width:0%;
+    background:linear-gradient(90deg,var(--malachite),var(--turmeric),var(--vermilion));transition:width .05s linear}
+
+  /* ---- crosshair ---- */
+  #cross{position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px}
+  #cross i{position:absolute;background:var(--chalk);opacity:.55;transition:all .12s ease}
+  #cross i:nth-child(1){left:19px;top:0;width:2px;height:9px}
+  #cross i:nth-child(2){left:19px;bottom:0;width:2px;height:9px}
+  #cross i:nth-child(3){top:19px;left:0;height:2px;width:9px}
+  #cross i:nth-child(4){top:19px;right:0;height:2px;width:9px}
+  #cross.lock i{opacity:1;background:var(--lock);box-shadow:0 0 9px rgba(62,240,255,.85),0 0 2px rgba(0,0,0,.9)}
+  #cross.lock i:nth-child(1){height:5px}#cross.lock i:nth-child(2){height:5px}
+  #cross.lock i:nth-child(3){width:5px}#cross.lock i:nth-child(4){width:5px}
+  #cross b{position:absolute;left:18px;top:18px;width:4px;height:4px;border-radius:50%;
+    background:var(--vermilion);opacity:0;transition:opacity .1s}
+  #cross.web b{opacity:1}
+  #cross.miss i{background:var(--vermilion);opacity:.95;box-shadow:0 0 8px rgba(207,58,42,.8)}
+  #cross.miss{animation:missPulse .22s ease-out}
+  @keyframes missPulse{from{transform:scale(1.55)}to{transform:scale(1)}}
+
+  /* ---- minimap ---- */
+  #mapwrap{position:absolute;right:18px;top:18px;width:168px;height:168px;
+    border:1px solid var(--hair);background:rgba(6,9,10,.6);backdrop-filter:blur(3px)}
+  #mapwrap canvas{width:100%;height:100%;opacity:.92}
+  #mapwrap::after{content:"nagaram";position:absolute;left:7px;bottom:5px;font-size:11px;opacity:.5}
+
+  /* ---- free-look steering ring (shown when pointer lock is unavailable) ---- */
+  #look{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s ease}
+  #look.on{opacity:1}
+  body.freelook canvas{cursor:none}
+  #look .ring{position:absolute;left:50%;top:50%;width:15vmin;height:15vmin;margin:-7.5vmin 0 0 -7.5vmin;
+    border:1px dashed var(--hair);border-radius:50%;opacity:.55}
+  #look .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
+    background:var(--turmeric);box-shadow:0 0 10px rgba(232,169,43,.85);opacity:.9}
+  #look .vec{position:absolute;left:50%;top:50%;height:1px;transform-origin:0 50%;
+    background:linear-gradient(90deg,rgba(232,169,43,0),rgba(232,169,43,.75))}
+
+  /* ---- transient readout (sensitivity, mode changes) ---- */
+  #toast{position:absolute;left:50%;top:16%;transform:translateX(-50%);
+    padding:7px 15px;border:1px solid var(--hair);background:rgba(14,15,17,.72);
+    font:11px/1 ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--turmeric);opacity:0;transition:opacity .2s ease;white-space:nowrap}
+  #toast.on{opacity:.92}
+
+  /* ---- help ---- */
+  #help{position:absolute;left:18px;top:18px;max-width:330px;padding:16px 18px 15px;
+    background:var(--ink);border:1px solid var(--hair);backdrop-filter:blur(6px);
+    font-size:12px;line-height:1.62}
+  #help h1{font-size:12px;letter-spacing:.34em;font-weight:600;margin-bottom:2px}
+  #help .sub{font-size:10.5px;letter-spacing:.1em;opacity:.5;margin-bottom:12px}
+  #help table{border-collapse:collapse;width:100%}
+  #help td{padding:1.5px 0;vertical-align:top}
+  #help td:first-child{width:104px;color:var(--turmeric);font:11px/1.6 ui-monospace,monospace;
+    white-space:nowrap;padding-right:10px}
+  #help .hint{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair);opacity:.6;font-size:11px}
+  #help.hide{display:none}
+
+  /* ---- start / lock overlay ---- */
+  #gate{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:6px;cursor:pointer;
+    background:radial-gradient(ellipse at 50% 62%,rgba(20,28,32,.55),rgba(3,5,7,.94) 70%);
+    backdrop-filter:blur(2px)}
+  #gate h2{font-size:clamp(34px,7vw,74px);letter-spacing:.16em;font-weight:600}
+  #gate p{margin-top:16px;font-size:12px;letter-spacing:.26em;text-transform:uppercase;opacity:.65}
+  #gate .rule{width:min(420px,70vw);height:1px;margin:18px 0 2px;
+    background:linear-gradient(90deg,transparent,var(--vermilion),var(--turmeric),transparent)}
+  #gate.gone{display:none}
+
+  /* ---- pause ---- */
+  #pbtn{position:absolute;top:16px;right:16px;z-index:14;pointer-events:auto;cursor:pointer;
+    width:34px;height:34px;border:1px solid var(--hair);background:rgba(14,15,17,.6);
+    display:flex;align-items:center;justify-content:center;gap:4px;transition:border-color .15s}
+  #pbtn:hover{border-color:var(--turmeric)}
+  #pbtn i{width:3px;height:13px;background:var(--turmeric);opacity:.85}
+  #pbtn.on i:first-child{width:0;height:0;background:none;
+    border-left:11px solid var(--turmeric);border-top:7px solid transparent;border-bottom:7px solid transparent}
+  #pbtn.on i:last-child{display:none}
+  #pause{position:fixed;inset:0;z-index:24;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:6px;cursor:pointer;
+    background:rgba(10,11,13,.74);backdrop-filter:blur(3px)}
+  #pause.on{display:flex}
+  #pause h3{font-size:clamp(20px,4vw,34px);letter-spacing:.22em;font-weight:500}
+  #pause p{margin-top:14px;font-size:11px;letter-spacing:.26em;text-transform:uppercase;opacity:.6}
+  #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
+    background:#05070a;font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.8}
+  #load.gone{display:none}
+  /* ---- photo mode: nothing between the eye and the city ---- */
+  body.photo #hud,body.photo #pbtn{display:none}
+
+  /* ---- touch controls (shown once a touch is seen) ---- */
+  #touch{position:fixed;inset:0;z-index:6;pointer-events:none;display:none}
+  body.touch #touch{display:block}
+  body.touch #help{display:none}
+  /* The stick visual is display-only: the whole left region of the screen is
+     the stick zone, and the base floats to wherever the thumb lands. */
+  #tStick{position:absolute;left:max(26px,env(safe-area-inset-left));bottom:106px;width:120px;height:120px;
+    border:1px solid var(--hair);border-radius:50%;background:rgba(10,12,13,.30);
+    opacity:.55;transition:opacity .18s;pointer-events:none}
+  #tStick.live{opacity:1;transition:none}
+  #tStick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+    border-radius:50%;background:rgba(232,169,43,.45);border:1px solid var(--turmeric)}
+  .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
+    display:flex;align-items:center;justify-content:center;background:rgba(10,12,13,.42);
+    color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
+    -webkit-user-select:none;user-select:none;touch-action:none}
+  .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
+  /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
+     which double as aim surfaces while held. Everything a player needs DURING
+     a swing — zip and dive — sits on the left, because the right thumb is
+     pinned on the web button for the whole arc. */
+  #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--turmeric)}
+  #tJump{right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:66px;width:64px;height:64px}
+  #tZip{left:max(26px,env(safe-area-inset-left));bottom:246px;width:60px;height:60px;color:var(--lock)}
+  #tTuck{left:calc(max(26px,env(safe-area-inset-left)) + 92px);bottom:236px;width:60px;height:60px}
+  #tBoard{left:50%;transform:translateX(-50%);bottom:96px;height:44px;width:auto;
+    padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
+  #tBoard.show{display:flex}
+
+  /* ---- landscape only on touch ---- */
+  #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:18px;background:#05070a}
+  #rotate .ph{width:64px;height:38px;border:2px solid var(--turmeric);border-radius:7px;
+    animation:phTurn 1.8s ease-in-out infinite}
+  @keyframes phTurn{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
+  #rotate p{font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.7}
+  @media (orientation: portrait){body.touch #rotate{display:flex}}
+
+  @media (max-width:760px){#help,#mapwrap{display:none}.cell{min-width:88px;padding:10px 13px}
+    .v{font-size:20px}#band{height:62px}#tbar{bottom:62px}}
+  /* phone landscape: the minimap would sit on the button cluster */
+  @media (max-height:500px){body.touch #mapwrap{display:none}}
+</style>
+</head>
+<body>
+<div id="load">generating nagaram…</div>
+<div id="rush"></div>
+<div id="hud">
+  <div id="cross"><i></i><i></i><i></i><i></i><b></b></div>
+  <div id="look"><div class="ring"></div><div class="vec"></div><div class="dot"></div></div>
+  <div id="toast"></div>
+  <div id="mapwrap"><canvas id="map" width="336" height="336"></canvas></div>
+  <div id="help">
+    <h1>NAGARAM</h1>
+    <div class="sub">web-swing sandbox · coromandel coast</div>
+    <table>
+      <tr><td>mouse</td><td>look</td></tr>
+      <tr><td>arrows</td><td>look (always available)</td></tr>
+      <tr><td>[ / ]</td><td>look sensitivity</td></tr>
+      <tr><td>esc</td><td>pause</td></tr>
+      <tr><td>L / R click</td><td>fire left / right web (hold)</td></tr>
+      <tr><td>W / S</td><td>winch in / pay out line</td></tr>
+      <tr><td>A / D</td><td>steer + bank</td></tr>
+      <tr><td>space</td><td>jump · hold in air to glide</td></tr>
+      <tr><td>shift</td><td>tuck &amp; dive</td></tr>
+      <tr><td>Q</td><td>zip to anchor</td></tr>
+      <tr><td>E</td><td>cling to wall &middot; board an aircraft</td></tr>
+      <tr><td>T / F / M</td><td>time of day · assist · mute</td></tr>
+      <tr><td>C</td><td>photo mode</td></tr>
+      <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
+    </table>
+    <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
+  </div>
+  <div id="tbar"></div>
+  <div id="band">
+    <div class="cell" id="vSpd"><div class="k">speed</div><div class="v">0<small>km/h</small></div></div>
+    <div class="cell" id="vAlt"><div class="k">altitude</div><div class="v">0<small>m</small></div></div>
+    <div class="cell" id="vTen"><div class="k">tension</div><div class="v">0<small>kN</small></div></div>
+    <div class="cell" id="vLen"><div class="k">line</div><div class="v">—</div></div>
+    <div class="cell grow"></div>
+    <div class="cell" id="zone"><div class="en">temple ward</div></div>
+  </div>
+</div>
+<div id="touch">
+  <div id="tStick"><div class="nub"></div></div>
+  <div class="tbtn" id="tWeb">web</div>
+  <div class="tbtn" id="tJump">jump</div>
+  <div class="tbtn" id="tZip">zip</div>
+  <div class="tbtn" id="tTuck">dive</div>
+  <div class="tbtn" id="tBoard">board aircraft</div>
+</div>
+<div id="rotate"><div class="ph"></div><p>rotate to landscape</p></div>
+<div id="pbtn"><i></i><i></i></div>
+<div id="pause">
+  <h3>PAUSED</h3>
+  <p>click anywhere to resume</p>
+</div>
+<div id="gate">
+  <h2>NAGARAM</h2>
+  <div class="rule"></div>
+  <p>click to swing</p>
+</div>
+<!-- three.js r128, vendored from npm three@0.128.0 (MIT, see vendor/three.LICENSE).
+     Local rather than CDN so the game has no third-party runtime dependency. -->
+<script src="vendor/three.min.js"></script>
+<script>
