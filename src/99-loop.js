@@ -103,6 +103,7 @@ function frame() {
   updateTraffic(dt);
   updateProps(T);
   updateMotes(T);
+  updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);
   beacon.rotation.y = T * 0.9;

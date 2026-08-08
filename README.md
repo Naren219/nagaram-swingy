@@ -30,6 +30,9 @@ Other things to know:
 
 - Aircraft crossing the city are valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
 - Release a swing while climbing hard and the body throws itself into a somersault — a violent release doubles it. No button; it's earned by the swing.
+- The gopurams are gateways, not scenery: fly the passage through any of the four, and the prakaram walls have low arches worth threading at speed.
+- Columns of rising air over the marina, the tech park and the maidan are marked by drifting chaff in a haze cone. Glide into one and you climb; fall through one and you only fall slower.
+- The sea and river are volumes. Dive in and you plunge, slow, and surface; graze the water at speed and you skim, trailing rings.
 - Time of day flows continuously through dawn, noon, evening, and a long night; T skips ahead to the next.
 - A slow monsoon breeze wanders over the city. Drag and lift run on airspeed, not ground speed, so gliding up-wind and down-wind feel different.
 - Sensitivity, assist, mute, shadows, and the time of day persist across visits (localStorage).
@@ -109,7 +112,9 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `65-broadphase.js` | spatial hash over solid AABBs |
 | `70-vegetation.js` | palm and tree scattering |
 | `75-traffic.js` | vehicles, boats, kites, aircraft |
-| `80-physics.js` | XPBD solver, contacts, anchor search, web firing |
+| `80-physics.js` | XPBD solver, contacts, water volumes, thermals, anchor search |
+| `82-thermal-motes.js` | rising chaff and haze marking each thermal |
+| `84-water-fx.js` | splash and skim rings |
 | `85-rig.js` | character rig geometry, procedural posing, somersault |
 | `90-camera.js` | boom, collision, orientation |
 | `92-input.js` | keyboard, pointer lock, touch, photo mode, settings |

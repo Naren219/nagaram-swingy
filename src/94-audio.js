@@ -158,6 +158,21 @@ function updateAudio(dt) {
   }
 }
 
+/* water impact: a broadband slap that darkens fast, then a short hiss of foam */
+function splashSound(vol) {
+  if (!AC) return;
+  const t = AC.currentTime;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(1900, t);
+  f.frequency.exponentialRampToValueAtTime(280, t + 0.34);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.42 * vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.56);
+}
+
 function thwip() {
   if (!AC) return;
   const s = AC.createBufferSource(); s.buffer = noiseBuf;

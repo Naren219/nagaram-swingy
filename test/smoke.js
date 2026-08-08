@@ -298,6 +298,52 @@ const server = http.createServer((req, res) => {
       therm.fallIn + ' vs ' + therm.fallOut + ' m/s outside');
     check('spreading the wings beats falling through', therm.glideIn > therm.fallIn + 10);
 
+    /* Water contact. The sea used to be a lid — the ground clamp caught you at
+       RAD, so you stood on it and every bit of momentum died. These assert it
+       is a volume: you enter, you come back up, and a graze is not a plunge. */
+    const water = await page.evaluate(() => {
+      const was = paused; paused = true;
+      function run({ x, z, y0, vy = 0, vx = 0, secs = 4 }) {
+        player.riding = null; player.clinging = false; player.grounded = false; player.wasWet = false;
+        player.webs[0].on = player.webs[1].on = false;
+        player.p.set(x, y0, z); player.v.set(vx, vy, 0);
+        const i = { fwd: V3(1, 0, 0), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false,
+                    reelIn: false, reelOut: false, zip: false, cling: false, mount: false };
+        let minY = 1e9;
+        splashCool = 0;                       // updateSplashes is not running to clear it
+        const splash0 = splashNext;
+        for (let k = 0, n = Math.round(secs / SUB); k < n; k++) {
+          stepPhysics(SUB, i);
+          minY = Math.min(minY, player.p.y);
+        }
+        const splashed = splashNext - splash0;
+        return { minY: +minY.toFixed(2), restY: +player.p.y.toFixed(2),
+                 horiz: +Math.hypot(player.v.x, player.v.z).toFixed(1), grounded: player.grounded, splashed };
+      }
+      const out = {
+        skim:  run({ x: SEA_X + 120, z: 0, y0: 0.7, vx: 45, vy: -1.5, secs: 3 }),
+        dive:  run({ x: SEA_X + 120, z: 0, y0: 25, vy: -30, secs: 6 }),
+        float: run({ x: SEA_X + 120, z: 40, y0: -6, secs: 8 }),
+        river: run({ x: -120, z: riverZ(-120), y0: 20, vy: -20, secs: 6 }),
+        land:  run({ x: -300, z: -420, y0: 60, vy: -40, secs: 4 }),
+      };
+      paused = was; respawn();
+      return out;
+    });
+    check('water is enterable, not a lid', water.dive.minY < -2 && !water.dive.grounded,
+      'dive reached ' + water.dive.minY + ' m');
+    check('a dive surfaces and settles at the waterline', Math.abs(water.dive.restY) < 0.4,
+      'rest y ' + water.dive.restY);
+    check('a submerged body floats back up', water.float.restY > -0.4 && water.float.restY < 0.4,
+      'from -6 m to ' + water.float.restY);
+    check('skimming stays shallow and keeps speed', water.skim.minY > -2 && water.skim.horiz > 10,
+      water.skim.horiz + ' m/s kept, dipped to ' + water.skim.minY + ' m');
+    check('a graze is cheaper than a plunge', water.skim.horiz > water.dive.horiz + 8);
+    check('the river behaves like the sea', Math.abs(water.river.restY - 0.06) < 0.4,
+      'rest y ' + water.river.restY);
+    check('entering water raises a splash', water.dive.splashed > 0 && water.land.splashed === 0);
+    check('dry land is unaffected', water.land.grounded && Math.abs(water.land.restY - 0.85) < 0.01);
+
     /* settings persistence across reload */
     await page.evaluate(() => { sens = 0.0071; assist = false; saveSettings(); });
     await page.reload({ waitUntil: 'load' });
