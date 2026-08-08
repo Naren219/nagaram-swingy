@@ -13,10 +13,20 @@ const SPH = new THREE.SphereGeometry(1, 10, 8);
 
 function gopuramParts(h, lng, shrt) {
   const p = [], tiers = 9, plinth = h * 0.14, tierH = (h - plinth) / (tiers + 1.1);
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng, plinth, shrt), color: STONE });
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 1.06, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
-  /* gateway void suggested by two dark jambs */
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 0.26, plinth * 0.92, shrt * 1.02), color: 0x2a2723 });
+  /* The base is a real gateway: two piers with a passage between them. The
+     numbers come from GATE_W / GATE_H, the same pair the collision boxes use,
+     and nothing overhangs into the void — so the opening you can see through
+     is exactly the opening you can fly through. */
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  for (const sgn of [-1, 1]) {
+    const cx = sgn * (gap + pierW) / 2;
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW, plinth, shrt), color: STONE });
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW * 1.04, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
+    /* jamb, flush with the pier face rather than proud of it */
+    p.push({ geo: BOXB, matrix: M4(sgn * (gap / 2 + 0.3), 0, 0, 0.6, openH, shrt * 1.01), color: 0x2a2723 });
+  }
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap, plinth - openH, shrt), color: STONE });
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap * 1.02, 0.7, shrt * 1.02), color: 0xcf6a4a });
   let y = plinth, w = lng * 0.94, d = shrt * 0.94;
   for (let i = 0; i < tiers; i++) {
     const w1 = w * 0.885, d1 = d * 0.885;
@@ -53,13 +63,35 @@ for (const g of GOPURAMS) {
 /* prakaram walls, capped with a red-and-white kumkum stripe */
 for (const l of landmarks) {
   if (l.type !== 'wall') continue;
-  push([{ geo: BOXB, matrix: M4(l.x, 0, l.z, l.w, l.h, l.d), color: LIME },
-        { geo: BOXB, matrix: M4(l.x, l.h, l.z, l.w * 1.04, 0.8, l.d * 2.6), color: 0xcf6a4a }]);
-  const along = l.w > l.d;
-  const n = 26;
-  for (let i = 0; i < n; i++) {
-    const t = (-0.5 + (i + 0.5) / n);
-    push([{ geo: BOXB, matrix: M4(l.x + (along ? t * l.w : 0), 0, l.z + (along ? 0 : t * l.w), along ? 3.2 : l.d * 1.6, l.h * 0.97, along ? l.d * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+  const along = l.along, th = l.th, H = l.h;
+  /* built from the same segment list the collision boxes came from, so a gap
+     you can see is a gap you can pass */
+  const slab = (cen, len, y, hgt, color) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, y, pz, along ? len : th, hgt, along ? th : len), color }]);
+  };
+  const cap = (cen, len) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, H, pz, along ? len * 1.02 : th * 2.6, 0.8, along ? th * 2.6 : len * 1.02), color: 0xcf6a4a }]);
+  };
+  for (const [a, b] of l.segs) {
+    const len = b - a, cen = (a + b) / 2;
+    slab(cen, len, 0, H, LIME);
+    cap(cen, len);
+    /* kumkum stripes, spaced along each run rather than the whole wall */
+    const n = Math.max(1, Math.round(len / 8.6));
+    for (let i = 0; i < n; i++) {
+      const t = a + (i + 0.5) * (len / n);
+      const px = l.x + (along ? t : 0), pz = l.z + (along ? 0 : t);
+      push([{ geo: BOXB, matrix: M4(px, 0, pz, along ? 3.2 : th * 1.6, H * 0.97, along ? th * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+    }
+  }
+  /* lintel over each low opening */
+  for (const [o, gw, gh] of l.gaps) {
+    if (gh >= H) continue;
+    slab(o, gw, gh, H - gh, LIME);
+    cap(o, gw);
+    slab(o, gw * 1.01, gh, 0.6, 0xcf6a4a);
   }
 }
 /* vimana over the sanctum */

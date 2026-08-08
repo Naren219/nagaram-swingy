@@ -424,6 +424,10 @@ function addBuilding(x, z, w, d, h, c, kind) {
 
 /* --- temple precinct (reserved) --- */
 const TEMPLE = { x: 0, z: 0, r: 104 };
+/* The prakaram is a square wall at +/-132, but the build exclusion was a circle
+   of radius 126 — so the courtyard corners filled with houses, on top of the
+   plaza the ground texture already paints there. Keep the whole precinct clear. */
+const PRECINCT = 140;
 
 function genCity() {
   for (let cx = -EXT; cx <= EXT; cx += PITCH) {
@@ -453,6 +457,7 @@ function genCity() {
       for (const [ox, oz, w, d] of lots) {
         const x = cx + ox + rnd(-2.5, 2.5), z = cz + oz + rnd(-2.5, 2.5);
         if (Math.hypot(x, z) < TEMPLE.r + 22) continue;
+        if (Math.abs(x) < PRECINCT && Math.abs(z) < PRECINCT) continue;
         if (Math.abs(z - riverZ(x)) < RIVER_HW + 14) continue;
         if (x + w / 2 > SAND_X - 4) continue;
         let h, kind = 'res', c;
@@ -491,20 +496,61 @@ const GOPURAMS = [
   { x: 0, z: -132, rot: 0, h: 68 }, { x: 0, z: 132, rot: PI, h: 64 },
   { x: -132, z: 0, rot: -PI / 2, h: 58 }, { x: 132, z: 0, rot: PI / 2, h: 58 }
 ];
+/* A gopuram is architecturally a GATEWAY, so these are gates, not solid blocks.
+   Both the collision boxes below and the mesh builder derive the passage from
+   these two fractions — one source of truth, so what you see through the arch
+   is exactly what you can fly through. */
+const GATE_W = 0.34;      // clear width, as a fraction of the long axis
+const GATE_H = 0.80;      // clear height, as a fraction of the plinth
 for (const g of GOPURAMS) {
   const wide = Math.abs(Math.cos(g.rot)) > 0.5;
   const bw = wide ? 24 : 15, bd = wide ? 15 : 24;
   g.bw = bw; g.bd = bd;                 // needed later by the gopuram mesh builder
+  /* the passage runs through the SHORT axis; the piers stand either side of it
+     along the long axis, which is the one lying in the prakaram wall */
+  const lng = Math.max(bw, bd);
+  const plinth = g.h * 0.14, baseH = g.h * 0.35;
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  const off = (gap + pierW) / 2;
+  g.wide = wide; g.gap = gap; g.openH = openH;
   landmarks.push({ type: 'gopuram', ...g, bw, bd });
-  addBox(g.x, 0, g.z, bw, g.h * 0.35, bd);
-  addBox(g.x, g.h * 0.35, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
+  for (const sgn of [-1, 1]) {
+    if (wide) addBox(g.x + sgn * off, 0, g.z, pierW, baseH, bd);
+    else      addBox(g.x, 0, g.z + sgn * off, bw, baseH, pierW);
+  }
+  /* lintel: solid again above the opening, so the tower still rests on something */
+  if (wide) addBox(g.x, openH, g.z, gap, baseH - openH, bd);
+  else      addBox(g.x, openH, g.z, bw, baseH - openH, gap);
+  addBox(g.x, baseH, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
   addBox(g.x, g.h * 0.70, g.z, bw * 0.46, g.h * 0.30, bd * 0.46);
 }
-/* prakaram walls */
-const PW = 132;
+/* prakaram walls. Pierced, or the gopuram gates would open onto a fence: the
+   centre opening clears the gate itself, the flanking ones are low arches that
+   reward threading at speed. [offset along the wall, clear width, clear height] */
+const PW = 132, WALL_H = 11;
+const WALL_GAPS = [[-74, 9, 7.4], [-34, 9, 7.4], [0, 15, WALL_H], [34, 9, 7.4], [74, 9, 7.4]];
 for (const [ax, az, w, d] of [[0, -PW, 224, 6], [0, PW, 224, 6], [-PW, 0, 6, 224], [PW, 0, 6, 224]]) {
-  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: 11 });
-  addBox(ax, 0, az, w, 11, d);
+  const along = w > d;                  // true when the wall runs along x
+  const L = along ? w : d, th = along ? d : w;
+  /* solid runs are whatever is left between the openings */
+  const edges = [-L / 2];
+  for (const [o, gw] of WALL_GAPS) edges.push(o - gw / 2, o + gw / 2);
+  edges.push(L / 2);
+  const segs = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    if (edges[i + 1] - edges[i] > 0.01) segs.push([edges[i], edges[i + 1]]);
+  }
+  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: WALL_H, along, th, segs, gaps: WALL_GAPS });
+  for (const [a, b] of segs) {
+    const c = (a + b) / 2, len = b - a;
+    if (along) addBox(ax + c, 0, az, len, WALL_H, th);
+    else       addBox(ax, 0, az + c, th, WALL_H, len);
+  }
+  for (const [o, gw, gh] of WALL_GAPS) {
+    if (gh >= WALL_H) continue;         // full-height opening needs no lintel
+    if (along) addBox(ax + o, gh, az, gw, WALL_H - gh, th);
+    else       addBox(ax, gh, az + o, th, WALL_H - gh, gw);
+  }
 }
 landmarks.push({ type: 'vimana', x: 0, z: 0, h: 44 });
 addBox(0, 0, 0, 34, 16, 34); addBox(0, 16, 0, 22, 16, 22); addBox(0, 32, 0, 12, 12, 12);
@@ -1006,10 +1052,20 @@ const SPH = new THREE.SphereGeometry(1, 10, 8);
 
 function gopuramParts(h, lng, shrt) {
   const p = [], tiers = 9, plinth = h * 0.14, tierH = (h - plinth) / (tiers + 1.1);
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng, plinth, shrt), color: STONE });
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 1.06, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
-  /* gateway void suggested by two dark jambs */
-  p.push({ geo: BOXB, matrix: M4(0, 0, 0, lng * 0.26, plinth * 0.92, shrt * 1.02), color: 0x2a2723 });
+  /* The base is a real gateway: two piers with a passage between them. The
+     numbers come from GATE_W / GATE_H, the same pair the collision boxes use,
+     and nothing overhangs into the void — so the opening you can see through
+     is exactly the opening you can fly through. */
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  for (const sgn of [-1, 1]) {
+    const cx = sgn * (gap + pierW) / 2;
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW, plinth, shrt), color: STONE });
+    p.push({ geo: BOXB, matrix: M4(cx, 0, 0, pierW * 1.04, plinth * 0.14, shrt * 1.06), color: 0x6f6a5f });
+    /* jamb, flush with the pier face rather than proud of it */
+    p.push({ geo: BOXB, matrix: M4(sgn * (gap / 2 + 0.3), 0, 0, 0.6, openH, shrt * 1.01), color: 0x2a2723 });
+  }
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap, plinth - openH, shrt), color: STONE });
+  p.push({ geo: BOXB, matrix: M4(0, openH, 0, gap * 1.02, 0.7, shrt * 1.02), color: 0xcf6a4a });
   let y = plinth, w = lng * 0.94, d = shrt * 0.94;
   for (let i = 0; i < tiers; i++) {
     const w1 = w * 0.885, d1 = d * 0.885;
@@ -1046,13 +1102,35 @@ for (const g of GOPURAMS) {
 /* prakaram walls, capped with a red-and-white kumkum stripe */
 for (const l of landmarks) {
   if (l.type !== 'wall') continue;
-  push([{ geo: BOXB, matrix: M4(l.x, 0, l.z, l.w, l.h, l.d), color: LIME },
-        { geo: BOXB, matrix: M4(l.x, l.h, l.z, l.w * 1.04, 0.8, l.d * 2.6), color: 0xcf6a4a }]);
-  const along = l.w > l.d;
-  const n = 26;
-  for (let i = 0; i < n; i++) {
-    const t = (-0.5 + (i + 0.5) / n);
-    push([{ geo: BOXB, matrix: M4(l.x + (along ? t * l.w : 0), 0, l.z + (along ? 0 : t * l.w), along ? 3.2 : l.d * 1.6, l.h * 0.97, along ? l.d * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+  const along = l.along, th = l.th, H = l.h;
+  /* built from the same segment list the collision boxes came from, so a gap
+     you can see is a gap you can pass */
+  const slab = (cen, len, y, hgt, color) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, y, pz, along ? len : th, hgt, along ? th : len), color }]);
+  };
+  const cap = (cen, len) => {
+    const px = l.x + (along ? cen : 0), pz = l.z + (along ? 0 : cen);
+    push([{ geo: BOXB, matrix: M4(px, H, pz, along ? len * 1.02 : th * 2.6, 0.8, along ? th * 2.6 : len * 1.02), color: 0xcf6a4a }]);
+  };
+  for (const [a, b] of l.segs) {
+    const len = b - a, cen = (a + b) / 2;
+    slab(cen, len, 0, H, LIME);
+    cap(cen, len);
+    /* kumkum stripes, spaced along each run rather than the whole wall */
+    const n = Math.max(1, Math.round(len / 8.6));
+    for (let i = 0; i < n; i++) {
+      const t = a + (i + 0.5) * (len / n);
+      const px = l.x + (along ? t : 0), pz = l.z + (along ? 0 : t);
+      push([{ geo: BOXB, matrix: M4(px, 0, pz, along ? 3.2 : th * 1.6, H * 0.97, along ? th * 1.6 : 3.2), color: i % 2 ? 0xcf3a2a : 0xf0ead8 }]);
+    }
+  }
+  /* lintel over each low opening */
+  for (const [o, gw, gh] of l.gaps) {
+    if (gh >= H) continue;
+    slab(o, gw, gh, H - gh, LIME);
+    cap(o, gw);
+    slab(o, gw * 1.01, gh, 0.6, 0xcf6a4a);
   }
 }
 /* vimana over the sanctum */
@@ -1504,6 +1582,34 @@ const REEL = 15, SUB = 1 / 120;
    it only changes which velocity feeds the aero model, so drag and lift see
    airspeed instead of ground speed. Gliding becomes a negotiation with the
    monsoon breeze rather than a solved function of your own motion. */
+/* Thermals — columns of rising air over the sun-baked marina sand, the tech
+   park's glass and concrete, and the maidan. They are the VERTICAL component of
+   the wind rather than a bespoke force, so the existing drag and lift model
+   does all the work: a glider climbs because the air it is flying through is
+   climbing, and spreading the wings to glide catches the rise harder than
+   falling does (higher drag coefficient, same air). Gliding gains altitude;
+   plummeting through one only slows you down. */
+const THERMALS = [
+  { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
+  { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
+  { x: -300, z: -140, r: 52 },                              // the maidan
+];
+const THERM_V = 36;        // m/s of rise on the axis
+const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
+function thermalAt(x, y, z) {
+  let v = 0;
+  for (const t of THERMALS) {
+    const dx = x - t.x, dz = z - t.z;
+    const d2 = dx * dx + dz * dz, r2 = t.r * t.r;
+    if (d2 >= r2) continue;
+    const core = 1 - d2 / r2;                                  // strongest on the axis
+    const alt = 1 - sstep(THERM_TOP * 0.55, THERM_TOP, y);
+    const w = THERM_V * core * alt;
+    if (w > v) v = w;
+  }
+  return v;
+}
+
 const WIND = V3();
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
@@ -1515,6 +1621,7 @@ function updateWind(t) {
 const player = {
   p: V3(-46, 96, -230), v: V3(4, 0, 20),
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
+  depth: 0, wasWet: false,
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
   webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() },
          { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() }]
@@ -1561,7 +1668,17 @@ function rayHit(ox, oy, oz, dx, dy, dz, maxT) {
   return _hit;
 }
 
-const inWaterAt = (x, y, z) => (x > SEA_X - 4 || Math.abs(z - riverZ(x)) < RIVER_HW) && y < 1.2;
+/* Water used to be a lid: the ground clamp caught you at RAD, so you stood on
+   the sea and every bit of momentum died on contact. It is a volume now.
+   Shallow contact barely slows you — that is the skim — while depth slows you
+   hard and floats you back up. */
+const SEA_Y = 0.05, RIVER_Y = 0.06, SEABED = 9;
+function waterSurfaceAt(x, z) {
+  if (x > SEA_X - 4) return SEA_Y;
+  if (Math.abs(z - riverZ(x)) < RIVER_HW) return RIVER_Y;
+  return null;
+}
+const inWaterAt = (x, y, z) => { const s = waterSurfaceAt(x, z); return s !== null && y < s; };
 
 function solveContacts(p) {
   player.contact = false;
@@ -1593,7 +1710,11 @@ function solveContacts(p) {
       if (player.cn.y > 0.6) player.grounded = true;
     }
   }
-  if (p.y < RAD) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
+  if (p.y < RAD) {
+    const surf = waterSurfaceAt(p.x, p.z);
+    if (surf === null) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
+    else if (p.y < surf - SEABED) { p.y = surf - SEABED; player.contact = true; player.cn.set(0, 1, 0); }
+  }
 }
 
 /* Which hull E would board right now. A web latched to a hull is boarding
@@ -1657,23 +1778,41 @@ function stepPhysics(h, inp) {
      substep. Clearing it first made the grounded branch permanently dead. */
   const onGround = player.grounded;
   player.grounded = false;
-  player.inWater = inWaterAt(P.x, P.y, P.z);
+  const surf = waterSurfaceAt(P.x, P.z);
+  player.inWater = surf !== null && P.y < surf;
+  player.depth = player.inWater ? surf - P.y : 0;
+  /* one splash per entry, scaled by how hard you hit */
+  if (player.inWater && !player.wasWet) splash(P.x, surf, P.z, -V.y);
+  player.wasWet = player.inWater;
   player.clinging = !!inp.cling && player.contact && !player.inWater;
 
   /* ---- forces ---- */
   let ax = 0, ay = -G, az = 0;
 
   /* the aero model runs on airspeed: velocity relative to the wind */
-  const wfx = player.inWater ? 0 : WIND.x, wfz = player.inWater ? 0 : WIND.z;
-  const rvx = V.x - wfx, rvy = V.y, rvz = V.z - wfz;
+  const calm = player.inWater;
+  const wfx = calm ? 0 : WIND.x, wfz = calm ? 0 : WIND.z;
+  const wfy = calm ? 0 : thermalAt(P.x, P.y, P.z);
+  const rvx = V.x - wfx, rvy = V.y - wfy, rvz = V.z - wfz;
   const rs = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
   let cd = DRAG_AIR;
   if (inp.tuck) cd = DRAG_TUCK;
   if (inp.glide && !onGround) cd = DRAG_GLIDE;
-  if (player.inWater) cd = 0.16;
+  /* sub: 0 grazing the surface, 1 fully under. Skimming keeps its speed;
+     going deep does not. */
+  const sub = player.inWater ? clamp(player.depth / 1.7, 0, 1) : 0;
+  if (player.inWater) cd = 0.004 + 0.055 * sub;
   ax -= cd * rs * rvx; ay -= cd * rs * rvy; az -= cd * rs * rvz;
-  if (player.inWater) ay += G * 1.35;
+  if (player.inWater) {
+    /* Buoyancy vanishes at the surface, so the only rest state is floating
+       exactly there. Quadratic drag goes to nothing at low speed and left the
+       bob undamped forever, so the viscous term below is what actually settles
+       it — vertical mostly, or a skim would stop dead. */
+    ay += G * (1 + 1.15 * sub);
+    ay -= V.y * (1.6 + 3.4 * sub);
+    ax -= V.x * 0.30 * sub; az -= V.z * 0.30 * sub;
+  }
 
   /* ---- wing: angle-of-attack lift ---- */
   if (inp.glide && !onGround && rs > 9 && !player.inWater) {
@@ -1696,6 +1835,9 @@ function stepPhysics(h, inp) {
     ax += inp.mx * runA; az += inp.mz * runA;
     ax -= V.x * 6.2; az -= V.z * 6.2;
     if (inp.jump) { V.y = 12.4; P.y += 0.04; }
+  } else if (player.inWater) {
+    ax += inp.mx * 15; az += inp.mz * 15;                 // swim
+    if (inp.jump) V.y = Math.max(V.y, 10.5);              // kick for the surface
   } else if (player.clinging && player.contact) {
     const n = player.cn;
     _tmp.set(inp.mx, 0, inp.mz);
@@ -1870,6 +2012,108 @@ function releaseWeb(i) {
   }
 }
 
+/* =====================================================================
+   THERMAL MOTES
+   A thermal you cannot see is a thermal nobody finds. Dust and chaff torn
+   off the hot sand mark each column: they rise, swirl, and recycle at the
+   bottom. Read-only decoration — the physics is in thermalAt().
+   ===================================================================== */
+const MOTE_GEO = new THREE.BoxGeometry(1.5, 0.08, 0.95);
+const moteMat = new THREE.MeshLambertMaterial({
+  vertexColors: false, color: SRGB(0xd8c49a), transparent: true, opacity: 0.5, depthWrite: false });
+const MOTES_PER = 62;
+const motes = [];
+const moteMesh = new THREE.InstancedMesh(MOTE_GEO, moteMat, THERMALS.length * MOTES_PER);
+moteMesh.frustumCulled = false; moteMesh.castShadow = false;
+scene.add(moteMesh);
+for (const t of THERMALS) {
+  for (let i = 0; i < MOTES_PER; i++) {
+    motes.push({
+      t,
+      rad: Math.sqrt(rnd(0.02, 0.85)) * t.r,   // sqrt keeps them evenly spread, not clumped on the axis
+      ang: rnd(0, TAU),
+      ph: rnd(0, 1),                            // where it is in its climb
+      spin: rnd(0.6, 2.4) * (R() < 0.5 ? -1 : 1),
+      rise: rnd(0.55, 1.0)                      // fraction of the column climbed per cycle time
+    });
+  }
+}
+/* A faint haze column so a thermal is legible from across the bay, not just
+   when you are inside it. Same trick as the lighthouse beam: a translucent
+   shell that never writes depth. */
+const MOTE_TOP = 190, MOTE_CYCLE = 26;
+for (const t of THERMALS) {
+  const haze = new THREE.Mesh(
+    new THREE.CylinderGeometry(t.r * 0.30, t.r * 0.80, MOTE_TOP, 18, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xe8d3a6, transparent: true, opacity: 0.05,
+      side: THREE.DoubleSide, depthWrite: false }));
+  haze.position.set(t.x, MOTE_TOP / 2 + 3, t.z);
+  haze.frustumCulled = false;
+  scene.add(haze);
+}
+function updateMotes(t) {
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = V3();
+  for (let i = 0; i < motes.length; i++) {
+    const o = motes[i];
+    const p = (o.ph + (t / MOTE_CYCLE) * o.rise) % 1;
+    const y = 4 + p * MOTE_TOP;
+    /* the column leans and narrows as it climbs, so it reads as a rising body
+       of air rather than a cylinder of confetti */
+    const swirl = o.ang + y * 0.018 + t * 0.06;
+    const spread = 1 - 0.45 * p;
+    v.set(o.t.x + Math.cos(swirl) * o.rad * spread, y, o.t.z + Math.sin(swirl) * o.rad * spread);
+    e.set(t * o.spin, swirl, Math.sin(t * o.spin * 0.7) * 0.9);
+    /* fade in at the bottom and out at the top instead of popping */
+    const s = 1.9 * sstep(0, 0.06, p) * (1 - sstep(0.74, 1, p));
+    m.compose(v, q.setFromEuler(e), V3(s, s, s));
+    moteMesh.setMatrixAt(i, m);
+  }
+  moteMesh.instanceMatrix.needsUpdate = true;
+}
+/* =====================================================================
+   WATER CONTACT FX
+   Expanding rings on the surface where a body enters or skims. A small
+   ring pool, reused round-robin, so a fast skim leaves a trail of them.
+   ===================================================================== */
+const SPLASH_RINGS = 7;
+const splashGeo = new THREE.RingGeometry(0.62, 1.0, 22).rotateX(-PI / 2);
+const splashes = [];
+for (let i = 0; i < SPLASH_RINGS; i++) {
+  const m = new THREE.Mesh(splashGeo, new THREE.MeshBasicMaterial({
+    color: 0xe4efee, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  m.visible = false; m.frustumCulled = false; m.renderOrder = 6;
+  scene.add(m);
+  splashes.push({ m, t: 1e9, dur: 1, r0: 1 });
+}
+let splashNext = 0, splashCool = 0;
+/* power is the closing speed, so a dive reads bigger than a graze */
+function splash(x, y, z, power) {
+  if (splashCool > 0) return;
+  splashCool = 0.09;
+  const s = splashes[splashNext++ % SPLASH_RINGS];
+  s.m.position.set(x, y + 0.09, z);
+  s.t = 0;
+  s.dur = 0.65 + clamp(power * 0.016, 0, 0.65);
+  s.r0 = 1.1 + clamp(power * 0.085, 0, 4.2);
+  s.m.visible = true;
+  if (typeof splashSound === 'function') splashSound(clamp(Math.abs(power) / 42, 0.12, 1));
+}
+function updateSplashes(dt) {
+  if (splashCool > 0) splashCool -= dt;
+  for (const s of splashes) {
+    if (s.t >= s.dur) { if (s.m.visible) s.m.visible = false; continue; }
+    s.t += dt;
+    const p = clamp(s.t / s.dur, 0, 1);
+    const r = s.r0 * (0.35 + 3.4 * p);
+    s.m.scale.set(r, 1, r);
+    s.m.material.opacity = 0.5 * (1 - p) * (1 - p);
+  }
+  /* skimming leaves a wake even without a fresh entry */
+  if (player.inWater && player.depth < 1.2) {
+    const sp = Math.hypot(player.v.x, player.v.z);
+    if (sp > 22) splash(player.p.x, player.p.y + player.depth, player.p.z, sp * 0.28);
+  }
+}
 /* =====================================================================
    CHARACTER RIG
    ===================================================================== */
@@ -2686,6 +2930,21 @@ function updateAudio(dt) {
   }
 }
 
+/* water impact: a broadband slap that darkens fast, then a short hiss of foam */
+function splashSound(vol) {
+  if (!AC) return;
+  const t = AC.currentTime;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(1900, t);
+  f.frequency.exponentialRampToValueAtTime(280, t + 0.34);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.42 * vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.56);
+}
+
 function thwip() {
   if (!AC) return;
   const s = AC.createBufferSource(); s.buffer = noiseBuf;
@@ -2869,6 +3128,8 @@ function frame() {
   /* ---- world ---- */
   updateTraffic(dt);
   updateProps(T);
+  updateMotes(T);
+  updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);
   beacon.rotation.y = T * 0.9;

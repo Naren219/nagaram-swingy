@@ -43,6 +43,10 @@ function addBuilding(x, z, w, d, h, c, kind) {
 
 /* --- temple precinct (reserved) --- */
 const TEMPLE = { x: 0, z: 0, r: 104 };
+/* The prakaram is a square wall at +/-132, but the build exclusion was a circle
+   of radius 126 — so the courtyard corners filled with houses, on top of the
+   plaza the ground texture already paints there. Keep the whole precinct clear. */
+const PRECINCT = 140;
 
 function genCity() {
   for (let cx = -EXT; cx <= EXT; cx += PITCH) {
@@ -72,6 +76,7 @@ function genCity() {
       for (const [ox, oz, w, d] of lots) {
         const x = cx + ox + rnd(-2.5, 2.5), z = cz + oz + rnd(-2.5, 2.5);
         if (Math.hypot(x, z) < TEMPLE.r + 22) continue;
+        if (Math.abs(x) < PRECINCT && Math.abs(z) < PRECINCT) continue;
         if (Math.abs(z - riverZ(x)) < RIVER_HW + 14) continue;
         if (x + w / 2 > SAND_X - 4) continue;
         let h, kind = 'res', c;
@@ -110,20 +115,61 @@ const GOPURAMS = [
   { x: 0, z: -132, rot: 0, h: 68 }, { x: 0, z: 132, rot: PI, h: 64 },
   { x: -132, z: 0, rot: -PI / 2, h: 58 }, { x: 132, z: 0, rot: PI / 2, h: 58 }
 ];
+/* A gopuram is architecturally a GATEWAY, so these are gates, not solid blocks.
+   Both the collision boxes below and the mesh builder derive the passage from
+   these two fractions — one source of truth, so what you see through the arch
+   is exactly what you can fly through. */
+const GATE_W = 0.34;      // clear width, as a fraction of the long axis
+const GATE_H = 0.80;      // clear height, as a fraction of the plinth
 for (const g of GOPURAMS) {
   const wide = Math.abs(Math.cos(g.rot)) > 0.5;
   const bw = wide ? 24 : 15, bd = wide ? 15 : 24;
   g.bw = bw; g.bd = bd;                 // needed later by the gopuram mesh builder
+  /* the passage runs through the SHORT axis; the piers stand either side of it
+     along the long axis, which is the one lying in the prakaram wall */
+  const lng = Math.max(bw, bd);
+  const plinth = g.h * 0.14, baseH = g.h * 0.35;
+  const gap = lng * GATE_W, openH = plinth * GATE_H, pierW = (lng - gap) / 2;
+  const off = (gap + pierW) / 2;
+  g.wide = wide; g.gap = gap; g.openH = openH;
   landmarks.push({ type: 'gopuram', ...g, bw, bd });
-  addBox(g.x, 0, g.z, bw, g.h * 0.35, bd);
-  addBox(g.x, g.h * 0.35, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
+  for (const sgn of [-1, 1]) {
+    if (wide) addBox(g.x + sgn * off, 0, g.z, pierW, baseH, bd);
+    else      addBox(g.x, 0, g.z + sgn * off, bw, baseH, pierW);
+  }
+  /* lintel: solid again above the opening, so the tower still rests on something */
+  if (wide) addBox(g.x, openH, g.z, gap, baseH - openH, bd);
+  else      addBox(g.x, openH, g.z, bw, baseH - openH, gap);
+  addBox(g.x, baseH, g.z, bw * 0.75, g.h * 0.35, bd * 0.75);
   addBox(g.x, g.h * 0.70, g.z, bw * 0.46, g.h * 0.30, bd * 0.46);
 }
-/* prakaram walls */
-const PW = 132;
+/* prakaram walls. Pierced, or the gopuram gates would open onto a fence: the
+   centre opening clears the gate itself, the flanking ones are low arches that
+   reward threading at speed. [offset along the wall, clear width, clear height] */
+const PW = 132, WALL_H = 11;
+const WALL_GAPS = [[-74, 9, 7.4], [-34, 9, 7.4], [0, 15, WALL_H], [34, 9, 7.4], [74, 9, 7.4]];
 for (const [ax, az, w, d] of [[0, -PW, 224, 6], [0, PW, 224, 6], [-PW, 0, 6, 224], [PW, 0, 6, 224]]) {
-  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: 11 });
-  addBox(ax, 0, az, w, 11, d);
+  const along = w > d;                  // true when the wall runs along x
+  const L = along ? w : d, th = along ? d : w;
+  /* solid runs are whatever is left between the openings */
+  const edges = [-L / 2];
+  for (const [o, gw] of WALL_GAPS) edges.push(o - gw / 2, o + gw / 2);
+  edges.push(L / 2);
+  const segs = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    if (edges[i + 1] - edges[i] > 0.01) segs.push([edges[i], edges[i + 1]]);
+  }
+  landmarks.push({ type: 'wall', x: ax, z: az, w, d, h: WALL_H, along, th, segs, gaps: WALL_GAPS });
+  for (const [a, b] of segs) {
+    const c = (a + b) / 2, len = b - a;
+    if (along) addBox(ax + c, 0, az, len, WALL_H, th);
+    else       addBox(ax, 0, az + c, th, WALL_H, len);
+  }
+  for (const [o, gw, gh] of WALL_GAPS) {
+    if (gh >= WALL_H) continue;         // full-height opening needs no lintel
+    if (along) addBox(ax + o, gh, az, gw, WALL_H - gh, th);
+    else       addBox(ax, gh, az + o, th, WALL_H - gh, gw);
+  }
 }
 landmarks.push({ type: 'vimana', x: 0, z: 0, h: 44 });
 addBox(0, 0, 0, 34, 16, 34); addBox(0, 16, 0, 22, 16, 22); addBox(0, 32, 0, 12, 12, 12);

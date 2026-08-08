@@ -218,6 +218,132 @@ const server = http.createServer((req, res) => {
     await page.screenshot({ path: SHOTS + '/flip.png' });
     await page.evaluate(() => { flipT = 1e9; paused = false; respawn(); });
 
+    /* gopuram gateways: a gopuram is a gate, so the passage must be passable
+       and the piers/lintel around it must not be. Rays start inside the
+       courtyard and shoot outward, isolating the precinct from city clutter. */
+    const gates = await page.evaluate(() => {
+      const shot = (ox, oy, oz, dx, dy, dz, t) => { const h = rayHit(ox, oy, oz, dx, dy, dz, t); return h ? +h.t.toFixed(1) : null; };
+      return {
+        northOpen:   shot(0, 4, -100, 0, 0, -1, 40),
+        northPier:   shot(8, 4, -100, 0, 0, -1, 40),
+        northLintel: shot(0, 9, -100, 0, 0, -1, 40),
+        eastOpen:    shot(100, 4, 0, 1, 0, 0, 36),
+        archOpen:    shot(34, 3, -100, 0, 0, -1, 36),
+        wallSolid:   shot(55, 3, -100, 0, 0, -1, 36),
+        aboveArch:   shot(34, 9, -100, 0, 0, -1, 36),
+        inPrecinct:  buildings.filter(b => Math.abs(b.x) < 132 && Math.abs(b.z) < 132).length,
+        gateW: +(GOPURAMS[0].gap).toFixed(1), gateH: +(GOPURAMS[0].openH).toFixed(1)
+      };
+    });
+    check('gopuram gateway is open through the middle', gates.northOpen === null && gates.eastOpen === null,
+      'clear ' + gates.gateW + ' m wide x ' + gates.gateH + ' m high');
+    check('gate piers still block', gates.northPier !== null, 'hit at ' + gates.northPier + ' m');
+    check('gate lintel still blocks above the opening', gates.northLintel !== null, 'hit at ' + gates.northLintel + ' m');
+    check('prakaram arches are passable', gates.archOpen === null);
+    check('wall between arches is solid', gates.wallSolid !== null, 'hit at ' + gates.wallSolid + ' m');
+    check('wall above an arch is solid', gates.aboveArch !== null, 'hit at ' + gates.aboveArch + ' m');
+    check('no buildings inside the prakaram', gates.inPrecinct === 0, gates.inPrecinct + ' found');
+
+    /* merged-geometry NaN scan: two undefined fields once poisoned a whole mesh */
+    const nan = await page.evaluate(() => {
+      let bad = 0;
+      scene.traverse(o => {
+        const g = o.geometry; if (!g || !g.attributes || !g.attributes.position) return;
+        const a = g.attributes.position.array;
+        for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) { bad++; break; }
+      });
+      return bad;
+    });
+    check('no NaN in any geometry', nan === 0, nan + ' meshes affected');
+
+    /* Thermals. Climb rate is measured with the position pinned inside the
+       column: unpinned, a 30 m/s glide leaves a 64 m thermal in two seconds and
+       the reading silently becomes 'air outside a thermal' (it did, first try). */
+    const therm = await page.evaluate(() => {
+      const was = paused; paused = true;              // stop frame() stepping underneath us
+      function climb({ x, z, glide, pitch = 0.10, hold = 90, secs = 8 }) {
+        player.riding = null; player.clinging = false; player.grounded = false;
+        player.webs[0].on = player.webs[1].on = false;
+        player.p.set(x, hold, z); player.v.set(30, 0, 0);
+        const i = { fwd: V3(Math.cos(pitch), Math.sin(pitch), 0), mx: 0, mz: 0, mzRaw: 0, jump: false,
+          glide, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false, mount: false };
+        WIND.set(0, 0, 0);
+        for (let k = 0, n = Math.round(secs / SUB); k < n; k++) {
+          player.grounded = false; stepPhysics(SUB, i); player.p.set(x, hold, z);
+        }
+        return +player.v.y.toFixed(1);
+      }
+      const T = THERMALS[0];
+      const out = {
+        core: +thermalAt(T.x, 90, T.z).toFixed(1),
+        outside: +thermalAt(T.x + T.r + 5, 90, T.z).toFixed(1),
+        ceiling: +thermalAt(T.x, 240, T.z).toFixed(1),
+        glideIn: climb({ x: T.x, z: T.z, glide: true }),
+        glideOut: climb({ x: 0, z: -400, glide: true }),
+        fallIn: climb({ x: T.x, z: T.z, glide: false }),
+        fallOut: climb({ x: 0, z: -400, glide: false }),
+      };
+      paused = was; respawn();
+      return out;
+    });
+    check('thermal is bounded: lift at the core, none outside or above',
+      therm.core > 0 && therm.outside === 0 && therm.ceiling === 0,
+      'core ' + therm.core + ' m/s');
+    check('gliding inside a thermal GAINS altitude', therm.glideIn > 2,
+      therm.glideIn + ' m/s climb vs ' + therm.glideOut + ' outside');
+    check('gliding outside still sinks', therm.glideOut < 0);
+    check('falling through a thermal does not climb', therm.fallIn < 0,
+      therm.fallIn + ' m/s');
+    check('but a thermal does slow a fall', therm.fallIn > therm.fallOut,
+      therm.fallIn + ' vs ' + therm.fallOut + ' m/s outside');
+    check('spreading the wings beats falling through', therm.glideIn > therm.fallIn + 10);
+
+    /* Water contact. The sea used to be a lid — the ground clamp caught you at
+       RAD, so you stood on it and every bit of momentum died. These assert it
+       is a volume: you enter, you come back up, and a graze is not a plunge. */
+    const water = await page.evaluate(() => {
+      const was = paused; paused = true;
+      function run({ x, z, y0, vy = 0, vx = 0, secs = 4 }) {
+        player.riding = null; player.clinging = false; player.grounded = false; player.wasWet = false;
+        player.webs[0].on = player.webs[1].on = false;
+        player.p.set(x, y0, z); player.v.set(vx, vy, 0);
+        const i = { fwd: V3(1, 0, 0), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false,
+                    reelIn: false, reelOut: false, zip: false, cling: false, mount: false };
+        let minY = 1e9;
+        splashCool = 0;                       // updateSplashes is not running to clear it
+        const splash0 = splashNext;
+        for (let k = 0, n = Math.round(secs / SUB); k < n; k++) {
+          stepPhysics(SUB, i);
+          minY = Math.min(minY, player.p.y);
+        }
+        const splashed = splashNext - splash0;
+        return { minY: +minY.toFixed(2), restY: +player.p.y.toFixed(2),
+                 horiz: +Math.hypot(player.v.x, player.v.z).toFixed(1), grounded: player.grounded, splashed };
+      }
+      const out = {
+        skim:  run({ x: SEA_X + 120, z: 0, y0: 0.7, vx: 45, vy: -1.5, secs: 3 }),
+        dive:  run({ x: SEA_X + 120, z: 0, y0: 25, vy: -30, secs: 6 }),
+        float: run({ x: SEA_X + 120, z: 40, y0: -6, secs: 8 }),
+        river: run({ x: -120, z: riverZ(-120), y0: 20, vy: -20, secs: 6 }),
+        land:  run({ x: -300, z: -420, y0: 60, vy: -40, secs: 4 }),
+      };
+      paused = was; respawn();
+      return out;
+    });
+    check('water is enterable, not a lid', water.dive.minY < -2 && !water.dive.grounded,
+      'dive reached ' + water.dive.minY + ' m');
+    check('a dive surfaces and settles at the waterline', Math.abs(water.dive.restY) < 0.4,
+      'rest y ' + water.dive.restY);
+    check('a submerged body floats back up', water.float.restY > -0.4 && water.float.restY < 0.4,
+      'from -6 m to ' + water.float.restY);
+    check('skimming stays shallow and keeps speed', water.skim.minY > -2 && water.skim.horiz > 10,
+      water.skim.horiz + ' m/s kept, dipped to ' + water.skim.minY + ' m');
+    check('a graze is cheaper than a plunge', water.skim.horiz > water.dive.horiz + 8);
+    check('the river behaves like the sea', Math.abs(water.river.restY - 0.06) < 0.4,
+      'rest y ' + water.river.restY);
+    check('entering water raises a splash', water.dive.splashed > 0 && water.land.splashed === 0);
+    check('dry land is unaffected', water.land.grounded && Math.abs(water.land.restY - 0.85) < 0.01);
+
     /* settings persistence across reload */
     await page.evaluate(() => { sens = 0.0071; assist = false; saveSettings(); });
     await page.reload({ waitUntil: 'load' });

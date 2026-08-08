@@ -11,6 +11,34 @@ const REEL = 15, SUB = 1 / 120;
    it only changes which velocity feeds the aero model, so drag and lift see
    airspeed instead of ground speed. Gliding becomes a negotiation with the
    monsoon breeze rather than a solved function of your own motion. */
+/* Thermals — columns of rising air over the sun-baked marina sand, the tech
+   park's glass and concrete, and the maidan. They are the VERTICAL component of
+   the wind rather than a bespoke force, so the existing drag and lift model
+   does all the work: a glider climbs because the air it is flying through is
+   climbing, and spreading the wings to glide catches the rise harder than
+   falling does (higher drag coefficient, same air). Gliding gains altitude;
+   plummeting through one only slows you down. */
+const THERMALS = [
+  { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
+  { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
+  { x: -300, z: -140, r: 52 },                              // the maidan
+];
+const THERM_V = 36;        // m/s of rise on the axis
+const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
+function thermalAt(x, y, z) {
+  let v = 0;
+  for (const t of THERMALS) {
+    const dx = x - t.x, dz = z - t.z;
+    const d2 = dx * dx + dz * dz, r2 = t.r * t.r;
+    if (d2 >= r2) continue;
+    const core = 1 - d2 / r2;                                  // strongest on the axis
+    const alt = 1 - sstep(THERM_TOP * 0.55, THERM_TOP, y);
+    const w = THERM_V * core * alt;
+    if (w > v) v = w;
+  }
+  return v;
+}
+
 const WIND = V3();
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
@@ -22,6 +50,7 @@ function updateWind(t) {
 const player = {
   p: V3(-46, 96, -230), v: V3(4, 0, 20),
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
+  depth: 0, wasWet: false,
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
   webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() },
          { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() }]
@@ -68,7 +97,17 @@ function rayHit(ox, oy, oz, dx, dy, dz, maxT) {
   return _hit;
 }
 
-const inWaterAt = (x, y, z) => (x > SEA_X - 4 || Math.abs(z - riverZ(x)) < RIVER_HW) && y < 1.2;
+/* Water used to be a lid: the ground clamp caught you at RAD, so you stood on
+   the sea and every bit of momentum died on contact. It is a volume now.
+   Shallow contact barely slows you — that is the skim — while depth slows you
+   hard and floats you back up. */
+const SEA_Y = 0.05, RIVER_Y = 0.06, SEABED = 9;
+function waterSurfaceAt(x, z) {
+  if (x > SEA_X - 4) return SEA_Y;
+  if (Math.abs(z - riverZ(x)) < RIVER_HW) return RIVER_Y;
+  return null;
+}
+const inWaterAt = (x, y, z) => { const s = waterSurfaceAt(x, z); return s !== null && y < s; };
 
 function solveContacts(p) {
   player.contact = false;
@@ -100,7 +139,11 @@ function solveContacts(p) {
       if (player.cn.y > 0.6) player.grounded = true;
     }
   }
-  if (p.y < RAD) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
+  if (p.y < RAD) {
+    const surf = waterSurfaceAt(p.x, p.z);
+    if (surf === null) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
+    else if (p.y < surf - SEABED) { p.y = surf - SEABED; player.contact = true; player.cn.set(0, 1, 0); }
+  }
 }
 
 /* Which hull E would board right now. A web latched to a hull is boarding
@@ -164,23 +207,41 @@ function stepPhysics(h, inp) {
      substep. Clearing it first made the grounded branch permanently dead. */
   const onGround = player.grounded;
   player.grounded = false;
-  player.inWater = inWaterAt(P.x, P.y, P.z);
+  const surf = waterSurfaceAt(P.x, P.z);
+  player.inWater = surf !== null && P.y < surf;
+  player.depth = player.inWater ? surf - P.y : 0;
+  /* one splash per entry, scaled by how hard you hit */
+  if (player.inWater && !player.wasWet) splash(P.x, surf, P.z, -V.y);
+  player.wasWet = player.inWater;
   player.clinging = !!inp.cling && player.contact && !player.inWater;
 
   /* ---- forces ---- */
   let ax = 0, ay = -G, az = 0;
 
   /* the aero model runs on airspeed: velocity relative to the wind */
-  const wfx = player.inWater ? 0 : WIND.x, wfz = player.inWater ? 0 : WIND.z;
-  const rvx = V.x - wfx, rvy = V.y, rvz = V.z - wfz;
+  const calm = player.inWater;
+  const wfx = calm ? 0 : WIND.x, wfz = calm ? 0 : WIND.z;
+  const wfy = calm ? 0 : thermalAt(P.x, P.y, P.z);
+  const rvx = V.x - wfx, rvy = V.y - wfy, rvz = V.z - wfz;
   const rs = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
   let cd = DRAG_AIR;
   if (inp.tuck) cd = DRAG_TUCK;
   if (inp.glide && !onGround) cd = DRAG_GLIDE;
-  if (player.inWater) cd = 0.16;
+  /* sub: 0 grazing the surface, 1 fully under. Skimming keeps its speed;
+     going deep does not. */
+  const sub = player.inWater ? clamp(player.depth / 1.7, 0, 1) : 0;
+  if (player.inWater) cd = 0.004 + 0.055 * sub;
   ax -= cd * rs * rvx; ay -= cd * rs * rvy; az -= cd * rs * rvz;
-  if (player.inWater) ay += G * 1.35;
+  if (player.inWater) {
+    /* Buoyancy vanishes at the surface, so the only rest state is floating
+       exactly there. Quadratic drag goes to nothing at low speed and left the
+       bob undamped forever, so the viscous term below is what actually settles
+       it — vertical mostly, or a skim would stop dead. */
+    ay += G * (1 + 1.15 * sub);
+    ay -= V.y * (1.6 + 3.4 * sub);
+    ax -= V.x * 0.30 * sub; az -= V.z * 0.30 * sub;
+  }
 
   /* ---- wing: angle-of-attack lift ---- */
   if (inp.glide && !onGround && rs > 9 && !player.inWater) {
@@ -203,6 +264,9 @@ function stepPhysics(h, inp) {
     ax += inp.mx * runA; az += inp.mz * runA;
     ax -= V.x * 6.2; az -= V.z * 6.2;
     if (inp.jump) { V.y = 12.4; P.y += 0.04; }
+  } else if (player.inWater) {
+    ax += inp.mx * 15; az += inp.mz * 15;                 // swim
+    if (inp.jump) V.y = Math.max(V.y, 10.5);              // kick for the surface
   } else if (player.clinging && player.contact) {
     const n = player.cn;
     _tmp.set(inp.mx, 0, inp.mz);
