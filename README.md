@@ -2,7 +2,7 @@
 
 A browser-based third-person web-swinging sandbox set on a Coromandel-coast-inspired city — temple ward, old bazaar, tech park, river, and the Bay of Bengal. Everything is procedural: the city, the facades, the character, the audio. There are no levels, points, or objectives; the whole product is the feel of moving through the city.
 
-**Ships as one self-contained HTML file** — no assets, no bundler, no dependencies beyond a Three.js CDN tag. Open `index.html` and it runs. Source lives split under `src/` and is concatenated back into that file by a dependency-free Node script (see [Development](#development)).
+**Ships as a static page with no runtime dependencies** — no assets, no bundler, no CDN. `index.html` plus a vendored copy of Three.js; open it and it runs, from a web server or straight off disk. Source lives split under `src/` and is concatenated back into that file by a dependency-free Node script (see [Development](#development)).
 
 ## Play
 
@@ -56,9 +56,11 @@ Every push to the production branch redeploys automatically; other branches get 
 npx wrangler pages deploy . --project-name nagaram
 ```
 
+Run direct uploads from a clean checkout — the git integration only ever sees committed files, but a direct upload takes the working directory as-is, including a local `node_modules/` if you have installed the dev dependency.
+
 Notes:
 
-- Three.js r128 is loaded from cdnjs, which is Cloudflare's own CDN — no extra config needed.
+- Three.js r128 is vendored at `vendor/three.min.js`, so there is no third-party runtime dependency and no CDN outage can take the game down.
 - `_headers` sets a few conservative security headers; Pages picks it up automatically.
 - Pointer lock is requested on click and falls back to cursor-rate steering when the browser refuses it (e.g. inside embedded frames), so the game stays playable on preview URLs and embeds.
 
@@ -69,9 +71,24 @@ Notes:
 ```sh
 npm run build     # regenerate index.html from src/
 npm run check     # fail if index.html is stale (useful in CI / pre-commit)
+npm test          # check the build is current, then run the smoke suite
 ```
 
-There is no bundler and no dependency to install — the build is one Node script doing an ordered concatenation. `index.html` stays committed so Cloudflare Pages still needs zero build configuration.
+The build itself is one Node script doing an ordered concatenation — no bundler, nothing to install. `index.html` stays committed so Cloudflare Pages still needs zero build configuration.
+
+### Testing
+
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 48 checks across a desktop pass, a landscape-touch pass, and a portrait pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, the somersault's rate profile, and every touch control.
+
+```sh
+npm install                       # one devDependency: playwright
+npx playwright install chromium   # or set CHROMIUM_PATH to an existing binary
+npm test
+```
+
+**Write a measurement before claiming a fix.** Nearly every significant bug in this project has been invisible to reading the code and obvious to a measurement — a camera basis dotted -1.000 against its true axis, 5% crosshair fidelity, a flip spinning at 514°/s with 73% frame-to-frame jitter. Check a new metric's polarity against a known-good case before trusting it; a test that is wrong in the right direction hides real results.
+
+Headless mobile emulation throttles `requestAnimationFrame` heavily, so wait on conditions (`waitForFunction`) rather than wall-clock time.
 
 ### Layout of `src/`
 
@@ -100,6 +117,8 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `96-hud.js` | minimap, readouts |
 | `99-loop.js` | main loop |
 | `tail.html` | closing tags |
+
+Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extracted verbatim from npm `three@0.128.0`, license at `vendor/three.LICENSE`). Upgrading past r128 is a real migration, not a drop-in: the facade shader injects into Lambert/Phong chunks, and colour-management defaults changed in later revisions.
 
 ### Things that must not be broken
 
