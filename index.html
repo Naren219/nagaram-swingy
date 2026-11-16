@@ -429,6 +429,21 @@ const TEMPLE = { x: 0, z: 0, r: 104 };
    plaza the ground texture already paints there. Keep the whole precinct clear. */
 const PRECINCT = 140;
 
+/* --- open ground: the cricket maidan and the temple tank ---
+   The ground texture paints both, the tank gets its granite steps and the
+   maidan its thermal, but nothing reserved the land — so apartment blocks
+   stood on the pitch and houses in the tank, and traffic drove across both.
+   One definition now feeds the painter, the mesh, the thermal and every
+   placement test. */
+const MAIDAN = { x: -300, z: -140, r: 52 };
+const TANK = { x: -196, z: 152, half: 52, pool: 40 };   // pool: half-width of the water
+/* does a footprint of half-size (hw, hd) centred on (x, z) touch either? */
+function onOpenGround(x, z, hw, hd) {
+  const mx = Math.max(Math.abs(x - MAIDAN.x) - hw, 0), mz = Math.max(Math.abs(z - MAIDAN.z) - hd, 0);
+  if (mx * mx + mz * mz < MAIDAN.r * MAIDAN.r) return true;
+  return Math.abs(x - TANK.x) < TANK.half + hw && Math.abs(z - TANK.z) < TANK.half + hd;
+}
+
 function genCity() {
   for (let cx = -EXT; cx <= EXT; cx += PITCH) {
     for (let cz = -EXT; cz <= EXT; cz += PITCH) {
@@ -483,6 +498,9 @@ function genCity() {
           else if (r < tall + 0.11) h *= rnd(1.7, 2.4);
         }
         c = pick(PALETTE[dist] || PALETTE.mid);
+        /* tested last, after every random draw for the lot, so clearing these
+           lots leaves the rest of the skyline exactly as it was */
+        if (onOpenGround(x, z, w / 2, d / 2)) continue;
         addBuilding(x, z, w, d, h, c, kind);
       }
     }
@@ -556,7 +574,7 @@ landmarks.push({ type: 'vimana', x: 0, z: 0, h: 44 });
 addBox(0, 0, 0, 34, 16, 34); addBox(0, 16, 0, 22, 16, 22); addBox(0, 32, 0, 12, 12, 12);
 landmarks.push({ type: 'mandapam', x: 0, z: -62, w: 60, d: 36, h: 12 });
 addBox(0, 0, -62, 60, 12, 36);
-landmarks.push({ type: 'tank', x: -196, z: 152, s: 96 });
+landmarks.push({ type: 'tank', x: TANK.x, z: TANK.z, s: 96 });
 landmarks.push({ type: 'lighthouse', x: 452, z: -96, h: 52 });
 addBox(452, 0, -96, 15, 52, 15);
 const BRIDGES = [-330, -60, 190, 372];
@@ -856,11 +874,11 @@ const s2c = (v) => v / (GHALF * 2) * GTEX;
     gx.beginPath(); gx.moveTo(w2c(i * 34), w2c(-PW)); gx.lineTo(w2c(i * 34), w2c(PW)); gx.stroke();
   }
   /* temple tank */
-  gx.fillStyle = '#7e7869'; gx.fillRect(w2c(-196 - 52), w2c(152 - 52), s2c(104), s2c(104));
-  gx.fillStyle = '#20443f'; gx.fillRect(w2c(-196 - 40), w2c(152 - 40), s2c(80), s2c(80));
+  gx.fillStyle = '#7e7869'; gx.fillRect(w2c(TANK.x - TANK.half), w2c(TANK.z - TANK.half), s2c(TANK.half * 2), s2c(TANK.half * 2));
+  gx.fillStyle = '#20443f'; gx.fillRect(w2c(TANK.x - TANK.pool), w2c(TANK.z - TANK.pool), s2c(TANK.pool * 2), s2c(TANK.pool * 2));
   /* cricket maidan */
-  gx.fillStyle = '#5e6f3f'; gx.beginPath(); gx.arc(w2c(-300), w2c(-140), s2c(52), 0, TAU); gx.fill();
-  gx.fillStyle = '#a99a72'; gx.fillRect(w2c(-306), w2c(-152), s2c(12), s2c(24));
+  gx.fillStyle = '#5e6f3f'; gx.beginPath(); gx.arc(w2c(MAIDAN.x), w2c(MAIDAN.z), s2c(MAIDAN.r), 0, TAU); gx.fill();
+  gx.fillStyle = '#a99a72'; gx.fillRect(w2c(MAIDAN.x - 6), w2c(MAIDAN.z - 12), s2c(12), s2c(24));
   /* river */
   gx.strokeStyle = '#4a4530'; gx.lineWidth = s2c(RIVER_HW * 2 + 16); gx.beginPath();
   for (let x = -GHALF; x <= GHALF; x += 12) { const z = riverZ(x); x === -GHALF ? gx.moveTo(w2c(x), w2c(z)) : gx.lineTo(w2c(x), w2c(z)); }
@@ -1157,12 +1175,28 @@ for (const l of landmarks) {
   }
   push(p);
 }
-/* temple tank: granite steps */
+/* temple tank: granite ghats stepping down from the rim to the water.
+   These used to be five solid slabs stacked DOWNWARD from the surface, so four
+   were buried under the ground plane and the top one covered the pool — the
+   tank was a blank platform. Each step is now a square frame leaving the
+   painted water open in the middle: one step up from the street to the crest,
+   then down to the pool. No riser is taller than half a metre, so the body's
+   0.85 m collision sphere rolls over every one of them on foot, and the
+   collision boxes come from the same slabs — the steps you see are the steps
+   you climb. */
 {
-  const p = [];
-  for (let i = 0; i < 5; i++) {
-    const s = 104 - i * 6;
-    p.push({ geo: BOXB, matrix: M4(-196, -0.1 - i * 0.9, 152, s, 1.0, s), color: i % 2 ? 0x8f877a : 0x7f7669 });
+  const p = [], RISE = [0.5, 1.0, 0.66, 0.33], RUN = (TANK.half - TANK.pool) / RISE.length;
+  for (let i = 0; i < RISE.length; i++) {
+    const outer = TANK.half - i * RUN, hgt = RISE[i], mid = outer - RUN / 2;
+    const color = i % 2 ? 0x8f877a : 0x7f7669;
+    for (const s of [-1, 1]) {
+      const slabs = [[TANK.x, TANK.z + s * mid, outer * 2, RUN],              // the two full-width runs
+                     [TANK.x + s * mid, TANK.z, RUN, (outer - RUN) * 2]];     // the two between them
+      for (const [x, z, w, d] of slabs) {
+        p.push({ geo: BOXB, matrix: M4(x, 0, z, w, hgt, d), color });
+        addBox(x, 0, z, w, hgt, d);
+      }
+    }
   }
   push(p);
 }
@@ -1318,6 +1352,7 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
     const x = rnd(-GHALF * 0.92, GHALF * 0.92), z = rnd(-GHALF * 0.92, GHALF * 0.92);
     if (!test(x, z)) continue;
     if (!freeAt(x, z, 2.4)) continue;
+    if (onOpenGround(x, z, 2.4, 2.4)) continue;   // no palms on the pitch or in the tank
     picks[tries % 3].push([x, z]);
   }
   for (let g = 0; g < 3; g++) {
@@ -1389,6 +1424,7 @@ const segs = [];
   const blocked = (axis, k, t) => {
     const x = axis === 'x' ? t : k, z = axis === 'x' ? k : t;
     if (x > SAND_X - 10) return true;
+    if (onOpenGround(x, z, ROADW / 2, ROADW / 2)) return true;
     if (Math.abs(x) < TEMPLE.r + 16 && Math.abs(z) < TEMPLE.r + 16) return true;
     if (Math.abs(z - riverZ(x)) < RIVER_HW + 18) {
       let near = false;
@@ -1577,6 +1613,7 @@ const G = 23.5, MASS = 78, RAD = 0.85;
 const DRAG_AIR = 0.0042, DRAG_TUCK = 0.0024, DRAG_GLIDE = 0.0105, LIFT_K = 0.0115;
 const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
+const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
 
 /* Wind: a slowly wandering horizontal vector. It never touches the solver —
    it only changes which velocity feeds the aero model, so drag and lift see
@@ -1592,7 +1629,7 @@ const REEL = 15, SUB = 1 / 120;
 const THERMALS = [
   { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
   { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
-  { x: -300, z: -140, r: 52 },                              // the maidan
+  { x: MAIDAN.x, z: MAIDAN.z, r: MAIDAN.r },                // the maidan
 ];
 const THERM_V = 36;        // m/s of rise on the axis
 const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
@@ -1623,8 +1660,8 @@ const player = {
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
   depth: 0, wasWet: false,
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
-  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() },
-         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() }]
+  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
+         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
 };
 let assist = true;
 
@@ -1867,6 +1904,7 @@ function stepPhysics(h, inp) {
   /* ---- rope length control ---- */
   for (const w of player.webs) {
     if (!w.on) continue;
+    w.age += h;
     if (inp.reelIn) w.tgt -= REEL * h;
     if (inp.reelOut) w.tgt += REEL * h;
     if (assist) {
@@ -1992,7 +2030,7 @@ function fireWebAt(i, a) {
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
-  w.tension = 0; w.tavg = 0; w.fired = performance.now();
+  w.tension = 0; w.tavg = 0; w.age = 0;
   player.clinging = false;
   return true;
 }
@@ -2001,7 +2039,11 @@ function releaseWeb(i) {
   const w = player.webs[i];
   if (!w.on) return;
   w.on = false;
-  if (player.v.y > 0.5) { player.v.y += 2.4; }
+  /* The pop off the top of an arc is paid for by time spent on the line. Given
+     unconditionally it was a free 2.4 m/s per click: re-firing ten times a
+     second out-climbed gravity and beat any real swing. A tap now gets nothing
+     and a full arc gets all of it. */
+  if (player.v.y > 0.5) player.v.y += RELEASE_POP * sstep(0.35, 1.0, w.age);
   /* A hard upward release throws the body into a somersault — earned by the
      swing, never a button. Pure rig theatre: the trajectory is untouched. */
   const other = player.webs[1 - i];
@@ -2232,10 +2274,13 @@ function aimAt(nodeObj, worldDir, parentQ) {
   _q.setFromUnitVectors(_up, _d);
   nodeObj.quaternion.slerp(_q, 1);
 }
+/* the frame time poseRig is running on; a hard-coded 1/60 here made every limb
+   settle 2.4x faster on a 144 Hz display and 2x slower at 30 fps */
+let poseDt = 1 / 60;
 function smoothEuler(o, x, y, z, k) {
-  o.rotation.x = damp(o.rotation.x, x, k, 0.016);
-  o.rotation.y = damp(o.rotation.y, y, k, 0.016);
-  o.rotation.z = damp(o.rotation.z, z, k, 0.016);
+  o.rotation.x = damp(o.rotation.x, x, k, poseDt);
+  o.rotation.y = damp(o.rotation.y, y, k, poseDt);
+  o.rotation.z = damp(o.rotation.z, z, k, poseDt);
 }
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
@@ -2258,6 +2303,7 @@ function trapEase(p, r) {
 
 let rigY = 0.44;
 function poseRig(dt, inp) {
+  poseDt = dt;
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
@@ -3064,13 +3110,16 @@ function frame() {
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
-  inp.jump = jumpEdge; jumpEdge = false;
+  /* Edges are only consumed by a physics step that actually saw them. A
+     display faster than 120 Hz renders frames with no substep at all, and
+     clearing the flag here threw the press away on every one of them. */
+  inp.jump = jumpEdge;
   inp.glide = !!keys['Space'] && !player.grounded && !player.inWater;
   inp.tuck = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
   inp.reelIn = anyWeb && fb > 0.25; inp.reelOut = anyWeb && fb < -0.25;
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
-  inp.mount = mountEdge; mountEdge = false;
+  inp.mount = mountEdge;
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -3079,6 +3128,7 @@ function frame() {
   if (photoMode) {
     /* the player and aircraft freeze for the shot; the rest of the city lives on */
     acc = 0; pPrev.copy(player.p); pRender.copy(player.p);
+    jumpEdge = mountEdge = false;   // a press during the shot is not a press after it
   } else {
     acc += dt;
     let n = 0;
@@ -3090,7 +3140,8 @@ function frame() {
     updatePlanes(dt);   // hulls move first: riders and latched anchors read them
     while (acc >= SUB && n < 10) {
       pPrev.copy(player.p);
-      stepPhysics(SUB, inp); acc -= SUB; n++; inp.jump = false;
+      stepPhysics(SUB, inp); acc -= SUB; n++;
+      inp.jump = inp.mount = jumpEdge = mountEdge = false;
     }
     if (n === 0) pPrev.copy(player.p);
     pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));

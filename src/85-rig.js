@@ -116,10 +116,13 @@ function aimAt(nodeObj, worldDir, parentQ) {
   _q.setFromUnitVectors(_up, _d);
   nodeObj.quaternion.slerp(_q, 1);
 }
+/* the frame time poseRig is running on; a hard-coded 1/60 here made every limb
+   settle 2.4x faster on a 144 Hz display and 2x slower at 30 fps */
+let poseDt = 1 / 60;
 function smoothEuler(o, x, y, z, k) {
-  o.rotation.x = damp(o.rotation.x, x, k, 0.016);
-  o.rotation.y = damp(o.rotation.y, y, k, 0.016);
-  o.rotation.z = damp(o.rotation.z, z, k, 0.016);
+  o.rotation.x = damp(o.rotation.x, x, k, poseDt);
+  o.rotation.y = damp(o.rotation.y, y, k, poseDt);
+  o.rotation.z = damp(o.rotation.z, z, k, poseDt);
 }
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
@@ -142,6 +145,7 @@ function trapEase(p, r) {
 
 let rigY = 0.44;
 function poseRig(dt, inp) {
+  poseDt = dt;
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */

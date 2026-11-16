@@ -34,6 +34,7 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
     const x = rnd(-GHALF * 0.92, GHALF * 0.92), z = rnd(-GHALF * 0.92, GHALF * 0.92);
     if (!test(x, z)) continue;
     if (!freeAt(x, z, 2.4)) continue;
+    if (onOpenGround(x, z, 2.4, 2.4)) continue;   // no palms on the pitch or in the tank
     picks[tries % 3].push([x, z]);
   }
   for (let g = 0; g < 3; g++) {

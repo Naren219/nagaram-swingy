@@ -38,13 +38,16 @@ function frame() {
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
-  inp.jump = jumpEdge; jumpEdge = false;
+  /* Edges are only consumed by a physics step that actually saw them. A
+     display faster than 120 Hz renders frames with no substep at all, and
+     clearing the flag here threw the press away on every one of them. */
+  inp.jump = jumpEdge;
   inp.glide = !!keys['Space'] && !player.grounded && !player.inWater;
   inp.tuck = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
   inp.reelIn = anyWeb && fb > 0.25; inp.reelOut = anyWeb && fb < -0.25;
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
-  inp.mount = mountEdge; mountEdge = false;
+  inp.mount = mountEdge;
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -53,6 +56,7 @@ function frame() {
   if (photoMode) {
     /* the player and aircraft freeze for the shot; the rest of the city lives on */
     acc = 0; pPrev.copy(player.p); pRender.copy(player.p);
+    jumpEdge = mountEdge = false;   // a press during the shot is not a press after it
   } else {
     acc += dt;
     let n = 0;
@@ -64,7 +68,8 @@ function frame() {
     updatePlanes(dt);   // hulls move first: riders and latched anchors read them
     while (acc >= SUB && n < 10) {
       pPrev.copy(player.p);
-      stepPhysics(SUB, inp); acc -= SUB; n++; inp.jump = false;
+      stepPhysics(SUB, inp); acc -= SUB; n++;
+      inp.jump = inp.mount = jumpEdge = mountEdge = false;
     }
     if (n === 0) pPrev.copy(player.p);
     pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));

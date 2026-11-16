@@ -38,6 +38,7 @@ const segs = [];
   const blocked = (axis, k, t) => {
     const x = axis === 'x' ? t : k, z = axis === 'x' ? k : t;
     if (x > SAND_X - 10) return true;
+    if (onOpenGround(x, z, ROADW / 2, ROADW / 2)) return true;
     if (Math.abs(x) < TEMPLE.r + 16 && Math.abs(z) < TEMPLE.r + 16) return true;
     if (Math.abs(z - riverZ(x)) < RIVER_HW + 18) {
       let near = false;

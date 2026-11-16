@@ -48,6 +48,21 @@ const TEMPLE = { x: 0, z: 0, r: 104 };
    plaza the ground texture already paints there. Keep the whole precinct clear. */
 const PRECINCT = 140;
 
+/* --- open ground: the cricket maidan and the temple tank ---
+   The ground texture paints both, the tank gets its granite steps and the
+   maidan its thermal, but nothing reserved the land — so apartment blocks
+   stood on the pitch and houses in the tank, and traffic drove across both.
+   One definition now feeds the painter, the mesh, the thermal and every
+   placement test. */
+const MAIDAN = { x: -300, z: -140, r: 52 };
+const TANK = { x: -196, z: 152, half: 52, pool: 40 };   // pool: half-width of the water
+/* does a footprint of half-size (hw, hd) centred on (x, z) touch either? */
+function onOpenGround(x, z, hw, hd) {
+  const mx = Math.max(Math.abs(x - MAIDAN.x) - hw, 0), mz = Math.max(Math.abs(z - MAIDAN.z) - hd, 0);
+  if (mx * mx + mz * mz < MAIDAN.r * MAIDAN.r) return true;
+  return Math.abs(x - TANK.x) < TANK.half + hw && Math.abs(z - TANK.z) < TANK.half + hd;
+}
+
 function genCity() {
   for (let cx = -EXT; cx <= EXT; cx += PITCH) {
     for (let cz = -EXT; cz <= EXT; cz += PITCH) {
@@ -102,6 +117,9 @@ function genCity() {
           else if (r < tall + 0.11) h *= rnd(1.7, 2.4);
         }
         c = pick(PALETTE[dist] || PALETTE.mid);
+        /* tested last, after every random draw for the lot, so clearing these
+           lots leaves the rest of the skyline exactly as it was */
+        if (onOpenGround(x, z, w / 2, d / 2)) continue;
         addBuilding(x, z, w, d, h, c, kind);
       }
     }
@@ -175,7 +193,7 @@ landmarks.push({ type: 'vimana', x: 0, z: 0, h: 44 });
 addBox(0, 0, 0, 34, 16, 34); addBox(0, 16, 0, 22, 16, 22); addBox(0, 32, 0, 12, 12, 12);
 landmarks.push({ type: 'mandapam', x: 0, z: -62, w: 60, d: 36, h: 12 });
 addBox(0, 0, -62, 60, 12, 36);
-landmarks.push({ type: 'tank', x: -196, z: 152, s: 96 });
+landmarks.push({ type: 'tank', x: TANK.x, z: TANK.z, s: 96 });
 landmarks.push({ type: 'lighthouse', x: 452, z: -96, h: 52 });
 addBox(452, 0, -96, 15, 52, 15);
 const BRIDGES = [-330, -60, 190, 372];

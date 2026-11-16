@@ -511,6 +511,128 @@ const server = http.createServer((req, res) => {
     await ctx.close();
   }
 
+  /* ================= fixed-step pass =================
+     Takes the loop away from requestAnimationFrame and the GPU: frames are run
+     synchronously on a chosen dt, so a 240 Hz display can be simulated exactly
+     and nothing here waits on the wall clock. */
+  {
+    const { ctx, page } = await newPage({});
+    await page.goto(BASE, { waitUntil: 'load' });
+    await page.waitForFunction(() => document.getElementById('load').classList.contains('gone'));
+    await page.evaluate(() => {
+      window.requestAnimationFrame = () => 0;
+      renderer.render = () => {};
+      window.__dt = 1 / 60; clock.getDelta = () => window.__dt;
+      window.run = (n) => { for (let i = 0; i < n; i++) frame(); };
+    });
+    await page.waitForTimeout(150);   // let the one already-queued rAF callback drain
+
+    /* presses on a display faster than the 120 Hz physics: frames with no
+       substep must not swallow the edge. Polarity: 60 Hz has always passed. */
+    for (const hz of [60, 144, 240]) {
+      const r = await page.evaluate((hz) => {
+        __dt = 1 / hz; let jumped = 0, boarded = 0; const N = 120;
+        for (let i = 0; i < N; i++) {
+          player.riding = null;
+          player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0);   // open road junction
+          run(Math.ceil(hz / 3) + (i % 7));                        // settle, at a varying accumulator phase
+          const y0 = player.p.y;
+          jumpEdge = true; run(Math.ceil(hz / 20));
+          if (player.p.y > y0 + 0.3) jumped++;
+          const pl = planes[0];
+          player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); run(2 + (i % 5));
+          player.p.set(pl.p.x, pl.p.y + 3, pl.p.z);
+          mountEdge = true; run(2);
+          if (player.riding) boarded++;
+        }
+        player.riding = null;
+        /* and one press is still exactly one jump */
+        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); run(hz);
+        jumpEdge = true; run(Math.ceil(hz / 10));
+        return { N, jumped, boarded, vy: player.v.y };
+      }, hz);
+      check('every jump press lands at ' + hz + ' Hz', r.jumped === r.N, r.jumped + '/' + r.N);
+      check('every board press lands at ' + hz + ' Hz', r.boarded === r.N, r.boarded + '/' + r.N);
+      check('one press is one jump at ' + hz + ' Hz', r.vy > 12 && r.vy < 16, 'vy ' + r.vy.toFixed(1) + ' m/s after 0.1 s');
+    }
+
+    /* tapping the web must not manufacture energy. Fixed pendulum, assist off,
+       identical start; the only difference between runs is the tapping. */
+    const pend = await page.evaluate(() => {
+      __dt = 1 / 60;
+      const swing = (every) => {
+        assist = false; player.riding = null; releaseWeb(0); releaseWeb(1);
+        const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+        const A = { x: b.x - b.w / 2 - 14, y: b.h + 60, z: b.z, pl: null };   // free air beside the tallest tower
+        const L = 40, th = Math.PI / 3, y0 = A.y - L * Math.cos(th);
+        player.p.set(A.x, y0, A.z + L * Math.sin(th)); player.v.set(0, 0, 0);
+        fireWebAt(0, A);
+        const E = () => 0.5 * player.v.lengthSq() + G * player.p.y, e0 = E();
+        let maxY = -1e9;
+        for (let f = 0; f < 60 * 15; f++) {
+          if (every && f % every === 0 && player.webs[0].on) { releaseWeb(0); fireWebAt(0, A); }
+          run(1); maxY = Math.max(maxY, player.p.y);
+        }
+        const out = { rise: maxY - y0, gain: (E() - e0) / G };
+        releaseWeb(0); assist = true; return out;
+      };
+      const pop = (age) => {
+        const w = player.webs[0]; player.p.set(-46, 80, -230); player.grounded = false; flipT = 1e9;
+        w.on = true; w.pl = null; w.age = age; player.v.set(8, 5, 10); releaseWeb(0);
+        return player.v.y - 5;
+      };
+      return { hold: swing(0), tap4: swing(15), tap10: swing(6), popTap: pop(0.1), popSwing: pop(2.0) };
+    });
+    check('a held swing only loses energy to drag', pend.hold.gain < 0 && pend.hold.rise < 0.5,
+      'energy ' + pend.hold.gain.toFixed(1) + ' m of height over 15 s');
+    check('tapping the web 10x a second gains nothing', pend.tap10.gain <= pend.hold.gain + 1 && pend.tap10.rise < 0.5,
+      'energy ' + pend.tap10.gain.toFixed(1) + ' m, rise ' + pend.tap10.rise.toFixed(1) + ' m');
+    check('tapping the web 4x a second gains nothing', pend.tap4.gain <= pend.hold.gain + 1 && pend.tap4.rise < 0.5,
+      'energy ' + pend.tap4.gain.toFixed(1) + ' m, rise ' + pend.tap4.rise.toFixed(1) + ' m');
+    check('a tap earns no release pop', Math.abs(pend.popTap) < 1e-6, pend.popTap.toFixed(2) + ' m/s');
+    check('a full swing still earns its release pop', Math.abs(pend.popSwing - 2.4) < 1e-6, pend.popSwing.toFixed(2) + ' m/s');
+
+    /* limbs settle on real time, not on frame count */
+    const settle = await page.evaluate(() => [30, 60, 144, 240].map(hz => {
+      player.riding = null;
+      player.p.set(-46, 200, -230); player.v.set(0, -5, 20); player.grounded = false; player.clinging = false; flipT = 1e9;
+      pRender.copy(player.p);
+      const rest = { fwd: inp.fwd, glide: false, tuck: false }, glide = { fwd: inp.fwd, glide: true, tuck: false };
+      for (let i = 0; i < 400; i++) poseRig(1 / 60, rest);
+      const n = Math.round(0.1 * hz); for (let i = 0; i < n; i++) poseRig(1 / hz, glide);
+      return spine.rotation.x;
+    }));
+    const sMin = Math.min(...settle), sMax = Math.max(...settle);
+    check('rig pose speed is independent of frame rate', (sMax - sMin) / sMax < 0.05,
+      'spine 0.1 s into a glide at 30/60/144/240 Hz: ' + settle.map(v => v.toFixed(3)).join(' '));
+
+    /* the maidan and the tank are open ground: nothing built on them, nothing
+       driving across them, and the tank's steps are walkable */
+    const open = await page.evaluate(() => {
+      const touching = buildings.filter(b => onOpenGround(b.x, b.z, b.w / 2, b.d / 2)).length;
+      const lanes = segs.filter(s => {
+        for (let t = s.a; t <= s.b; t += 2) if (onOpenGround(s.axis === 'x' ? t : s.k, s.axis === 'x' ? s.k : t, 0, 0)) return true;
+        return false;
+      }).length;
+      const mt = THERMALS[THERMALS.length - 1];
+      const inThermal = buildings.filter(b => Math.hypot(b.x - mt.x, b.z - mt.z) < mt.r).length;
+      /* walk in from the street, over the ghats, to the water */
+      __dt = 1 / 60; player.riding = null;
+      player.p.set(TANK.x - TANK.half - 18, 0.85, TANK.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0; run(30);
+      let top = 0; keys['KeyW'] = true;
+      for (let f = 0; f < 60 * 9; f++) { run(1); top = Math.max(top, player.p.y); }
+      keys['KeyW'] = false;
+      return { n: buildings.length, touching, lanes, inThermal, top, reach: player.p.x - TANK.x, endY: player.p.y };
+    });
+    check('nothing is built on the maidan or the tank', open.touching === 0 && open.n > 250, open.touching + ' of ' + open.n + ' buildings');
+    check('no traffic lane crosses the maidan or the tank', open.lanes === 0, open.lanes + ' lanes');
+    check('the maidan thermal is clear of buildings', open.inThermal === 0, open.inThermal + ' buildings');
+    check('tank ghats are climbed on foot, down to the pool', open.top > 1.6 && open.top < 2.2 && Math.abs(open.reach) < 40 && open.endY < 0.9,
+      'crest ' + open.top.toFixed(2) + ' m, ended ' + open.reach.toFixed(0) + ' m from centre at y ' + open.endY.toFixed(2));
+    check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
+    await ctx.close();
+  }
+
   await browser.close();
   server.close();
   console.log(failures === 0

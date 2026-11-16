@@ -6,6 +6,7 @@ const G = 23.5, MASS = 78, RAD = 0.85;
 const DRAG_AIR = 0.0042, DRAG_TUCK = 0.0024, DRAG_GLIDE = 0.0105, LIFT_K = 0.0115;
 const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
+const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
 
 /* Wind: a slowly wandering horizontal vector. It never touches the solver —
    it only changes which velocity feeds the aero model, so drag and lift see
@@ -21,7 +22,7 @@ const REEL = 15, SUB = 1 / 120;
 const THERMALS = [
   { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
   { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
-  { x: -300, z: -140, r: 52 },                              // the maidan
+  { x: MAIDAN.x, z: MAIDAN.z, r: MAIDAN.r },                // the maidan
 ];
 const THERM_V = 36;        // m/s of rise on the axis
 const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
@@ -52,8 +53,8 @@ const player = {
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
   depth: 0, wasWet: false,
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
-  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() },
-         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() }]
+  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
+         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
 };
 let assist = true;
 
@@ -296,6 +297,7 @@ function stepPhysics(h, inp) {
   /* ---- rope length control ---- */
   for (const w of player.webs) {
     if (!w.on) continue;
+    w.age += h;
     if (inp.reelIn) w.tgt -= REEL * h;
     if (inp.reelOut) w.tgt += REEL * h;
     if (assist) {
@@ -421,7 +423,7 @@ function fireWebAt(i, a) {
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
-  w.tension = 0; w.tavg = 0; w.fired = performance.now();
+  w.tension = 0; w.tavg = 0; w.age = 0;
   player.clinging = false;
   return true;
 }
@@ -430,7 +432,11 @@ function releaseWeb(i) {
   const w = player.webs[i];
   if (!w.on) return;
   w.on = false;
-  if (player.v.y > 0.5) { player.v.y += 2.4; }
+  /* The pop off the top of an arc is paid for by time spent on the line. Given
+     unconditionally it was a free 2.4 m/s per click: re-firing ten times a
+     second out-climbed gravity and beat any real swing. A tap now gets nothing
+     and a full arc gets all of it. */
+  if (player.v.y > 0.5) player.v.y += RELEASE_POP * sstep(0.35, 1.0, w.age);
   /* A hard upward release throws the body into a somersault — earned by the
      swing, never a button. Pure rig theatre: the trajectory is untouched. */
   const other = player.webs[1 - i];

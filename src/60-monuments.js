@@ -118,12 +118,28 @@ for (const l of landmarks) {
   }
   push(p);
 }
-/* temple tank: granite steps */
+/* temple tank: granite ghats stepping down from the rim to the water.
+   These used to be five solid slabs stacked DOWNWARD from the surface, so four
+   were buried under the ground plane and the top one covered the pool — the
+   tank was a blank platform. Each step is now a square frame leaving the
+   painted water open in the middle: one step up from the street to the crest,
+   then down to the pool. No riser is taller than half a metre, so the body's
+   0.85 m collision sphere rolls over every one of them on foot, and the
+   collision boxes come from the same slabs — the steps you see are the steps
+   you climb. */
 {
-  const p = [];
-  for (let i = 0; i < 5; i++) {
-    const s = 104 - i * 6;
-    p.push({ geo: BOXB, matrix: M4(-196, -0.1 - i * 0.9, 152, s, 1.0, s), color: i % 2 ? 0x8f877a : 0x7f7669 });
+  const p = [], RISE = [0.5, 1.0, 0.66, 0.33], RUN = (TANK.half - TANK.pool) / RISE.length;
+  for (let i = 0; i < RISE.length; i++) {
+    const outer = TANK.half - i * RUN, hgt = RISE[i], mid = outer - RUN / 2;
+    const color = i % 2 ? 0x8f877a : 0x7f7669;
+    for (const s of [-1, 1]) {
+      const slabs = [[TANK.x, TANK.z + s * mid, outer * 2, RUN],              // the two full-width runs
+                     [TANK.x + s * mid, TANK.z, RUN, (outer - RUN) * 2]];     // the two between them
+      for (const [x, z, w, d] of slabs) {
+        p.push({ geo: BOXB, matrix: M4(x, 0, z, w, hgt, d), color });
+        addBox(x, 0, z, w, hgt, d);
+      }
+    }
   }
   push(p);
 }
