@@ -80,6 +80,7 @@ function frame() {
     if (n === 0) pPrev.copy(player.p);
     pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));
     pinToPlanes(pRender);
+    updateRun(dt);
     if (player.p.y < -40) respawn();
   }
 

@@ -8,6 +8,19 @@ const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
 const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
 
+/* Physics announces what happened and stops there. It used to call the HUD,
+   the rig and the water effects itself, which tied the simulation to the DOM.
+   Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
+   a listener sees the state exactly as it was when the thing happened.
+     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)
+     attach(hand)  release(hand, secondsOnTheLine) */
+const listeners = Object.create(null);
+function listen(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
+function emit(type, a, b, c, d) {
+  const l = listeners[type];
+  if (l) for (let i = 0; i < l.length; i++) l[i](a, b, c, d);
+}
+
 /* Wind: a slowly wandering horizontal vector. It never touches the solver —
    it only changes which velocity feeds the aero model, so drag and lift see
    airspeed instead of ground speed. Gliding becomes a negotiation with the
@@ -181,7 +194,7 @@ function stepPhysics(h, inp) {
       player.rideLo.y = DECK_Y;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
-      toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk');
+      emit('board', near);
     }
   }
   if (player.riding) {
@@ -212,7 +225,7 @@ function stepPhysics(h, inp) {
   player.inWater = surf !== null && P.y < surf;
   player.depth = player.inWater ? surf - P.y : 0;
   /* one splash per entry, scaled by how hard you hit */
-  if (player.inWater && !player.wasWet) splash(P.x, surf, P.z, -V.y);
+  if (player.inWater && !player.wasWet) emit('splash', P.x, surf, P.z, -V.y);
   player.wasWet = player.inWater;
   player.clinging = !!inp.cling && player.contact && !player.inWater;
 
@@ -433,7 +446,7 @@ function findAnchor(fwd, right, up, o, prev) {
 function fireWebAt(i, a) {
   const w = player.webs[i];
   if (player.riding && a) { player.v.copy(player.riding.v); player.riding = null; }
-  if (!a) { missFlash = 0.22; return false; }
+  if (!a) { emit('miss'); return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
   w.on = true; w.a.set(a.x, a.y, a.z);
@@ -442,6 +455,7 @@ function fireWebAt(i, a) {
   w.rest = clamp(w.len * 0.72, 20, 68);
   w.tension = 0; w.tavg = 0; w.age = 0;
   player.clinging = false;
+  emit('attach', i);
   return true;
 }
 function releaseWeb(i) {
@@ -458,9 +472,8 @@ function releaseWeb(i) {
      swing, never a button. Pure rig theatre: the trajectory is untouched. */
   const other = player.webs[1 - i];
   if (!other.on && !player.grounded && !player.riding && !player.inWater && player.v.y > 12) {
-    flipN = player.v.y > 21 ? 2 : 1;
-    flipDur = flipN > 1 ? 2.2 : 1.4;
-    flipT = 0;
+    emit('flip', player.v.y > 21 ? 2 : 1);
   }
+  emit('release', i, w.age);
 }
 

@@ -76,6 +76,7 @@ gate.addEventListener('click', () => {
 const toastEl = document.getElementById('toast');
 let toastT = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('on'); toastT = 1.6; }
+listen('board', () => toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk'));
 function setFreeLook(on) {
   if (on && touchOn) return;   // drag-look serves touch; the cursor ring would fight it
   freeLook = on;

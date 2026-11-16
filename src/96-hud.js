@@ -31,6 +31,7 @@ function drawMinimap() {
   mctx.translate(S / 2, S / 2);
   mctx.scale(Z, Z);
   mctx.drawImage(mapBase, -360 - player.p.x * (720 / (MAPR * 2)), -360 - player.p.z * (720 / (MAPR * 2)));
+  drawRunOnMap(mctx, 720 / (MAPR * 2));
   mctx.restore();
   mctx.save(); mctx.translate(S / 2, S / 2); mctx.rotate(yaw + PI);   /* arrow tracks camFwd on a north-up map */
   mctx.fillStyle = '#e8a92b'; mctx.beginPath();
@@ -44,6 +45,7 @@ const elTen = document.querySelector('#vTen .v'), elLen = document.querySelector
 const elZone = document.querySelector('#zone .en');
 const elBar = document.getElementById('tbar'), elRush = document.getElementById('rush');
 let hudT = 0, aimOk = false, missFlash = 0;
+listen('miss', () => { missFlash = 0.22; });
 const held = [false, false];
 let aimPt = null;
 function updateHUD(dt) {

@@ -133,6 +133,7 @@ let runPhase = 0;
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
 let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.

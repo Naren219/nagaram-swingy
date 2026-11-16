@@ -94,6 +94,22 @@
     color:var(--turmeric);opacity:0;transition:opacity .2s ease;white-space:nowrap}
   #toast.on{opacity:.92}
 
+  /* ---- ring run: readout, and a pointer to a ring that is out of view ---- */
+  #run{position:absolute;left:50%;top:18px;transform:translateX(-50%);display:none;align-items:baseline;gap:14px;
+    padding:9px 16px;border:1px solid var(--hair);background:rgba(14,15,17,.72);white-space:nowrap;
+    font:11px/1 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase}
+  #run.on{display:flex}
+  #run .nm{color:var(--turmeric)}
+  #run .gt{opacity:.6}
+  #run .tm{font-size:17px;font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+  #run.done .tm{color:var(--turmeric)}
+  #run .df{color:var(--vermilion);font-variant-numeric:tabular-nums}
+  #run .df.up{color:#59d08a}
+  #run .df:empty{display:none}
+  #garrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-9px 0 0 -8px;display:none;opacity:.9;
+    border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid #ffb52e}
+  #garrow.on{display:block}
+
   /* ---- help ---- */
   #help{position:absolute;left:18px;top:18px;max-width:330px;padding:16px 18px 15px;
     background:var(--ink);border:1px solid var(--hair);backdrop-filter:blur(6px);
@@ -167,6 +183,11 @@
   #tBoard{left:50%;transform:translateX(-50%);bottom:96px;height:44px;width:auto;
     padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
   #tBoard.show{display:flex}
+  #tRun,#tRunNext,#tRunQuit{top:max(14px,env(safe-area-inset-top));height:34px;width:auto;padding:0 14px;border-radius:999px}
+  #tRun{left:max(26px,env(safe-area-inset-left));color:var(--turmeric)}
+  #tRunNext{left:calc(max(26px,env(safe-area-inset-left)) + 74px);display:none}
+  #tRunQuit{left:calc(max(26px,env(safe-area-inset-left)) + 150px);display:none}
+  body.run #tRunNext,body.run #tRunQuit{display:flex}
 
   /* ---- landscape only on touch ---- */
   #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
@@ -190,6 +211,8 @@
   <div id="cross"><i></i><i></i><i></i><i></i><b></b></div>
   <div id="look"><div class="ring"></div><div class="vec"></div><div class="dot"></div></div>
   <div id="toast"></div>
+  <div id="run"><span class="nm"></span><span class="gt"></span><span class="tm"></span><span class="df"></span></div>
+  <div id="garrow"></div>
   <div id="mapwrap"><canvas id="map" width="336" height="336"></canvas></div>
   <div id="help">
     <h1>NAGARAM</h1>
@@ -207,6 +230,7 @@
       <tr><td>Q</td><td>zip to anchor</td></tr>
       <tr><td>E</td><td>cling to wall &middot; board an aircraft</td></tr>
       <tr><td>T / F / M</td><td>time of day · assist · mute</td></tr>
+      <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
       <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
     </table>
@@ -229,6 +253,9 @@
   <div class="tbtn" id="tZip">zip</div>
   <div class="tbtn" id="tTuck">dive</div>
   <div class="tbtn" id="tBoard">board aircraft</div>
+  <div class="tbtn" id="tRun">run</div>
+  <div class="tbtn" id="tRunNext">next</div>
+  <div class="tbtn" id="tRunQuit">end</div>
 </div>
 <div id="rotate"><div class="ph"></div><p>rotate to landscape</p></div>
 <div id="pbtn"><i></i><i></i></div>

@@ -752,6 +752,68 @@ const server = http.createServer((req, res) => {
       return { worst, n: vehicles.length };
     });
     check('traffic instance matrices match a composed transform', traf.worst < 1e-4 && traf.n > 300, 'worst entry off by ' + traf.worst.toExponential(1) + ' over ' + traf.n + ' vehicles');
+
+    /* ring runs. A course is a pure function of its seed, so every date must
+       yield one; then fly one on rails and check the clock, the saved best
+       and the ghost. On rails at a known speed the time is length / speed
+       whatever the frame rate, which is what the sub-frame crossing buys. */
+    const crs = await page.evaluate(() => {
+      let failed = 0, bad = 0, steep = 0; const t = new Date();
+      for (let d = 0; d < 366; d++) {
+        const day = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() + d));
+        const g = buildCourse(day.getUTCFullYear() * 10000 + (day.getUTCMonth() + 1) * 100 + day.getUTCDate());
+        if (!g || g.length !== RUN_GATES) { failed++; continue; }
+        for (let i = 0; i < g.length; i++) {
+          if (!clearAt(g[i].x, g[i].y, g[i].z, RING_R) || roofNear(g[i].x, g[i].z, 70) < g[i].y) bad++;
+          if (i && g[i].y - g[i - 1].y > 30.01) steep++;
+        }
+      }
+      return { failed, bad, steep, same: JSON.stringify(buildCourse(77)) === JSON.stringify(buildCourse(77)) };
+    });
+    check('runs: every day of the coming year has a course', crs.failed === 0 && crs.same, crs.failed + ' dates without one');
+    check('runs: every ring is in open air, below a roof to swing from, and never a steep climb', crs.bad === 0 && crs.steep === 0,
+      crs.bad + ' badly placed, ' + crs.steep + ' too steep');
+
+    const fly = await page.evaluate(() => {
+      const rail = (hz, speed) => {
+        __dt = 1 / hz; armRun();
+        const g = ringRun.gates, pts = [{ x: g[0].x - g[0].ux * 40, y: g[0].y, z: g[0].z - g[0].uz * 40 }].concat(g);
+        pts.push({ x: g[11].x + g[11].ux * 30, y: g[11].y, z: g[11].z + g[11].uz * 30 });
+        let len = 0; for (let i = 1; i < g.length; i++) len += Math.hypot(g[i].x - g[i - 1].x, g[i].y - g[i - 1].y, g[i].z - g[i - 1].z);
+        const states = [ringRun.state]; let ghostSeen = 0, ghostOff = 0, f = 0;
+        /* constant speed along the whole polyline: the step carries over each corner */
+        let s = 0;
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i], L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+          for (; s < L; s += speed / hz) {
+            player.p.set(a.x + (b.x - a.x) * s / L, a.y + (b.y - a.y) * s / L, a.z + (b.z - a.z) * s / L); player.v.set(0, 0, 0);
+            run(1); f++;
+            if (states[states.length - 1] !== ringRun.state) states.push(ringRun.state);
+            if (runGhost.visible) { ghostSeen++; ghostOff = Math.max(ghostOff, runGhost.position.distanceTo(player.p)); }
+          }
+          s -= L;
+        }
+        return { t: ringRun.t, want: len / speed, states: states.join('>'), splits: ringRun.splits.slice(), ghostSeen, ghostOff,
+          hud: runEl.textContent, shown: runEl.classList.contains('on'), rings: runRing.visible };
+      };
+      ringRun.ci = 1;
+      const first = rail(60, 50), saved1 = runSaves.c1 && runSaves.c1.t;
+      const slower = rail(144, 40), saved2 = runSaves.c1.t;
+      const faster = rail(60, 60), saved3 = runSaves.c1.t;
+      const stored = JSON.parse(localStorage.getItem(RUN_KEY)).c1;
+      quitRun();
+      return { first, slower, faster, saved1, saved2, saved3, storedT: stored.t, ghostBytes: stored.g.length, off: ringRun.state, hidden: !runEl.classList.contains('on') && !runRing.visible };
+    });
+    check('runs: armed, live from the first ring, done at the last', fly.first.states === 'armed>live>done' && fly.first.shown && !fly.first.rings,
+      fly.first.states + ' · "' + fly.first.hud + '"');
+    check('runs: the clock is exact at 60 and 144 Hz', Math.abs(fly.first.t - fly.first.want) < 0.01 && Math.abs(fly.slower.t - fly.slower.want) < 0.01,
+      fly.first.t.toFixed(3) + ' vs ' + fly.first.want.toFixed(3) + ' s, ' + fly.slower.t.toFixed(3) + ' vs ' + fly.slower.want.toFixed(3) + ' s');
+    check('runs: splits rise ring by ring', fly.first.splits.length === 12 && fly.first.splits.every((v, i, a) => i === 0 ? v === 0 : v > a[i - 1]));
+    check('runs: only a faster time replaces the best, and it is stored', fly.saved1 === fly.first.t && fly.saved2 === fly.saved1 && fly.saved3 === fly.faster.t && fly.saved3 < fly.saved1 && fly.storedT === fly.saved3,
+      [fly.saved1, fly.saved2, fly.saved3].map(v => v.toFixed(2)).join(' → ') + ' s, ghost ' + fly.ghostBytes + ' bytes');
+    check('runs: the ghost replays the best flight', fly.first.ghostSeen === 0 && fly.slower.ghostSeen > 100 && fly.faster.ghostSeen > 100,
+      'seen on ' + fly.slower.ghostSeen + ' frames of the second run');
+    check('runs: leaving clears the rings and the readout', fly.off === 'off' && fly.hidden);
     check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
     await ctx.close();
   }
