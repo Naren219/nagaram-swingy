@@ -1,30 +1,45 @@
 /* =====================================================================
    VEGETATION
    ===================================================================== */
+/* Vegetation used to be 85% of every frame: 866k triangles, drawn again for
+   the shadow map, none of it ever culled. Two things keep it cheap now.
+   The palms spend triangles only where they show (a coconut is not a
+   140-triangle sphere), and the plants are batched by ground cell so the
+   camera and the 270 m shadow frustum each draw only the cells they see. */
+const NUT = new THREE.IcosahedronGeometry(1, 0);
+/* a frond or leaf blade: one quad per side instead of a 12-triangle box */
+function blade(w, len, tilt) {
+  const a = new THREE.PlaneGeometry(w, len).translate(0, len / 2, 0);
+  const g = mergeGeos([{ geo: a }, { geo: a.clone().rotateY(PI) }]);
+  return g.rotateX(tilt);
+}
 function palmGeo(seed) {
   const p = []; let y = 0, xo = 0; const lean = (seed % 3 - 1) * 0.10;
   for (let i = 0; i < 5; i++) {
     const r0 = lerp(0.45, 0.24, i / 5), r1 = lerp(0.45, 0.24, (i + 1) / 5);
-    p.push({ geo: new THREE.CylinderGeometry(r1, r0, 2.05, 7).translate(0, 1.02, 0), matrix: M4(xo, y, 0), color: i % 2 ? 0x8b7a5a : 0x7c6d50 });
+    /* open-ended: the next segment and the crown hide every cap */
+    p.push({ geo: new THREE.CylinderGeometry(r1, r0, 2.05, 6, 1, true).translate(0, 1.02, 0), matrix: M4(xo, y, 0), color: i % 2 ? 0x8b7a5a : 0x7c6d50 });
     y += 1.98; xo += lean * (i + 1) * 0.16;
   }
-  for (let k = 0; k < 4; k++) p.push({ geo: SPH, matrix: M4(xo + Math.cos(k * 1.7) * 0.5, y - 0.4, Math.sin(k * 1.7) * 0.5, 0.3, 0.3, 0.3), color: 0x6f7a3a });
-  const f1 = new THREE.BoxGeometry(0.62, 4.1, 0.07).translate(0, 2.0, 0).rotateX(0.92);
-  const f2 = new THREE.BoxGeometry(0.5, 3.1, 0.07).translate(0, 1.5, 0).rotateX(1.45);
+  for (let k = 0; k < 4; k++) p.push({ geo: NUT, matrix: M4(xo + Math.cos(k * 1.7) * 0.5, y - 0.4, Math.sin(k * 1.7) * 0.5, 0.3, 0.3, 0.3), color: 0x6f7a3a });
+  const f1 = blade(0.62, 4.05, 0.92), f2 = blade(0.5, 3.05, 1.45);
   for (let k = 0; k < 7; k++) p.push({ geo: f1, matrix: M4(xo, y, 0, 1, 1, 1, k * TAU / 7 + seed), color: k % 2 ? 0x3f6b30 : 0x4a7a35 });
   for (let k = 0; k < 5; k++) p.push({ geo: f2, matrix: M4(xo, y + 0.3, 0, 1, 1, 1, k * TAU / 5 + 0.4 + seed), color: 0x355c2a });
   return mergeGeos(p);
 }
 function treeGeo(seed) {
-  const p = [{ geo: new THREE.CylinderGeometry(0.34, 0.6, 4.2, 8).translate(0, 2.1, 0), matrix: M4(0, 0, 0), color: 0x5a4a35 }];
-  const ICO = new THREE.IcosahedronGeometry(1, 1);
+  const p = [{ geo: new THREE.CylinderGeometry(0.34, 0.6, 4.2, 8, 1, true).translate(0, 2.1, 0), matrix: M4(0, 0, 0), color: 0x5a4a35 }];
+  /* the crowns keep their 80 triangles each: at 20 the silhouette goes
+     visibly angular from the street, and culling already pays for them */
+  const CROWN = new THREE.IcosahedronGeometry(1, 1);
   for (let k = 0; k < 5; k++) {
     const a = k * 1.9 + seed, r = k === 0 ? 0 : 1.9;
-    p.push({ geo: ICO, matrix: M4(Math.cos(a) * r, 4.6 + (k === 0 ? 0.9 : 0) + Math.sin(a * 2) * 0.7, Math.sin(a) * r, 2.5, 2.0, 2.5), color: k % 2 ? 0x2f5228 : 0x39632e });
+    p.push({ geo: CROWN, matrix: M4(Math.cos(a) * r, 4.6 + (k === 0 ? 0.9 : 0) + Math.sin(a * 2) * 0.7, Math.sin(a) * r, 2.5, 2.0, 2.5), color: k % 2 ? 0x2f5228 : 0x39632e });
   }
   return mergeGeos(p);
 }
 const vegMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const VEG_CELL = 220;
 function scatter(geoFn, count, test, scaleLo, scaleHi) {
   const geos = [geoFn(0.3), geoFn(1.4), geoFn(2.7)];
   const picks = [[], [], []];
@@ -37,21 +52,45 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
     if (onOpenGround(x, z, 2.4, 2.4)) continue;   // no palms on the pitch or in the tank
     picks[tries % 3].push([x, z]);
   }
-  for (let g = 0; g < 3; g++) {
-    if (!picks[g].length) continue;
-    const im = new THREE.InstancedMesh(geos[g], vegMat, picks[g].length);
-    const m = new THREE.Matrix4();
-    for (let i = 0; i < picks[g].length; i++) {
-      const s = rnd(scaleLo, scaleHi);
-      m.compose(V3(picks[g][i][0], 0, picks[g][i][1]),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rnd(0, TAU), 0)), V3(s, s * rnd(0.9, 1.15), s));
+  /* One batch per ground cell. It sits at the cell centre with its instances
+     relative to that, so the shared geometry's bounding sphere, widened to
+     cover a cell, is a correct culling volume for every batch. The three
+     shapes alternate by cell rather than by plant: one draw call per cell
+     instead of three, and yaw and scale still differ plant to plant. */
+  const cells = new Map();
+  const q = new THREE.Quaternion(), e = new THREE.Euler(), pos = V3(), scl = V3();
+  let reach = 0;
+  for (const list of picks) {
+    for (const [x, z] of list) {
+      const s = rnd(scaleLo, scaleHi), ry = rnd(0, TAU), sy = s * rnd(0.9, 1.15);
+      const ci = Math.floor(x / VEG_CELL), cj = Math.floor(z / VEG_CELL), key = ci + ':' + cj;
+      let c = cells.get(key);
+      if (!c) cells.set(key, c = { g: ((ci + 2 * cj) % 3 + 3) % 3, cx: (ci + 0.5) * VEG_CELL, cz: (cj + 0.5) * VEG_CELL, list: [] });
+      const bs = geos[c.g].boundingSphere;
+      c.list.push(x - c.cx, z - c.cz, s, sy, ry);
+      reach = Math.max(reach, Math.hypot(x - c.cx, z - c.cz) + (bs.center.length() + bs.radius) * Math.max(s, sy));
+    }
+  }
+  for (const g of geos) g.boundingSphere.set(V3(0, 0, 0), reach);
+  const m = new THREE.Matrix4();
+  for (const c of cells.values()) {
+    const n = c.list.length / 5;
+    const im = new THREE.InstancedMesh(geos[c.g], vegMat, n);
+    for (let i = 0; i < n; i++) {
+      const [dx, dz, s, sy, ry] = c.list.slice(i * 5, i * 5 + 5);
+      m.compose(pos.set(dx, 0, dz), q.setFromEuler(e.set(0, ry, 0)), scl.set(s, sy, s));
       im.setMatrixAt(i, m);
     }
+    im.position.set(c.cx, 0, c.cz);
     im.instanceMatrix.needsUpdate = true;
-    im.castShadow = true; im.frustumCulled = false;
+    im.castShadow = true;
+    im.frustumCulled = true;   // r128 switches culling off for every InstancedMesh
+    im.matrixAutoUpdate = false; im.updateMatrix();
+    vegBatches.push(im);
     scene.add(im);
   }
 }
+const vegBatches = [];
 scatter(palmGeo, 760, (x, z) => {
   if (x > SAND_X - 6 && x < SEA_X - 10) return true;
   if (x > SEA_X - 8) return false;

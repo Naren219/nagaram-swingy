@@ -629,6 +629,47 @@ const server = http.createServer((req, res) => {
     check('the maidan thermal is clear of buildings', open.inThermal === 0, open.inThermal + ' buildings');
     check('tank ghats are climbed on foot, down to the pool', open.top > 1.6 && open.top < 2.2 && Math.abs(open.reach) < 40 && open.endY < 0.9,
       'crest ' + open.top.toFixed(2) + ' m, ended ' + open.reach.toFixed(0) + ' m from centre at y ' + open.endY.toFixed(2));
+
+    /* vegetation is batched by ground cell so the camera and the shadow
+       frustum can each skip what they cannot see. Polarity: before batching
+       this was 866k triangles in both passes from every viewpoint. */
+    const veg = await page.evaluate(() => {
+      const tris = (b) => b.geometry.attributes.position.count / 3 * b.count;
+      const all = vegBatches.reduce((s, b) => s + tris(b), 0);
+      const plants = vegBatches.reduce((s, b) => s + b.count, 0);
+      /* every plant must sit inside the sphere its batch is culled by */
+      let outside = 0; const m = new THREE.Matrix4(), s = new THREE.Sphere(), c = new THREE.Sphere();
+      for (const b of vegBatches) {
+        b.updateMatrixWorld();
+        c.copy(b.geometry.boundingSphere).applyMatrix4(b.matrixWorld);
+        const g = b.geometry.clone(); g.computeBoundingSphere();
+        for (let i = 0; i < b.count; i++) {
+          b.getMatrixAt(i, m); m.premultiply(b.matrixWorld);
+          s.copy(g.boundingSphere).applyMatrix4(m);
+          if (s.center.distanceTo(c.center) + s.radius > c.radius + 1e-3) outside++;
+        }
+        g.dispose();
+      }
+      const drawn = (x, y, z, yw, pt) => {
+        __dt = 1 / 60; player.riding = null; yaw = yw; pitch = pt;
+        for (let i = 0; i < 40; i++) { player.p.set(x, y, z); player.v.set(0, 0, 0); run(1); }
+        scene.updateMatrixWorld(); camera.updateMatrixWorld();
+        const cam = new THREE.Frustum().setFromProjectionMatrix(
+          new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        sun.shadow.updateMatrices(sun);
+        const sh = sun.shadow.getFrustum();
+        let n = 0;
+        for (const b of vegBatches) n += (cam.intersectsObject(b) ? tris(b) : 0) + (sh.intersectsObject(b) ? tris(b) : 0);
+        return n;
+      };
+      const views = [drawn(0, 0.85, 42, 0, 0.1), drawn(0, 0.85, 42, Math.PI, 0.1), drawn(0, 220, 0, 0.6, -0.5),
+                     drawn(-640, 30, -300, Math.PI / 2, 0), drawn(-640, 30, -300, -Math.PI / 2, 0)];
+      return { all, plants, outside, batches: vegBatches.length, culled: vegBatches.every(b => b.frustumCulled), worst: Math.max(...views) };
+    });
+    check('vegetation: every plant is inside its batch\'s culling sphere', veg.outside === 0 && veg.culled && veg.plants > 1200,
+      veg.outside + ' of ' + veg.plants + ' outside, ' + veg.batches + ' batches');
+    check('vegetation: a frame draws well under the old 1.73M triangles', veg.all < 420000 && veg.worst < 330000,
+      (veg.all / 1000).toFixed(0) + 'k in the world, worst view draws ' + (veg.worst / 1000).toFixed(0) + 'k across both passes');
     check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
     await ctx.close();
   }

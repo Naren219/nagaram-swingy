@@ -81,9 +81,9 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 90 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 92 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
-The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, and the open ground at the maidan and the tank.
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, and the vegetation triangle budget.
 
 ```sh
 npm install                       # one devDependency: playwright
@@ -112,7 +112,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `55-daycycle.js` | continuous time-of-day blending |
 | `60-monuments.js` | gopurams, vimana, mandapam, bridges, lighthouse, aim marker |
 | `65-broadphase.js` | spatial hash over solid AABBs |
-| `70-vegetation.js` | palm and tree scattering |
+| `70-vegetation.js` | palm and tree scattering, batched by ground cell for culling |
 | `75-traffic.js` | vehicles, boats, kites, aircraft |
 | `80-physics.js` | XPBD solver, contacts, water volumes, thermals, anchor search |
 | `82-thermal-motes.js` | rising chaff and haze marking each thermal |
@@ -135,4 +135,5 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 - **Input edges (jump, board) are cleared by the physics step that consumes them**, not by the frame that read them. Above 120 Hz some frames run no substep at all, and clearing per frame drops the press.
 - **The release pop is scaled by time on the line** (`w.age`). Granted unconditionally, tapping the web button is a free energy source that out-climbs gravity.
 - The maidan and the temple tank are reserved by `onOpenGround()`. Anything new that places things in the world (buildings, lanes, props) must ask it.
+- **Vegetation is batched per ground cell and frustum-culled** (`vegBatches`). r128 turns culling off on every `InstancedMesh`; one un-culled, shadow-casting batch of plants was 85% of the frame. A batch's instances must stay inside its geometry's bounding sphere.
 - The character is an original design (navy/gold/teal). It is **not** Spider-Man and must not become him.
