@@ -81,9 +81,9 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 92 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 99 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
-The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, and the vegetation triangle budget.
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, and what a paused game draws.
 
 ```sh
 npm install                       # one devDependency: playwright
@@ -131,7 +131,9 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 
 - **Physics is position-based dynamics at a fixed 120 Hz.** The web is a hard distance constraint, not a spring, and velocity is *derived from the position delta* after the constraint solve — never integrated forward. Do not convert it to a conventional integrator; energy conservation, taut-rope behavior, and aircraft towing all depend on it.
 - **Render interpolation is load-bearing.** The camera, rig, and shadow frustum read `pRender` (interpolated between substeps), never `player.p`. Removing it causes visible judder on any non-60 Hz display.
-- `updatePlanes(dt)` must run **before** the physics loop, or riders and latched anchors lag the hull by a frame.
+- `updatePlanes(dt)` must run **before** the physics loop, or riders and latched anchors lag the hull by a frame. `pinToPlanes()` then re-pins them **after** it, every frame: the hulls move per frame and the player per substep, so above 120 Hz a frame with no substep would draw them 14 cm off the airframe.
+- **Per-frame code allocates nothing it can avoid.** `updateTraffic` writes instance matrices directly, and the update functions share module-level scratch objects. All of `src/` is one global scope, so a new scratch name must be unique across every file.
+- **A paused game draws one frame** (`pauseDirty`), then nothing until a resize. Anything that changes the picture while paused must set the flag.
 - **Input edges (jump, board) are cleared by the physics step that consumes them**, not by the frame that read them. Above 120 Hz some frames run no substep at all, and clearing per frame drops the press.
 - **The release pop is scaled by time on the line** (`w.age`). Granted unconditionally, tapping the web button is a free energy source that out-climbs gravity.
 - The maidan and the temple tank are reserved by `onOpenGround()`. Anything new that places things in the world (buildings, lanes, props) must ask it.

@@ -251,7 +251,7 @@ function stepPhysics(h, inp) {
     const cosA = clamp(_tmp.dot(_tmp2), -1, 1);
     const alpha = Math.acos(cosA);
     const cl = Math.sin(2 * clamp(alpha, -1.15, 1.15));         // stalls past ~66 deg
-    const perp = _tmp2.clone().addScaledVector(_tmp, -cosA);
+    const perp = _tmp2.addScaledVector(_tmp, -cosA);   // the chord is not needed again
     if (perp.lengthSq() > 1e-6) {
       perp.normalize();
       const L = LIFT_K * rs * rs * cl;
@@ -277,6 +277,11 @@ function stepPhysics(h, inp) {
     ax -= V.x * 7; ay -= V.y * 7; az -= V.z * 7;
     if (inp.jump) { V.addScaledVector(n, 11).y += 8; player.clinging = false; }
   } else {
+    /* Coyote time: a jump pressed just after running off an edge still counts.
+       Only while falling and off the line, so it cannot stack on a real jump. */
+    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) {
+      V.y = 12.4; P.y += 0.04; player.coyote = 0;
+    }
     const air = inp.glide ? 15 : 11;
     ax += inp.mx * air; az += inp.mz * air;
     if (inp.tuck) { ax += inp.fwd.x * 16; ay += inp.fwd.y * 16; az += inp.fwd.z * 16; }
@@ -341,6 +346,18 @@ function stepPhysics(h, inp) {
     if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
+}
+
+/* The hulls move once per rendered frame, the player once per substep. On a
+   display faster than 120 Hz some frames run no substep, and whatever is
+   fixed to a hull (the rider, a latched anchor) would be drawn where the
+   aircraft was a frame ago: 14 cm of slip at 144 Hz. Re-pin them every frame. */
+function pinToPlanes(render) {
+  for (const w of player.webs) if (w.on && w.pl) planePoint(w.pl, w.lo.x, w.lo.y, w.lo.z, w.a);
+  if (player.riding) {
+    planePoint(player.riding, player.rideLo.x, player.rideLo.y, player.rideLo.z, player.p);
+    render.copy(player.p);
+  }
 }
 
 /* ---- attaching ---- */
@@ -416,7 +433,7 @@ function findAnchor(fwd, right, up, o, prev) {
 function fireWebAt(i, a) {
   const w = player.webs[i];
   if (player.riding && a) { player.v.copy(player.riding.v); player.riding = null; }
-  if (!a) { w.miss = performance.now(); missFlash = 0.22; return false; }
+  if (!a) { missFlash = 0.22; return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
   w.on = true; w.a.set(a.x, a.y, a.z);

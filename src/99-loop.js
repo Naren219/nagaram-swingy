@@ -2,7 +2,7 @@
    MAIN LOOP
    ===================================================================== */
 const clock = new THREE.Clock();
-let acc = 0, T = 0, aimT = 0;
+let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
 const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
@@ -17,7 +17,13 @@ function frame() {
     resumeWait -= dt;
     if (resumeWait <= 0 && document.pointerLockElement !== renderer.domElement) setFreeLook(true);
   }
-  if (paused) { renderer.render(scene, camera); return; }   // resuming never jumps
+  if (paused) {                                    // resuming never jumps
+    /* Nothing moves while paused, so the frame already on screen is still
+       right. Redrawing it at the display rate kept the GPU as busy as play. */
+    if (pauseDirty) { renderer.render(scene, camera); pauseDirty = false; }
+    return;
+  }
+  pauseDirty = true;
   T += dt;
   if (keys['ArrowLeft']) yaw -= 2.3 * dt;
   if (keys['ArrowRight']) yaw += 2.3 * dt;
@@ -73,6 +79,7 @@ function frame() {
     }
     if (n === 0) pPrev.copy(player.p);
     pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));
+    pinToPlanes(pRender);
     if (player.p.y < -40) respawn();
   }
 

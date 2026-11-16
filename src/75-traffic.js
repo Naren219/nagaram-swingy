@@ -60,25 +60,29 @@ const segs = [];
 })();
 const vehicles = [];
 const vMeshes = [];
+const IDENT = new THREE.Matrix4();
 for (const [geo, n, spd] of [[V_AUTO, 130, [7, 12]], [V_CAR, 120, [9, 16]], [V_BUS, 34, [7, 11]], [V_TRUCK, 40, [6, 10]]]) {
   const im = new THREE.InstancedMesh(geo, vegMat, n);
   im.castShadow = true; im.frustumCulled = false; scene.add(im); vMeshes.push(im);
   for (let i = 0; i < n; i++) {
+    im.setMatrixAt(i, IDENT);   // updateTraffic only rewrites the six entries that change
     const s = pick(segs);
     vehicles.push({ mesh: vMeshes.length - 1, idx: i, seg: s, t: rnd(s.a, s.b), dir: R() < 0.5 ? 1 : -1, v: rnd(spd[0], spd[1]) });
   }
 }
+/* 324 vehicles every frame: each is a quarter-turn about Y plus a position,
+   so the six matrix entries that change are written straight into the
+   instance buffer. Composing through Euler -> Quaternion -> Matrix4 with
+   fresh vectors was the largest source of per-frame garbage in the game. */
 function updateTraffic(dt) {
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
   for (const v of vehicles) {
     v.t += v.dir * v.v * dt;
     if (v.t > v.seg.b) v.t = v.seg.a; if (v.t < v.seg.a) v.t = v.seg.b;
-    let x, z, yaw;
-    if (v.seg.axis === 'x') { x = v.t; z = v.seg.k - v.dir * 3.7; yaw = v.dir > 0 ? PI / 2 : -PI / 2; }
-    else { x = v.seg.k + v.dir * 3.7; z = v.t; yaw = v.dir > 0 ? 0 : PI; }
-    e.set(0, yaw, 0); q.setFromEuler(e);
-    m.compose(V3(x, 0, z), q, V3(1, 1, 1));
-    vMeshes[v.mesh].setMatrixAt(v.idx, m);
+    let x, z, c, s;   // cos and sin of the heading
+    if (v.seg.axis === 'x') { x = v.t; z = v.seg.k - v.dir * 3.7; c = 0; s = v.dir; }
+    else { x = v.seg.k + v.dir * 3.7; z = v.t; c = v.dir; s = 0; }
+    const a = vMeshes[v.mesh].instanceMatrix.array, o = v.idx * 16;
+    a[o] = c; a[o + 2] = -s; a[o + 8] = s; a[o + 10] = c; a[o + 12] = x; a[o + 14] = z;
   }
   for (const im of vMeshes) im.instanceMatrix.needsUpdate = true;
 }
@@ -179,13 +183,15 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
     let t0 = 0.02, t1 = best, ok = true;
-    const lo = [pl.p.x - PLANE_HX - 2, pl.p.y - PLANE_HY - 1, pl.p.z - PLANE_HZ - 2];
-    const hi = [pl.p.x + PLANE_HX + 2, pl.p.y + PLANE_HY + 1, pl.p.z + PLANE_HZ + 2];
-    const o = [ox, oy, oz], d = [dx, dy, dz];
+    /* no arrays: this runs for every aim ray, every frame */
     for (let a = 0; a < 3 && ok; a++) {
-      if (Math.abs(d[a]) < 1e-8) { if (o[a] < lo[a] || o[a] > hi[a]) ok = false; continue; }
-      const inv = 1 / d[a];
-      let n = (lo[a] - o[a]) * inv, f = (hi[a] - o[a]) * inv;
+      const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
+      const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
+      const h = a === 0 ? PLANE_HX + 2 : a === 1 ? PLANE_HY + 1 : PLANE_HZ + 2;
+      const lo = c - h, hi = c + h;
+      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
+      const inv = 1 / d;
+      let n = (lo - o) * inv, f = (hi - o) * inv;
       if (n > f) { const tmp = n; n = f; f = tmp; }
       if (n > t0) t0 = n;
       if (f < t1) t1 = f;
@@ -199,13 +205,15 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   return _ph2;
 }
 
+const _propM = new THREE.Matrix4(), _propQ = new THREE.Quaternion(), _propE = new THREE.Euler();
+const _propP = V3(), _UNIT = V3(1, 1, 1), _KITE_S = V3(1.6, 1.6, 1.6);
 function updateProps(t) {
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const m = _propM, q = _propQ, e = _propE;
   for (let i = 0; i < boats.length; i++) {
     const b = boats[i];
     const bob = b.wet ? Math.sin(t * 1.1 + b.ph) * 0.35 : 0;
     e.set(b.wet ? Math.sin(t * 0.9 + b.ph) * 0.08 : 0.12, b.yaw, b.wet ? Math.cos(t * 0.7 + b.ph) * 0.06 : 0.05);
-    m.compose(V3(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), V3(1, 1, 1));
+    m.compose(_propP.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), _UNIT);
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
@@ -213,7 +221,7 @@ function updateProps(t) {
     const k = kites[i];
     const a = t * 0.22 + k.ph;
     e.set(Math.sin(a * 1.7) * 0.5, a, Math.cos(a * 1.3) * 0.4);
-    m.compose(V3(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), V3(1.6, 1.6, 1.6));
+    m.compose(_propP.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), _KITE_S);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;

@@ -670,6 +670,88 @@ const server = http.createServer((req, res) => {
       veg.outside + ' of ' + veg.plants + ' outside, ' + veg.batches + ' batches');
     check('vegetation: a frame draws well under the old 1.73M triangles', veg.all < 420000 && veg.worst < 330000,
       (veg.all / 1000).toFixed(0) + 'k in the world, worst view draws ' + (veg.worst / 1000).toFixed(0) + 'k across both passes');
+
+    /* whatever is fixed to an aircraft is drawn on the aircraft, on every
+       frame. Polarity: 60 Hz always read 0; 144 Hz used to read 0.14 m. */
+    const pin = await page.evaluate(() => {
+      const out = {}, o = new THREE.Vector3(), pl = planes[0];
+      for (const hz of [60, 144, 240]) {
+        __dt = 1 / hz; held[0] = held[1] = false; releaseWeb(0); releaseWeb(1); player.riding = null;
+        player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); run(3); mountEdge = true; run(6);
+        let rider = player.riding ? 0 : 99, anchor = 99;
+        for (let i = 0; i < 200; i++) { run(1); planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, o); rider = Math.max(rider, o.distanceTo(pRender)); }
+        player.riding = null; player.p.set(pl.p.x, pl.p.y - 30, pl.p.z); player.v.copy(pl.v);
+        const w = player.webs[0];
+        if (fireWebAt(0, { x: pl.p.x, y: pl.p.y - 2, z: pl.p.z, pl })) {
+          anchor = 0;
+          for (let i = 0; i < 200 && w.on; i++) { run(1); planePoint(pl, w.lo.x, w.lo.y, w.lo.z, o); anchor = Math.max(anchor, o.distanceTo(w.a)); }
+        }
+        releaseWeb(0); out[hz] = Math.max(rider, anchor);
+      }
+      return out;
+    });
+    check('rider and tow anchor stay pinned to the hull at 60/144/240 Hz', pin[60] < 1e-3 && pin[144] < 1e-3 && pin[240] < 1e-3,
+      'worst slip ' + [60, 144, 240].map(h => pin[h].toFixed(3) + ' m').join(' / '));
+
+    /* coyote time: the jump still counts just after the edge, not long after,
+       and never a second time on the way up */
+    const coy = await page.evaluate(() => {
+      __dt = 1 / 60; player.riding = null; held[0] = held[1] = false; releaseWeb(0); releaseWeb(1);
+      const b = buildings.find(b => b.h > 30 && b.w > 14 && freeAt(b.x + b.w / 2 + 8, b.z, 6));
+      const offEdge = (delay) => {
+        player.p.set(b.x + b.w / 2 - 3, b.h + 2.5, b.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0;
+        run(50); const roofY = player.p.y, stood = player.grounded;
+        keys['KeyW'] = true;
+        let f = 0; while (player.grounded && f++ < 300) run(1);
+        run(delay); jumpEdge = true; run(3);
+        keys['KeyW'] = false;
+        return { stood, left: f < 300, vy: player.v.y, drop: roofY - player.p.y };
+      };
+      const hop = (again) => {
+        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); run(30);
+        jumpEdge = true; run(6); if (again) jumpEdge = true; run(6);
+        return player.v.y;
+      };
+      return { found: !!b, soon: offEdge(6), late: offEdge(18), once: hop(false), twice: hop(true) };
+    });
+    check('a jump 0.1 s after running off a roof still jumps', coy.found && coy.soon.stood && coy.soon.left && coy.soon.vy > 8,
+      'vy ' + coy.soon.vy.toFixed(1) + ' m/s');
+    check('a jump 0.3 s after the edge does not', coy.late.left && coy.late.vy < 0, 'vy ' + coy.late.vy.toFixed(1) + ' m/s');
+    /* a second jump would read about 17 m/s; the wind alone moves it by millimetres */
+    check('coyote time gives no second jump on the way up', Math.abs(coy.once - coy.twice) < 0.5,
+      'vy ' + coy.once.toFixed(2) + ' with one press, ' + coy.twice.toFixed(2) + ' m/s with two');
+
+    /* a paused game draws one frame and then leaves the GPU alone */
+    const idle = await page.evaluate(() => {
+      let draws = 0; renderer.render = () => { draws++; };
+      __dt = 1 / 60; run(5); const playing = draws;
+      setPaused(true); draws = 0; run(120); const paused1 = draws;
+      dispatchEvent(new Event('resize')); run(60); const resized = draws - paused1;
+      const t0 = T; run(10); const frozen = T === t0;
+      setPaused(false); draws = 0; run(5); const resumed = draws;
+      renderer.render = () => {};
+      return { playing, paused1, resized, frozen, resumed };
+    });
+    check('paused: one frame drawn, then none', idle.playing === 5 && idle.paused1 === 1 && idle.frozen, JSON.stringify(idle));
+    check('paused: a resize redraws once, resuming draws every frame', idle.resized === 1 && idle.resumed === 5);
+
+    /* vehicles are written straight into the instance buffer; check that
+       against a matrix composed the long way */
+    const traf = await page.evaluate(() => {
+      __dt = 1 / 60; run(30);
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+      let worst = 0;
+      for (const v of vehicles) {
+        const onX = v.seg.axis === 'x';
+        p.set(onX ? v.t : v.seg.k + v.dir * 3.7, 0, onX ? v.seg.k - v.dir * 3.7 : v.t);
+        e.set(0, onX ? (v.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (v.dir > 0 ? 0 : Math.PI), 0);
+        m.compose(p, q.setFromEuler(e), one);
+        const a = vMeshes[v.mesh].instanceMatrix.array, o = v.idx * 16;
+        for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(a[o + k] - m.elements[k]));
+      }
+      return { worst, n: vehicles.length };
+    });
+    check('traffic instance matrices match a composed transform', traf.worst < 1e-4 && traf.n > 300, 'worst entry off by ' + traf.worst.toExponential(1) + ' over ' + traf.n + ' vehicles');
     check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
     await ctx.close();
   }
