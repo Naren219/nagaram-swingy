@@ -109,6 +109,7 @@ const splats = [0, 1].map(() => {
   m.visible = false; scene.add(m); return m;
 });
 
+const _YUP = V3(0, 1, 0);
 const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _d = V3(), _up = V3(0, -1, 0);
 const _sa = V3(), _sb = V3();   // shoulder world positions, for arm assignment
 function aimAt(nodeObj, worldDir, parentQ) {
@@ -116,10 +117,13 @@ function aimAt(nodeObj, worldDir, parentQ) {
   _q.setFromUnitVectors(_up, _d);
   nodeObj.quaternion.slerp(_q, 1);
 }
+/* the frame time poseRig is running on; a hard-coded 1/60 here made every limb
+   settle 2.4x faster on a 144 Hz display and 2x slower at 30 fps */
+let poseDt = 1 / 60;
 function smoothEuler(o, x, y, z, k) {
-  o.rotation.x = damp(o.rotation.x, x, k, 0.016);
-  o.rotation.y = damp(o.rotation.y, y, k, 0.016);
-  o.rotation.z = damp(o.rotation.z, z, k, 0.016);
+  o.rotation.x = damp(o.rotation.x, x, k, poseDt);
+  o.rotation.y = damp(o.rotation.y, y, k, poseDt);
+  o.rotation.z = damp(o.rotation.z, z, k, poseDt);
 }
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
@@ -129,6 +133,7 @@ let runPhase = 0;
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
 let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.
@@ -142,6 +147,7 @@ function trapEase(p, r) {
 
 let rigY = 0.44;
 function poseRig(dt, inp) {
+  poseDt = dt;
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
@@ -153,7 +159,7 @@ function poseRig(dt, inp) {
   else _bz.copy(inp.fwd).multiplyScalar(-1);
   if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
   if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(V3(0, 1, 0)).normalize());
+  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(_YUP).normalize());
   player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
   _by.set(0, 1, 0);
   _bx.copy(_by).cross(_bz);
@@ -269,7 +275,7 @@ function poseRig(dt, inp) {
     _d.copy(w.a).sub(w.hand);
     const L = _d.length();
     strands[i].position.copy(w.hand);
-    strands[i].quaternion.setFromUnitVectors(V3(0, 1, 0), _d.multiplyScalar(1 / L));
+    strands[i].quaternion.setFromUnitVectors(_YUP, _d.multiplyScalar(1 / L));
     strands[i].scale.set(1, L, 1);
     splats[i].position.copy(w.a);
     const th = clamp(w.tension / 9000, 0, 1);

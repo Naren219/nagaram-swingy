@@ -2,7 +2,7 @@
    MAIN LOOP
    ===================================================================== */
 const clock = new THREE.Clock();
-let acc = 0, T = 0, aimT = 0;
+let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
 const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
@@ -17,7 +17,13 @@ function frame() {
     resumeWait -= dt;
     if (resumeWait <= 0 && document.pointerLockElement !== renderer.domElement) setFreeLook(true);
   }
-  if (paused) { renderer.render(scene, camera); return; }   // resuming never jumps
+  if (paused) {                                    // resuming never jumps
+    /* Nothing moves while paused, so the frame already on screen is still
+       right. Redrawing it at the display rate kept the GPU as busy as play. */
+    if (pauseDirty) { renderer.render(scene, camera); pauseDirty = false; }
+    return;
+  }
+  pauseDirty = true;
   T += dt;
   if (keys['ArrowLeft']) yaw -= 2.3 * dt;
   if (keys['ArrowRight']) yaw += 2.3 * dt;
@@ -38,13 +44,16 @@ function frame() {
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
-  inp.jump = jumpEdge; jumpEdge = false;
+  /* Edges are only consumed by a physics step that actually saw them. A
+     display faster than 120 Hz renders frames with no substep at all, and
+     clearing the flag here threw the press away on every one of them. */
+  inp.jump = jumpEdge;
   inp.glide = !!keys['Space'] && !player.grounded && !player.inWater;
   inp.tuck = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
   inp.reelIn = anyWeb && fb > 0.25; inp.reelOut = anyWeb && fb < -0.25;
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
-  inp.mount = mountEdge; mountEdge = false;
+  inp.mount = mountEdge;
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -53,6 +62,7 @@ function frame() {
   if (photoMode) {
     /* the player and aircraft freeze for the shot; the rest of the city lives on */
     acc = 0; pPrev.copy(player.p); pRender.copy(player.p);
+    jumpEdge = mountEdge = false;   // a press during the shot is not a press after it
   } else {
     acc += dt;
     let n = 0;
@@ -64,10 +74,13 @@ function frame() {
     updatePlanes(dt);   // hulls move first: riders and latched anchors read them
     while (acc >= SUB && n < 10) {
       pPrev.copy(player.p);
-      stepPhysics(SUB, inp); acc -= SUB; n++; inp.jump = false;
+      stepPhysics(SUB, inp); acc -= SUB; n++;
+      inp.jump = inp.mount = jumpEdge = mountEdge = false;
     }
     if (n === 0) pPrev.copy(player.p);
     pRender.lerpVectors(pPrev, player.p, clamp(acc / SUB, 0, 1));
+    pinToPlanes(pRender);
+    updateRun(dt);
     if (player.p.y < -40) respawn();
   }
 

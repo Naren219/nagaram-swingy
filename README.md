@@ -1,6 +1,6 @@
 # NAGARAM
 
-A browser-based third-person web-swinging sandbox set on a Coromandel-coast-inspired city — temple ward, old bazaar, tech park, river, and the Bay of Bengal. Everything is procedural: the city, the facades, the character, the audio. There are no levels, points, or objectives; the whole product is the feel of moving through the city.
+A browser-based third-person web-swinging sandbox set on a Coromandel-coast-inspired city — temple ward, old bazaar, tech park, river, and the Bay of Bengal. Everything is procedural: the city, the facades, the character, the audio. Nothing is asked of you: there are no levels or points, and the product is the feel of moving through the city. For when you want something to aim that at, there are optional [ring runs](#ring-runs) against the clock.
 
 **Ships as a static page with no runtime dependencies** — no assets, no bundler, no CDN. `index.html` plus a vendored copy of Three.js; open it and it runs, from a web server or straight off disk. Source lives split under `src/` and is concatenated back into that file by a dependency-free Node script (see [Development](#development)).
 
@@ -20,11 +20,18 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | Q | zip to anchor |
 | E | cling to wall · board an aircraft |
 | T / F / M | skip time of day · swing assist · mute |
+| G / N / X | ring run: start or restart · next course · leave |
 | C | photo mode (HUD hidden, player frozen, city alive) |
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
-**Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows) split the controls by hand role. The right thumb owns the two held primaries: **web** and **jump/glide**, and both double as aim surfaces — keep the button held and drag the same thumb to steer. The left hand owns movement plus everything you need *during* a swing, while the right thumb is pinned on the web: a floating stick that appears wherever the thumb lands (steer + winch), with **zip** and **dive** just above it. A **board aircraft** button appears whenever a plane is in reach. Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
+**Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows) split the controls by hand role. The right thumb owns the two held primaries: **web** and **jump/glide**, and both double as aim surfaces — keep the button held and drag the same thumb to steer. The left hand owns movement plus everything you need *during* a swing, while the right thumb is pinned on the web: a floating stick that appears wherever the thumb lands (steer + winch), with **zip** and **dive** just above it. A **board aircraft** button appears whenever a plane is in reach, and **run** in the top-left corner starts a ring run (**next** and **end** appear beside it while one is on). Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
+
+### Ring runs
+
+Press **G** and you are put on the approach to a course of twelve rings through the city. The clock starts as you pass the first ring and stops at the last; a shaft of light, the minimap and an arrow at the screen edge point to the next one. Your best time on each course is kept in the browser, along with a ghost of the flight that set it, which flies the course with you next time.
+
+A course is nothing but a seed. **Today's** course comes from the date (UTC), so it is the same for everyone and new every day; three fixed courses are always there; and `?run=1234` on the address builds the course for any seed, so one can be shared as a link. Rings are only placed in open air, below a roof tall enough to swing from, and never more than 30 m above the ring before.
 
 Other things to know:
 
@@ -81,7 +88,9 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 70 checks across a desktop pass, a landscape-touch pass, and a portrait pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 107 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, and ring runs flown on rails (the clock must read length ÷ speed at any frame rate).
 
 ```sh
 npm install                       # one devDependency: playwright
@@ -110,7 +119,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `55-daycycle.js` | continuous time-of-day blending |
 | `60-monuments.js` | gopurams, vimana, mandapam, bridges, lighthouse, aim marker |
 | `65-broadphase.js` | spatial hash over solid AABBs |
-| `70-vegetation.js` | palm and tree scattering |
+| `70-vegetation.js` | palm and tree scattering, batched by ground cell for culling |
 | `75-traffic.js` | vehicles, boats, kites, aircraft |
 | `80-physics.js` | XPBD solver, contacts, water volumes, thermals, anchor search |
 | `82-thermal-motes.js` | rising chaff and haze marking each thermal |
@@ -120,6 +129,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `92-input.js` | keyboard, pointer lock, touch, photo mode, settings |
 | `94-audio.js` | synthesised ambience and one-shots |
 | `96-hud.js` | minimap, readouts |
+| `97-runs.js` | ring runs: course generation from a seed, clock, saved bests, ghost |
 | `99-loop.js` | main loop |
 | `tail.html` | closing tags |
 
@@ -129,5 +139,14 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 
 - **Physics is position-based dynamics at a fixed 120 Hz.** The web is a hard distance constraint, not a spring, and velocity is *derived from the position delta* after the constraint solve — never integrated forward. Do not convert it to a conventional integrator; energy conservation, taut-rope behavior, and aircraft towing all depend on it.
 - **Render interpolation is load-bearing.** The camera, rig, and shadow frustum read `pRender` (interpolated between substeps), never `player.p`. Removing it causes visible judder on any non-60 Hz display.
-- `updatePlanes(dt)` must run **before** the physics loop, or riders and latched anchors lag the hull by a frame.
+- `updatePlanes(dt)` must run **before** the physics loop, or riders and latched anchors lag the hull by a frame. `pinToPlanes()` then re-pins them **after** it, every frame: the hulls move per frame and the player per substep, so above 120 Hz a frame with no substep would draw them 14 cm off the airframe.
+- **Per-frame code allocates nothing it can avoid.** `updateTraffic` writes instance matrices directly, and the update functions share module-level scratch objects. All of `src/` is one global scope, so a new scratch name must be unique across every file.
+- **A paused game draws one frame** (`pauseDirty`), then nothing until a resize. Anything that changes the picture while paused must set the flag.
+- **Input edges (jump, board) are cleared by the physics step that consumes them**, not by the frame that read them. Above 120 Hz some frames run no substep at all, and clearing per frame drops the press.
+- **The release pop is scaled by time on the line** (`w.age`). Granted unconditionally, tapping the web button is a free energy source that out-climbs gravity.
+- The maidan and the temple tank are reserved by `onOpenGround()`. Anything new that places things in the world (buildings, lanes, props) must ask it.
+- **Vegetation is batched per ground cell and frustum-culled** (`vegBatches`). r128 turns culling off on every `InstancedMesh`; one un-culled, shadow-casting batch of plants was 85% of the frame. A batch's instances must stay inside its geometry's bounding sphere.
+- **Physics announces, it does not act.** `80-physics.js` calls `emit('splash', …)` and the HUD, rig and effects `listen()`; it must not reach into the DOM, the rig or the audio itself.
+- **A course never touches the world's random stream.** `buildCourse()` has its own generator, so the city is identical whether or not a run was ever started.
+- The smoke suite's fixed-step pass defines a global `run(n)`. Nothing in `src/` may be named `run`.
 - The character is an original design (navy/gold/teal). It is **not** Spider-Man and must not become him.

@@ -49,11 +49,11 @@ const s2c = (v) => v / (GHALF * 2) * GTEX;
     gx.beginPath(); gx.moveTo(w2c(i * 34), w2c(-PW)); gx.lineTo(w2c(i * 34), w2c(PW)); gx.stroke();
   }
   /* temple tank */
-  gx.fillStyle = '#7e7869'; gx.fillRect(w2c(-196 - 52), w2c(152 - 52), s2c(104), s2c(104));
-  gx.fillStyle = '#20443f'; gx.fillRect(w2c(-196 - 40), w2c(152 - 40), s2c(80), s2c(80));
+  gx.fillStyle = '#7e7869'; gx.fillRect(w2c(TANK.x - TANK.half), w2c(TANK.z - TANK.half), s2c(TANK.half * 2), s2c(TANK.half * 2));
+  gx.fillStyle = '#20443f'; gx.fillRect(w2c(TANK.x - TANK.pool), w2c(TANK.z - TANK.pool), s2c(TANK.pool * 2), s2c(TANK.pool * 2));
   /* cricket maidan */
-  gx.fillStyle = '#5e6f3f'; gx.beginPath(); gx.arc(w2c(-300), w2c(-140), s2c(52), 0, TAU); gx.fill();
-  gx.fillStyle = '#a99a72'; gx.fillRect(w2c(-306), w2c(-152), s2c(12), s2c(24));
+  gx.fillStyle = '#5e6f3f'; gx.beginPath(); gx.arc(w2c(MAIDAN.x), w2c(MAIDAN.z), s2c(MAIDAN.r), 0, TAU); gx.fill();
+  gx.fillStyle = '#a99a72'; gx.fillRect(w2c(MAIDAN.x - 6), w2c(MAIDAN.z - 12), s2c(12), s2c(24));
   /* river */
   gx.strokeStyle = '#4a4530'; gx.lineWidth = s2c(RIVER_HW * 2 + 16); gx.beginPath();
   for (let x = -GHALF; x <= GHALF; x += 12) { const z = riverZ(x); x === -GHALF ? gx.moveTo(w2c(x), w2c(z)) : gx.lineTo(w2c(x), w2c(z)); }

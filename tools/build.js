@@ -12,7 +12,7 @@ const ORDER = [
   '40-buildings.js', '45-ground.js', '50-water.js', '55-daycycle.js',
   '60-monuments.js', '65-broadphase.js', '70-vegetation.js', '75-traffic.js',
   '80-physics.js', '82-thermal-motes.js', '84-water-fx.js', '85-rig.js', '90-camera.js',
-  '92-input.js', '94-audio.js', '96-hud.js', '99-loop.js',
+  '92-input.js', '94-audio.js', '96-hud.js', '97-runs.js', '99-loop.js',
   'tail.html',
 ];
 

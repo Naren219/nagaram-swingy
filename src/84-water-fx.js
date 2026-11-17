@@ -15,6 +15,7 @@ for (let i = 0; i < SPLASH_RINGS; i++) {
 }
 let splashNext = 0, splashCool = 0;
 /* power is the closing speed, so a dive reads bigger than a graze */
+listen('splash', splash);
 function splash(x, y, z, power) {
   if (splashCool > 0) return;
   splashCool = 0.09;

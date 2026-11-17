@@ -6,6 +6,20 @@ const G = 23.5, MASS = 78, RAD = 0.85;
 const DRAG_AIR = 0.0042, DRAG_TUCK = 0.0024, DRAG_GLIDE = 0.0105, LIFT_K = 0.0115;
 const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
+const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
+
+/* Physics announces what happened and stops there. It used to call the HUD,
+   the rig and the water effects itself, which tied the simulation to the DOM.
+   Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
+   a listener sees the state exactly as it was when the thing happened.
+     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)
+     attach(hand)  release(hand, secondsOnTheLine) */
+const listeners = Object.create(null);
+function listen(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
+function emit(type, a, b, c, d) {
+  const l = listeners[type];
+  if (l) for (let i = 0; i < l.length; i++) l[i](a, b, c, d);
+}
 
 /* Wind: a slowly wandering horizontal vector. It never touches the solver —
    it only changes which velocity feeds the aero model, so drag and lift see
@@ -21,7 +35,7 @@ const REEL = 15, SUB = 1 / 120;
 const THERMALS = [
   { x: 468, z: -170, r: 64 }, { x: 452, z: 118, r: 58 },    // the marina
   { x: 306, z: 196, r: 66 }, { x: 384, z: 74, r: 54 },      // tech park
-  { x: -300, z: -140, r: 52 },                              // the maidan
+  { x: MAIDAN.x, z: MAIDAN.z, r: MAIDAN.r },                // the maidan
 ];
 const THERM_V = 36;        // m/s of rise on the axis
 const THERM_TOP = 230;     // fades out near the top, so it is a climb not a lift
@@ -52,8 +66,8 @@ const player = {
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
   depth: 0, wasWet: false,
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
-  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() },
-         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, hand: V3(), pl: null, lo: V3() }]
+  webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
+         { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
 };
 let assist = true;
 
@@ -180,7 +194,7 @@ function stepPhysics(h, inp) {
       player.rideLo.y = DECK_Y;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
-      toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk');
+      emit('board', near);
     }
   }
   if (player.riding) {
@@ -211,7 +225,7 @@ function stepPhysics(h, inp) {
   player.inWater = surf !== null && P.y < surf;
   player.depth = player.inWater ? surf - P.y : 0;
   /* one splash per entry, scaled by how hard you hit */
-  if (player.inWater && !player.wasWet) splash(P.x, surf, P.z, -V.y);
+  if (player.inWater && !player.wasWet) emit('splash', P.x, surf, P.z, -V.y);
   player.wasWet = player.inWater;
   player.clinging = !!inp.cling && player.contact && !player.inWater;
 
@@ -250,7 +264,7 @@ function stepPhysics(h, inp) {
     const cosA = clamp(_tmp.dot(_tmp2), -1, 1);
     const alpha = Math.acos(cosA);
     const cl = Math.sin(2 * clamp(alpha, -1.15, 1.15));         // stalls past ~66 deg
-    const perp = _tmp2.clone().addScaledVector(_tmp, -cosA);
+    const perp = _tmp2.addScaledVector(_tmp, -cosA);   // the chord is not needed again
     if (perp.lengthSq() > 1e-6) {
       perp.normalize();
       const L = LIFT_K * rs * rs * cl;
@@ -276,6 +290,11 @@ function stepPhysics(h, inp) {
     ax -= V.x * 7; ay -= V.y * 7; az -= V.z * 7;
     if (inp.jump) { V.addScaledVector(n, 11).y += 8; player.clinging = false; }
   } else {
+    /* Coyote time: a jump pressed just after running off an edge still counts.
+       Only while falling and off the line, so it cannot stack on a real jump. */
+    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) {
+      V.y = 12.4; P.y += 0.04; player.coyote = 0;
+    }
     const air = inp.glide ? 15 : 11;
     ax += inp.mx * air; az += inp.mz * air;
     if (inp.tuck) { ax += inp.fwd.x * 16; ay += inp.fwd.y * 16; az += inp.fwd.z * 16; }
@@ -296,6 +315,7 @@ function stepPhysics(h, inp) {
   /* ---- rope length control ---- */
   for (const w of player.webs) {
     if (!w.on) continue;
+    w.age += h;
     if (inp.reelIn) w.tgt -= REEL * h;
     if (inp.reelOut) w.tgt += REEL * h;
     if (assist) {
@@ -339,6 +359,18 @@ function stepPhysics(h, inp) {
     if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
+}
+
+/* The hulls move once per rendered frame, the player once per substep. On a
+   display faster than 120 Hz some frames run no substep, and whatever is
+   fixed to a hull (the rider, a latched anchor) would be drawn where the
+   aircraft was a frame ago: 14 cm of slip at 144 Hz. Re-pin them every frame. */
+function pinToPlanes(render) {
+  for (const w of player.webs) if (w.on && w.pl) planePoint(w.pl, w.lo.x, w.lo.y, w.lo.z, w.a);
+  if (player.riding) {
+    planePoint(player.riding, player.rideLo.x, player.rideLo.y, player.rideLo.z, player.p);
+    render.copy(player.p);
+  }
 }
 
 /* ---- attaching ---- */
@@ -414,15 +446,16 @@ function findAnchor(fwd, right, up, o, prev) {
 function fireWebAt(i, a) {
   const w = player.webs[i];
   if (player.riding && a) { player.v.copy(player.riding.v); player.riding = null; }
-  if (!a) { w.miss = performance.now(); missFlash = 0.22; return false; }
+  if (!a) { emit('miss'); return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
   w.on = true; w.a.set(a.x, a.y, a.z);
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
-  w.tension = 0; w.tavg = 0; w.fired = performance.now();
+  w.tension = 0; w.tavg = 0; w.age = 0;
   player.clinging = false;
+  emit('attach', i);
   return true;
 }
 function releaseWeb(i) {
@@ -430,14 +463,17 @@ function releaseWeb(i) {
   const w = player.webs[i];
   if (!w.on) return;
   w.on = false;
-  if (player.v.y > 0.5) { player.v.y += 2.4; }
+  /* The pop off the top of an arc is paid for by time spent on the line. Given
+     unconditionally it was a free 2.4 m/s per click: re-firing ten times a
+     second out-climbed gravity and beat any real swing. A tap now gets nothing
+     and a full arc gets all of it. */
+  if (player.v.y > 0.5) player.v.y += RELEASE_POP * sstep(0.35, 1.0, w.age);
   /* A hard upward release throws the body into a somersault — earned by the
      swing, never a button. Pure rig theatre: the trajectory is untouched. */
   const other = player.webs[1 - i];
   if (!other.on && !player.grounded && !player.riding && !player.inWater && player.v.y > 12) {
-    flipN = player.v.y > 21 ? 2 : 1;
-    flipDur = flipN > 1 ? 2.2 : 1.4;
-    flipT = 0;
+    emit('flip', player.v.y > 21 ? 2 : 1);
   }
+  emit('release', i, w.age);
 }
 
