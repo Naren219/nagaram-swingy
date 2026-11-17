@@ -967,8 +967,78 @@ async function windSigns(page, check) {
   check('there are pennants to read, each clear of its roof', r.n >= 20 && r.low === 0, r.n + ' pennants, ' + r.low + ' with the hoist under 3 m above the roof');
 }
 
+async function birdsAndBell(page, check) {
+  /* Flocks roost where you land and go up when you arrive. A flight is a closed
+     curve in time, so the test is that it leaves, and that it comes back to
+     exactly where it was. */
+  const r = await page.evaluate(() => {
+    const m4 = new THREE.Matrix4(), v = new THREE.Vector3(), seen = [];
+    listen('flush', (gull, x, y, z) => seen.push({ gull, x, y, z }));
+    const spots = (fi) => { const o = []; for (let i = 0; i < FLOCK_BIRDS; i++) { birdMesh.getMatrixAt(fi * FLOCK_BIRDS + i, m4); v.setFromMatrixPosition(m4); o.push(v.x, v.y, v.z); } return o; };
+    const far = (a, b) => { let d = 0; for (let i = 0; i < a.length; i += 3) d = Math.max(d, Math.hypot(a[i] - b[i], a[i + 1] - b[i + 1], a[i + 2] - b[i + 2])); return d; };
+    const lift = (a, b) => { let d = 1e9; for (let i = 1; i < a.length; i += 3) d = Math.min(d, a[i] - b[i]); return d; };
+    const calm = () => { for (const f of flocks) { f.t = -1; f.cool = 0; } flocks.forEach((f, i) => setFlock(i, -1)); seen.length = 0; };
+    const out = { n: flocks.length, gulls: flocks.filter(f => f.gull).length, offRoof: 0 };
+    /* every pigeon roost is on a roof, inside its edges */
+    for (const f of flocks) {
+      if (f.gull) continue;
+      const b = buildings.find(c => c.x === f.x && c.z === f.z);
+      if (!b || Math.abs(b.h - f.y) > 1e-6 || f.birds.some(k => Math.abs(k.ox) > b.w / 2 - 0.5 || Math.abs(k.oz) > b.d / 2 - 0.5)) out.offRoof++;
+    }
+    const fi = flocks.findIndex(f => !f.gull), f = flocks[fi], other = flocks.findIndex((g, i) => i !== fi && Math.hypot(g.x - f.x, g.z - f.z) > 60);
+    const home = spots(fi), otherHome = spots(other);
+    /* nobody near: nothing happens */
+    __reset(); calm(); player.p.set(f.x + 80, f.y + 40, f.z); player.v.set(0, 0, 0); __run(120);
+    out.idle = { flushed: seen.length, moved: far(spots(fi), home) };
+    /* arrive at speed, eleven metres off */
+    const fly = (hz) => {
+      __reset(hz); calm();
+      player.p.set(f.x + 11, f.y + 3, f.z); player.v.set(-14, 0, 0); player.grounded = false; __run(2);
+      const o = { flushed: seen.length, gull: seen[0] && seen[0].gull, up: 0, wide: 0, other: 0 };
+      player.p.set(f.x + 300, f.y + 60, f.z); player.v.set(0, 0, 0);          // and gone again
+      let n = 2;
+      for (; n < hz * 20 && flocks[fi].t >= 0; n++) {
+        __run(1); player.p.set(f.x + 300, f.y + 60, f.z); player.v.set(0, 0, 0);
+        const s = spots(fi);
+        if (Math.abs(n / hz - 4) < 0.6 / hz) { o.up = lift(s, home); o.wide = far(s, home); }
+        o.other = Math.max(o.other, far(spots(other), otherHome));
+      }
+      o.secs = n / hz; o.back = far(spots(fi), home); o.again = seen.length;
+      return o;
+    };
+    out.f60 = fly(60); out.f144 = fly(144);
+    /* walking: not at ten metres, but at three */
+    const walk = (d) => { __reset(); calm(); player.p.set(f.x + d, f.y + 0.85, f.z); player.v.set(0, 0, 0); __run(30); return seen.length; };
+    out.walk10 = walk(10); out.walk3 = walk(3);
+    /* a web beside them */
+    __reset(); calm(); player.p.set(f.x + 40, f.y + 20, f.z); player.v.set(0, 0, 0); player.grounded = false;
+    fireWebAt(0, { x: f.x + 5, y: f.y, z: f.z, pl: null }); out.web = seen.length; releaseWeb(0);
+    calm(); fireWebAt(0, { x: f.x + 30, y: f.y, z: f.z, pl: null }); out.webFar = seen.length; releaseWeb(0);
+    /* the bell */
+    const rung = []; listen('bell', (g) => rung.push(g));
+    const g = GOPURAMS[0];
+    fireWebAt(0, { x: g.x, y: g.h * 0.7, z: g.z + g.bd / 2, pl: null }); releaseWeb(0);
+    out.bell = rung.length; out.bellIs = rung[0] === g;
+    fireWebAt(0, { x: g.x + 60, y: 20, z: g.z + 60, pl: null }); releaseWeb(0);
+    out.bellElsewhere = rung.length - out.bell;
+    calm(); __reset(); respawn();
+    return out;
+  });
+  check('flocks roost on the roofs and the sand', r.n >= 30 && r.gulls >= 5 && r.offRoof === 0, r.n + ' flocks, ' + r.gulls + ' of gulls, ' + r.offRoof + ' not on a roof');
+  check('a flock nobody is near stays down', r.idle.flushed === 0 && r.idle.moved === 0, r.idle.flushed + ' flushed');
+  for (const k of ['f60', 'f144']) {
+    const o = r[k], hz = k.slice(1);
+    check('arriving at speed puts the flock up at ' + hz + ' Hz', o.flushed === 1 && o.gull === false && o.up > 2 && o.wide > 6, 'after 4 s the lowest bird is ' + o.up.toFixed(1) + ' m up, the furthest ' + o.wide.toFixed(1) + ' m from its spot');
+    check('and it comes back to where it was at ' + hz + ' Hz', Math.abs(o.secs - 11) < 0.1 && o.back < 1e-4 && o.again === 1, 'down after ' + o.secs.toFixed(2) + ' s, ' + (o.back * 1000).toFixed(2) + ' mm from its spots');
+    check('the next roof over never stirs at ' + hz + ' Hz', o.other === 0, 'moved ' + o.other.toFixed(3) + ' m');
+  }
+  check('standing ten metres off does not disturb them, walking in does', r.walk10 === 0 && r.walk3 === 1, r.walk10 + ' flushed at 10 m, ' + r.walk3 + ' at 3 m');
+  check('a web beside them puts them up; one across the roof does not', r.web === 1 && r.webFar === 0, r.web + ' at 5 m, ' + r.webFar + ' at 30 m');
+  check('a web on a gopuram rings it, and only there', r.bell === 1 && r.bellIs && r.bellElsewhere === 0, r.bell + ' on the tower, ' + r.bellElsewhere + ' beside it');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

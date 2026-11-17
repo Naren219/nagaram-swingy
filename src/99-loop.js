@@ -118,6 +118,7 @@ function frame() {
   updateProps(T);
   updateMotes(T);
   updateWindSigns(T);
+  if (!photoMode) updateBirds(dt);
   updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);

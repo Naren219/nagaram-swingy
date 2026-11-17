@@ -322,3 +322,31 @@ listen('bend', (n, on) => {
   const f = on ? 1500 : 2300;
   noiseHit('bandpass', f, f * 0.55, 0.05, 5, on ? 0.13 : 0.06, 0.003, 0.08);
 });
+/* a flock going up: a second of wingbeats, which is noise chopped at the rate
+   wings beat; gulls complain as well */
+listen('flush', (sea) => {
+  if (!AC) return;
+  const t = AC.currentTime, dur = 1.5;
+  const src = AC.createBufferSource(); src.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.9;
+  f.frequency.setValueAtTime(sea ? 1500 : 2300, t); f.frequency.exponentialRampToValueAtTime(sea ? 900 : 1300, t + dur);
+  const chop = AC.createGain(); chop.gain.value = 0.5;
+  const lfo = AC.createOscillator(); lfo.type = 'sine';
+  lfo.frequency.setValueAtTime(sea ? 9 : 15, t); lfo.frequency.linearRampToValueAtTime(sea ? 6 : 9, t + dur);
+  const lg = AC.createGain(); lg.gain.value = 0.5; lfo.connect(lg); lg.connect(chop.gain);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.2, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(chop); chop.connect(g); g.connect(master);
+  src.start(t, Math.random() * 0.4); src.stop(t + dur + 0.05); lfo.start(t); lfo.stop(t + dur + 0.05);
+  if (sea) gull(0.8);
+});
+/* a web on a gopuram rings it. Not twice in a breath: two hands landing
+   together are one strike. */
+let bellQuiet = 0;
+listen('bell', () => {
+  if (!AC || AC.currentTime < bellQuiet) return;
+  bellQuiet = AC.currentTime + 0.35;
+  bell(0.26);
+});
