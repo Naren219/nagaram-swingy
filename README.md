@@ -92,6 +92,8 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, and ring runs flown on rails (the clock must read length ÷ speed at any frame rate).
 
+The suite is three files under `test/`. `smoke.js` is the entry point and holds the three passes that drive the page in real time. `fixed-step.js` holds the fixed-step pass as one function per subject, listed in `SECTIONS`; each starts from `__reset()`, so a section does not depend on what ran before it, and a new subject is a new function added to that list. `harness.js` is the server, the browser and the tally of checks.
+
 ```sh
 npm install                       # one devDependency: playwright
 npx playwright install chromium   # or set CHROMIUM_PATH to an existing binary
