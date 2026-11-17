@@ -18,7 +18,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | Space | jump · hold in air to glide |
 | Shift | tuck & dive |
 | Q | zip to anchor |
-| E | cling to wall · board an aircraft |
+| E | cling to wall · board an aircraft or the metro |
 | T / F / M | skip time of day · swing assist · mute |
 | G / N / X | ring run: start or restart · next course · leave |
 | B | **trial:** the line bends round corners (off by default) |
@@ -31,6 +31,8 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 **Wind you can read.** The breeze steers the glide, and the city shows it: pennants on the gopurams and the tallest roofs point down-wind and hang when it drops, kites fly down-wind of whoever holds them with their tails streaming, and the palms lean with it.
 
 **Things that notice you.** Pigeons roost on the rooftops and gulls on the sand. Arrive at speed, walk into them or put a web down beside them and the flock goes up, wheels over the place it left and settles back on it. A web that lands on a gopuram rings it.
+
+**The metro.** An elevated line runs north–south up the gap between the blocks east of the temple, from south of the river to the north blocks, with a three-car train shuttling along it. The viaduct is solid: land on the deck, hang from its underside, fly between its piers. The train is a carrier like the aircraft, only low and fast: latch it and it tows you down the street, or press E to ride its roof.
 
 **Perching.** Stand still on anything more than sixteen metres up and, after a few seconds, the game steps back: the readouts and the aim ring fade, the camera pulls out and turns slowly about you, and the sounds of the streets come up to where you are. Look around yourself and the turn waits for you. Move, jump or fire a web and everything is back at once. There is no button for it.
 
@@ -51,7 +53,7 @@ Other things to know:
 - The line is a rope: it travels from the hand to the anchor, and hangs in a curve whenever it is longer than the gap it spans.
 - The sash off the left shoulder streams along the air going past, so it shows your speed, a crosswind and a thermal.
 - The readouts fade after four seconds on the move and return when you stop, board an aircraft or press H. A district you enter while they are away is named on screen.
-- Aircraft crossing the city are valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
+- Aircraft crossing the city, and the metro train, are valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
 - Release a swing while climbing hard and the body throws itself into a somersault — a violent release doubles it. No button; it's earned by the swing.
 - The gopurams are gateways, not scenery: fly the passage through any of the four, and the prakaram walls have low arches worth threading at speed.
 - Columns of rising air over the marina, the tech park and the maidan are marked by drifting chaff in a haze cone. Glide into one and you climb; fall through one and you only fall slower.
@@ -104,9 +106,9 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 198 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 211 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
-The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, the fading readouts, the perch, kites against a set wind, flocks that must come back to the millimetre, and the line bending round a corner (against the same swing with the trial off, and three minutes of a random flyer).
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, the fading readouts, the perch, kites against a set wind, flocks that must come back to the millimetre, the metro (a whole trip at two frame rates, towing, riding its roof), and the line bending round a corner (against the same swing with the trial off, and three minutes of a random flyer).
 
 The suite is three files under `test/`. `smoke.js` is the entry point and holds the three passes that drive the page in real time. `fixed-step.js` holds the fixed-step pass as one function per subject, listed in `SECTIONS`; each starts from `__reset()`, so a section does not depend on what ran before it, and a new subject is a new function added to that list. `harness.js` is the server, the browser and the tally of checks.
 
@@ -146,6 +148,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `65-broadphase.js` | spatial hash over solid AABBs |
 | `70-vegetation.js` | palm and tree scattering, batched by ground cell for culling |
 | `75-traffic.js` | vehicles, boats, kites, aircraft |
+| `76-metro.js` | the elevated line and its train (a carrier, in `planes`) |
 | `80-physics.js` | XPBD solver, contacts, landing roll, wall-run, water volumes, thermals, anchor search |
 | `82-thermal-motes.js` | rising chaff and haze marking each thermal |
 | `84-water-fx.js` | splash and skim rings |
@@ -184,6 +187,8 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 - **A bend changes what you swing about, never how much rope there is.** The path anchor → bends → body is the same length the step before and the step after a bend forms or lets go; a jump there is a free kick. The winch stops at the last bend (`wrapSeal`) for the same reason.
 - **Cast toward the anchor, not from it.** An anchor is on a wall, and `rayHit` starting on a wall cannot tell that wall from open air.
 - **A flock's flight is a closed curve in time, not a simulation.** `birdAt(flock, bird, seconds)` leaves a roosting spot and returns to exactly that spot `FLOCK_T` later, so nothing drifts and only flocks in the air cost anything. Birds with state of their own would need somewhere to land.
+- **A carrier is anything in `planes` with a box (`hx`, `hy`, `hz`), a `reach` for the web, and a deck (`deck`, `walkX`, `walkZ`).** The aircraft and the metro train both are; boarding, riding, towing and aiming all read those fields and nothing else. A new moving thing to use should join `planes` rather than grow a parallel path.
+- **The metro's boxes go into the hash after the plants, traffic and boats are placed.** Placement draws from the world's random stream until it is satisfied, so an extra solid early would move every palm, kite and aircraft after it. The city is the same city, plus a metro (six palms that stood under the deck are dropped, not replaced).
 - **One wind.** Pennants, kites, palms, the sash and the aero model all read `WIND` (and `windHead`, its heading, which stays meaningful in a dead calm). A second, prettier wind for the scenery would make the scenery a liar.
 - **`perchK` is the only thing the perch exports.** Camera, aim ring and ambience each read that one number; the perch itself touches only `yaw` (the slow turn) and a class on `<body>`. It must never hold the player: every input that means "I am playing" ends it the same frame.
 - **The sash is simulated as offsets from its pin, against air velocity minus the player's.** Simulated in world space it whips on every respawn and goes limp in photo mode.

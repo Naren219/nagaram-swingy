@@ -193,9 +193,9 @@ function boardablePlane(P) {
   for (const w of player.webs) if (w.on && w.pl) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - PLANE_HX, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - PLANE_HY, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - PLANE_HZ, 0);
+    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
@@ -225,9 +225,9 @@ function stepPhysics(h, inp) {
     if (near) {
       worldToPlane(near, P.x, P.y, P.z, player.rideLo);
       /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -1.1, 1.1);
-      player.rideLo.z = clamp(player.rideLo.z, -9, 9);
-      player.rideLo.y = DECK_Y;
+      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
+      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
+      player.rideLo.y = near.deck;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
       emit('board', near);
@@ -239,8 +239,8 @@ function stepPhysics(h, inp) {
        before walking, or the controls flip as the aircraft turns */
     const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
-    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -9.5, 9.5);
-    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -1.2, 1.2);
+    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
+    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;

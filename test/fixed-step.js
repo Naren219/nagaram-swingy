@@ -1037,8 +1037,94 @@ async function birdsAndBell(page, check) {
   check('a web on a gopuram rings it, and only there', r.bell === 1 && r.bellIs && r.bellElsewhere === 0, r.bell + ' on the tower, ' + r.bellElsewhere + ' beside it');
 }
 
+async function metro(page, check) {
+  /* A viaduct you can land on and fly under, and a train that is a carrier in
+     exactly the way an aircraft is. */
+  const r = await page.evaluate(() => {
+    const out = {}, t = metroTrain;
+    /* the viaduct stands in nothing, and nothing grows through it */
+    let overlap = 0;
+    for (let b = METRO.box0; b < METRO.box1; b++) for (let c = 0; c < NBOX; c++) {
+      if (c >= METRO.box0 && c < METRO.box1) continue;
+      let hit = true;
+      for (let k = 0; k < 3; k++) if (BOXES[b * 6 + k] >= BOXES[c * 6 + 3 + k] || BOXES[b * 6 + 3 + k] <= BOXES[c * 6 + k]) hit = false;
+      if (hit) overlap++;
+    }
+    out.overlap = overlap; out.boxes = METRO.box1 - METRO.box0;
+    const m4 = new THREE.Matrix4(), v = new THREE.Vector3();
+    let plants = 0, under = 0;
+    for (const im of vegBatches) for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, m4); v.setFromMatrixPosition(m4).add(im.position); plants++;
+      if (Math.abs(v.x - METRO.x) < METRO.w / 2 + 2 && v.z > METRO.z0 && v.z < METRO.z1) under++;
+    }
+    out.plants = plants; out.under = under;
+    /* dropped onto the deck you stand on it; between the piers the street is open */
+    __reset(); player.p.set(METRO.x, METRO.top + 4, METRO.piers[3] + 21); player.v.set(0, 0, 0); player.grounded = false;
+    t.ph = Math.PI / 2; __run(90);
+    out.stand = { y: player.p.y - METRO.top, grounded: player.grounded };
+    const z = METRO.piers[3] + METRO.span / 2;
+    out.through = !rayHit(METRO.x - 12, 5, z, 1, 0, 0, 24);
+    out.pier = !!rayHit(METRO.x - 12, 5, METRO.piers[3], 1, 0, 0, 24);
+    out.deck = !!rayHit(METRO.x, 2, z, 0, 1, 0, 30);
+    /* a whole trip there and back, at two frame rates */
+    for (const hz of [60, 144]) {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0);
+      t.ph = 0; __run(1);
+      let lo = 1e9, hi = -1e9, vmax = 0, offLine = 0, low = 1e9, n = 0;
+      const z0 = t.p.z;
+      for (; n < hz * 200; n++) {
+        __run(1);
+        lo = Math.min(lo, t.p.z - t.hz); hi = Math.max(hi, t.p.z + t.hz);
+        vmax = Math.max(vmax, Math.abs(t.v.z)); offLine = Math.max(offLine, Math.abs(t.p.x - METRO.x) + Math.abs(t.v.x) + Math.abs(t.v.y));
+        low = Math.min(low, t.p.y - t.hy - METRO.top);
+        if (t.ph >= Math.PI * 2) break;
+      }
+      out['trip' + hz] = { secs: (n + 1) / hz, lo, hi, vmax, offLine, low, back: Math.abs(t.p.z - z0) };
+    }
+    /* a web finds it, and tows */
+    __reset(); t.ph = 0; __run(1);
+    const o = { x: METRO.x - 30, y: t.p.y + 6, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.98, -0.2, 0, 60);
+    out.aim = !!hit && hit.pl === t;
+    player.p.set(o.x, o.y, o.z); player.v.set(0, 0, 0); player.grounded = false;
+    fireWebAt(0, { x: hit.x, y: hit.y, z: hit.z, pl: t });
+    const zp = player.p.z, zt = t.p.z; __run(60 * 4);
+    out.tow = { player: player.p.z - zp, train: t.p.z - zt, on: player.webs[0].on, vz: player.v.z, tvz: t.v.z };
+    /* E boards its roof, the roof carries you, and a jump keeps its speed */
+    mountEdge = true; __run(2);
+    out.board = { riding: player.riding === t, y: player.p.y - (t.p.y + t.hy), webs: player.webs[0].on };
+    const zr = player.p.z - t.p.z; __run(120);
+    out.ride = { slip: Math.abs(player.p.z - t.p.z - zr), v: player.v.z - t.v.z };
+    keys['KeyW'] = true; yaw = 0; __run(600); keys['KeyW'] = false;
+    out.walk = { z: player.p.z - t.p.z, x: Math.abs(player.p.x - METRO.x), riding: player.riding === t };
+    const tv = t.v.z; jumpEdge = true; __run(3);
+    out.off = { riding: !!player.riding, vz: player.v.z, tv };
+    /* the aircraft are what they were */
+    out.top = TRAIN_A * TRAIN_W; out.period = 2 * Math.PI / TRAIN_W;
+    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => !p.train).length };
+    __reset(); respawn();
+    return out;
+  });
+  check('the viaduct stands in nothing and nothing grows through it', r.overlap === 0 && r.under === 0 && r.boxes > 20, r.boxes + ' boxes, ' + r.overlap + ' overlapping the city; ' + r.under + ' of ' + r.plants + ' plants under the deck');
+  check('the deck is somewhere to stand', r.stand.grounded && Math.abs(r.stand.y - 0.85) < 0.05, 'standing ' + r.stand.y.toFixed(2) + ' m above it');
+  check('the street runs under it between the piers', r.through && r.pier && r.deck, 'across at 5 m: clear ' + r.through + ', pier ' + r.pier + ', deck overhead ' + r.deck);
+  for (const hz of [60, 144]) {
+    const o = r['trip' + hz];
+    check('the train keeps to the line for a whole trip at ' + hz + ' Hz', o.offLine === 0 && o.lo > -470 && o.hi < 470 && o.low > 0.3,
+      'ran from ' + o.lo.toFixed(0) + ' to ' + o.hi.toFixed(0) + ', ' + o.low.toFixed(2) + ' m clear of the deck');
+    check('there and back in the same time at ' + hz + ' Hz', Math.abs(o.secs - r.period) < 0.05 && o.back < 0.5 && Math.abs(o.vmax - r.top) < 0.05,
+      o.secs.toFixed(2) + ' s, top speed ' + o.vmax.toFixed(1) + ' m/s');
+  }
+  check('a web finds the train and is towed by it', r.aim && r.tow.on && r.tow.train > 60 && r.tow.player > r.tow.train * 0.6 && r.tow.vz > r.tow.tvz * 0.5,
+    'in 4 s the train ran ' + r.tow.train.toFixed(0) + ' m and took the player ' + r.tow.player.toFixed(0) + ' m, by then at ' + r.tow.vz.toFixed(0) + ' m/s behind its ' + r.tow.tvz.toFixed(0));
+  check('E boards its roof', r.board.riding && Math.abs(r.board.y - 0.3) < 0.01 && !r.board.webs, 'riding ' + r.board.riding + ', ' + r.board.y.toFixed(2) + ' m above the roof');
+  check('the roof carries you', r.ride.slip < 1e-6 && Math.abs(r.ride.v) < 1e-6, 'slip ' + (r.ride.slip * 1000).toFixed(3) + ' mm in 2 s');
+  check('you can walk its length and not off the end', r.walk.riding && Math.abs(r.walk.z) > 20 && Math.abs(r.walk.z) < 26.5 && r.walk.x <= 1.0001, 'walked to ' + r.walk.z.toFixed(1) + ' m from the middle');
+  check('a jump steps off with its speed', !r.off.riding && Math.abs(r.off.vz - r.off.tv * 0.9) < 2, 'left at ' + r.off.vz.toFixed(1) + ' m/s from a train doing ' + r.off.tv.toFixed(1));
+  check('the aircraft are the carriers they were', r.plane.hx === 13 && r.plane.hz === 12 && r.plane.deck === 1.45 && r.plane.n === 5, r.plane.n + ' aircraft, hull ' + r.plane.hx + ' x ' + r.plane.hz);
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

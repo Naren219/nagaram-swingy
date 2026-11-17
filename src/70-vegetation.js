@@ -86,6 +86,7 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
   for (const list of picks) {
     for (const [x, z] of list) {
       const s = rnd(scaleLo, scaleHi), ry = rnd(0, TAU), sy = s * rnd(0.9, 1.15);
+      if (underMetro(x, z)) continue;     // after the draws: dropped, not replaced, so nothing else moves
       const ci = Math.floor(x / VEG_CELL), cj = Math.floor(z / VEG_CELL), key = ci + ':' + cj;
       let c = cells.get(key);
       if (!c) cells.set(key, c = { g: ((ci + 2 * cj) % 3 + 3) % 3, cx: (ci + 0.5) * VEG_CELL, cz: (cj + 0.5) * VEG_CELL, list: [] });

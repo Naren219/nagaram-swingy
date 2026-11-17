@@ -202,6 +202,21 @@ for (const bx of BRIDGES) {
   landmarks.push({ type: 'bridge', x: bx, z: bz, len: (RIVER_HW + 26) * 2 });
   addBox(bx, 7.4, bz, 20, 1.6, (RIVER_HW + 26) * 2);
 }
+/* --- the metro: an elevated line up the gap between the blocks at x = 238,
+   from south of the river to the north blocks. A deck on piers: solid, so it
+   can be landed on, swung from and flown under. Declared here so its boxes
+   are in the solver; built and run in 76-metro.js. --- */
+const METRO = { x: 238, z0: -470, z1: 470, top: 13.4, thick: 1.3, w: 6.4, span: 42, pierW: 2.2, pierD: 2.8 };
+METRO.box0 = boxesArr.length / 6;
+addBox(METRO.x, METRO.top - METRO.thick, (METRO.z0 + METRO.z1) / 2, METRO.w, METRO.thick, METRO.z1 - METRO.z0);
+METRO.piers = [];
+for (let z = METRO.z0 + 8; z <= METRO.z1 - 8 + 0.01; z += METRO.span) {
+  METRO.piers.push(z);
+  addBox(METRO.x, 0, z, METRO.pierW, METRO.top - METRO.thick, METRO.pierD);
+}
+METRO.box1 = boxesArr.length / 6;
+/* nothing may be planted under the deck */
+const underMetro = (x, z) => Math.abs(x - METRO.x) < METRO.w / 2 + 2.5 && z > METRO.z0 - 3 && z < METRO.z1 + 3;
 /* a couple of comms masts for high anchors */
 for (const [mx, mz, mh] of [[-410, -430, 96], [300, -450, 88], [-300, 380, 82], [420, 250, 92]]) {
   landmarks.push({ type: 'mast', x: mx, z: mz, h: mh });

@@ -38,6 +38,7 @@ function initAmbience() {
   beds.bazaar  = makeBed('bandpass', 720, 0.6, noiseBuf);   // crowd murmur
   beds.night   = makeBed('bandpass', 5200, 9, noiseBuf);    // insects
   beds.engine  = makeBed('lowpass',  240, 1.2, noiseBuf);   // turbofan hiss
+  beds.rail    = makeBed('lowpass',  150, 2.2, noiseBuf);   // steel on steel, heard through a viaduct
   /* the engine also needs a pitched core, not just filtered noise */
   const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 58;
   const of = AC.createBiquadFilter(); of.type = 'lowpass'; of.frequency.value = 320;
@@ -125,11 +126,13 @@ function updateAudio(dt) {
 
   /* nearest aircraft, for engine noise and for riding */
   let eng = 0;
+  let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
-    eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
+    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) eng = 1;
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -138,6 +141,7 @@ function updateAudio(dt) {
     bazaar: bazaarN * alt * 0.085 * (1 - night * 0.75),
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
     engine: eng * 0.16,
+    rail: rail * rail * 0.26,
     engineTone: eng * eng * 0.055
   };
   const k = 1 - Math.exp(-2.2 * dt);

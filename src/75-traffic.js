@@ -150,12 +150,16 @@ const planes = [];
       cx: rnd(-120, 120), cz: rnd(-160, 120),
       ph: (i / 5) * TAU + rnd(0, 1),
       w: (i % 2 ? -1 : 1) * rnd(0.055, 0.10),   // angular speed, both directions
-      p: V3(), v: V3(), yaw: 0
+      p: V3(), v: V3(), yaw: 0,
+      /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
+         its box, how generously a web may find it, and where a rider walks */
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
     });
   }
 }
 function updatePlanes(dt) {
   for (const pl of planes) {
+    if (pl.train) { updateTrain(pl, dt); continue; }
     pl.ph += pl.w * dt;
     const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
     const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
@@ -187,7 +191,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
     for (let a = 0; a < 3 && ok; a++) {
       const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
       const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? PLANE_HX + 2 : a === 1 ? PLANE_HY + 1 : PLANE_HZ + 2;
+      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
       const lo = c - h, hi = c + h;
       if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
       const inv = 1 / d;
