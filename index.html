@@ -239,7 +239,7 @@
       <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
       <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
-      <tr><td>gamepad</td><td>triggers: webs · A jump · B dive · X cling · LB zip</td></tr>
+      <tr><td>gamepad</td><td>triggers fire the webs</td></tr>
     </table>
     <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
   </div>
@@ -2464,7 +2464,7 @@ const webMat = new THREE.MeshBasicMaterial({ color: 0xf2f4ef, transparent: true,
    anchor, and hang in a curve when it is longer than the gap it spans. Pure
    picture: the solver's line is a length, and stays one.
    One instanced mesh for both lines; a segment not in use is scaled to nothing. */
-const STRAND_SEG = 8, SHOOT_V = 600;      // segments per line · m/s the strand travels at
+const STRAND_SEG = 12, SHOOT_V = 600;      // segments per line · m/s the strand travels at
 const strandMesh = new THREE.InstancedMesh(
   new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_SEG * 2);
 strandMesh.frustumCulled = false; scene.add(strandMesh);
@@ -2490,7 +2490,10 @@ function drawStrand(i, w, dt) {
   /* a rope of length L across a gap d hangs sqrt(3 d (L - d) / 8) at the
      middle (the parabola a shallow catenary nearly is). Straight down, less
      whatever part of "down" lies along the rope: a vertical line cannot sag. */
-  const slack = f < 1 ? 0 : Math.max(0, w.len - d);
+  /* Slack is the solver's: its length less the gap from the BODY to the
+     anchor. Measured from the hand, an arm's reach up the line always looked
+     like a metre and a half of slack, and a taut line hung in a bow. */
+  const slack = f < 1 ? 0 : Math.max(0, w.len - player.p.distanceTo(w.a));
   strandSag[i] = damp(strandSag[i], Math.min(Math.sqrt(0.375 * d * slack), 0.3 * d), 16, dt);
   const sag = strandSag[i], gx = _d.y * _d.x, gy = _d.y * _d.y - 1, gz = _d.y * _d.z;
   for (let k = 0; k <= STRAND_SEG; k++) {
@@ -2690,8 +2693,10 @@ function poseRig(dt, inp) {
   for (let a = 0; a < 2; a++) {
     const wi = armFor[a]; if (wi < 0) continue;
     const w = player.webs[wi];
-    sh[a].getWorldPosition(_d);
-    _d.copy(w.a).sub(_d).normalize();
+    /* not into _d itself: copy() would overwrite the shoulder before it was
+       subtracted, the direction came out zero, and the arm holding the line
+       simply hung at the body's side */
+    _d.copy(w.a).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
     aimAt(sh[a], _d, _pq);
     el[a].rotation.set(-0.12, 0, 0);

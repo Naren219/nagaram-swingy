@@ -553,9 +553,17 @@ async function strandPicture(page, check) {
     __run(240 * 4);
     const w = player.webs[0];
     const taut = { sag: strandSag[0], tension: w.tension, segs: drawn(0), other: drawn(1) };
+    /* and the arm holding it reaches for the anchor. Polarity: this read -0.94
+       while the aim was computed as anchor minus anchor. */
+    const arm = [[shoulderL, elbowL], [shoulderR, elbowR]].map(([sh, el]) => {
+      const s = sh.getWorldPosition(new THREE.Vector3()), h = el.localToWorld(new THREE.Vector3(0, -FORE - 0.05, 0));
+      return { reach: h.clone().sub(s).normalize().dot(w.a.clone().sub(s).normalize()), mine: h.distanceTo(w.hand) < 1e-6 };
+    }).find(a => a.mine);
+    taut.reach = arm ? arm.reach : -9;
     /* now hold still off to one side, some 10 m nearer the anchor than the line is long */
     for (let i = 0; i < 240; i++) { player.p.set(A.x + 60, A.y - 36, A.z); player.v.set(0, 0, 0); __run(1); }
-    const d = w.hand.distanceTo(w.a), slack = { sag: strandSag[0], want: Math.min(Math.sqrt(0.375 * d * (w.len - d)), 0.3 * d), len: w.len, d };
+    const d = w.hand.distanceTo(w.a), loose = w.len - player.p.distanceTo(w.a);
+    const slack = { sag: strandSag[0], want: Math.min(Math.sqrt(0.375 * d * loose), 0.3 * d), len: w.len, d, loose };
     slack.across = Math.hypot(w.a.x - w.hand.x, w.a.z - w.hand.z) / d;   // how much of "down" is across the line
     /* the middle of the drawn line really is that far off the straight one */
     const mid = new THREE.Vector3(), m4 = new THREE.Matrix4();
@@ -567,13 +575,15 @@ async function strandPicture(page, check) {
   });
   const ts = [r.a60, r.a144, r.a240];
   check('the strand reaches an anchor 80 m off in the same time at 60/144/240 Hz',
-    ts.every(a => a.t >= r.want - 0.001 && a.t < r.want + 0.03 && a.tip1 === -1 && !a.early && a.splat),
-    ts.map(a => a.t.toFixed(3)).join(' / ') + ' s (travel time ' + r.want.toFixed(3) + ' s)');
-  check('a line carrying weight is drawn straight, all of it', r.taut.tension > 1200 && r.taut.sag < 0.02 && r.taut.segs === 8 && r.taut.other === 0,
+    /* the hand is an arm's reach up the line, so the span is a little under 80 m */
+    ts.every(a => a.t >= r.want - 0.006 && a.t < r.want + 0.03 && a.tip1 === -1 && !a.early && a.splat),
+    ts.map(a => a.t.toFixed(3)).join(' / ') + ' s (travel time for 80 m: ' + r.want.toFixed(3) + ' s)');
+  check('the arm on the line reaches for the anchor', r.taut.reach > 0.95, 'hand is ' + r.taut.reach.toFixed(3) + ' along the direction to it');
+  check('a line carrying weight is drawn straight, all of it', r.taut.tension > 1200 && r.taut.sag < 0.02 && r.taut.segs === 12 && r.taut.other === 0,
     'sag ' + r.taut.sag.toFixed(3) + ' m at ' + (r.taut.tension / 1000).toFixed(1) + ' kN, ' + r.taut.segs + ' segments');
   check('a slack line hangs like a rope of its length', r.slack.want > 3 && Math.abs(r.slack.sag - r.slack.want) < 0.02 * r.slack.want &&
     Math.abs(r.slack.off - r.slack.sag * r.slack.across) < 0.05 * r.slack.sag,
-    'sag ' + r.slack.sag.toFixed(1) + ' m for ' + (r.slack.len - r.slack.d).toFixed(1) + ' m of slack over ' + r.slack.d.toFixed(0) + ' m (rope: ' + r.slack.want.toFixed(1) + '), drawn ' + r.slack.off.toFixed(1) + ' m off the chord');
+    'sag ' + r.slack.sag.toFixed(1) + ' m for ' + r.slack.loose.toFixed(1) + ' m of slack over ' + r.slack.d.toFixed(0) + ' m (rope: ' + r.slack.want.toFixed(1) + '), drawn ' + r.slack.off.toFixed(1) + ' m off the chord');
   check('a released line draws nothing', r.gone === 0 && r.splatGone, r.gone + ' segments');
 }
 

@@ -95,7 +95,7 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 152 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 153 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
 The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, and the fading readouts.
 
