@@ -93,8 +93,8 @@ async function rigTiming(page, check) {
     const n = Math.round(0.1 * hz); for (let i = 0; i < n; i++) poseRig(1 / hz, glide);
     return spine.rotation.x;
   }));
-  const sMin = Math.min(...settle), sMax = Math.max(...settle);
-  check('rig pose speed is independent of frame rate', (sMax - sMin) / sMax < 0.05,
+  const sMin = Math.min(...settle), sMax = Math.max(...settle), big = Math.max(...settle.map(Math.abs));
+  check('rig pose speed is independent of frame rate', big > 0.02 && (sMax - sMin) / big < 0.05,
     'spine 0.1 s into a glide at 30/60/144/240 Hz: ' + settle.map(v => v.toFixed(3)).join(' '));
 }
 

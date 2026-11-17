@@ -62,6 +62,7 @@ Other things to know:
 - The sash off the left shoulder streams along the air going past, so it shows your speed, a crosswind and a thermal.
 - The readouts fade after four seconds on the move and return when you stop, board an aircraft or press H. A district you enter while they are away is named on screen.
 - Aircraft crossing the city, the metro train, boats, kites, crane jibs and the cars of the wheel are all valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
+- The figure moves like a body. It faces where it is going, and at rest it stays put while the head turns to look where you aim. Its walk and run step at a cadence that rises with speed, so the feet keep pace with the street, and arms swing against legs. On a line it hangs along the rope, its legs trailing through the bottom of the arc and folding up the far side. In the air it leaps, spreads to a fall, lies flat to glide or dives head first. Every joint moves on a critically damped spring, so one pose flows into the next.
 - Release a swing while climbing hard and the body throws itself into a somersault — a violent release doubles it. No button; it's earned by the swing.
 - The gopurams are gateways, not scenery: fly the passage through any of the four, and the prakaram walls have low arches worth threading at speed.
 - Columns of rising air over the marina, the tech park and the maidan are marked by drifting chaff in a haze cone. Glide into one and you climb; fall through one and you only fall slower.
