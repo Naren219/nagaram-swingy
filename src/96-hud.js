@@ -48,7 +48,20 @@ let hudT = 0, aimOk = false, missFlash = 0;
 listen('miss', () => { missFlash = 0.22; });
 const held = [false, false];
 let aimPt = null;
+/* The readouts are for when you want them, and in flight you are looking at
+   the city. After QUIET_AFTER seconds on the move they fade out (the map only
+   dims, and not at all during a ring run); stop, board an aircraft or press H
+   and they are back. While they are away a new district announces itself. */
+const QUIET_AFTER = 4, QUIET_GO = 9, QUIET_STOP = 4;   // seconds · m/s that counts as moving · m/s that counts as stopped
+let flowT = 0, stillT = 0, hudQuiet = false;
+function updateQuiet(dt, spd) {
+  if (player.riding || spd < QUIET_STOP) { stillT += dt; if (stillT > 0.6) flowT = 0; }
+  else if (spd > QUIET_GO) { stillT = 0; flowT += dt; }
+  const q = flowT > QUIET_AFTER;
+  if (q !== hudQuiet) { hudQuiet = q; document.body.classList.toggle('quiet', q); }
+}
 function updateHUD(dt) {
+  updateQuiet(dt, player.v.length());
   hudT -= dt; if (hudT > 0) return; hudT = 0.07;
   const spd = player.v.length();
   elSpd.innerHTML = (spd * 3.6).toFixed(0) + '<small>km/h</small>';
@@ -61,7 +74,7 @@ function updateHUD(dt) {
     : '—';
   elBar.style.width = clamp(tn / 14000, 0, 1) * 100 + '%';
   const z = ZONE_NAME[player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z)] || ZONE_NAME.mid;
-  if (elZone.textContent !== z) elZone.textContent = z;
+  if (elZone.textContent !== z) { elZone.textContent = z; if (hudQuiet) toast(z); }
   elRush.style.opacity = clamp((spd - 26) / 76, 0, 0.9);
   cross.classList.toggle('web', on);
   cross.classList.toggle('lock', aimOk);

@@ -358,7 +358,7 @@ addEventListener('keydown', e => {
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
-    if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); saveSettings(); }
+    if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
     if (e.code === 'KeyP') { shadowsOn = !shadowsOn; sun.castShadow = shadowsOn; saveSettings(); }
     if (e.code === 'KeyR') respawn();

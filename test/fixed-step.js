@@ -702,8 +702,45 @@ async function gamepad(page, check) {
     JSON.stringify({ paused: r.pausedNow, resumed: r.resumed, lockAsked: r.lockAsked, cursorMode: r.cursorMode }));
 }
 
+async function quietHud(page, check) {
+  /* the readouts leave after four seconds on the move and come back when you
+     stop. Polarity: three seconds in they are still there. A roll across a
+     roof is not stopping; riding an aircraft is. */
+  const r = await page.evaluate(() => {
+    const st = document.createElement('style'); st.textContent = '#band,#tbar,#help,#mapwrap{transition:none !important}'; document.head.appendChild(st);
+    const op = (id) => +getComputedStyle(document.getElementById(id)).opacity;
+    const quiet = () => document.body.classList.contains('quiet');
+    const hold = (secs, x, vz, z) => { for (let i = 0; i < 60 * secs; i++) { player.p.set(x, 300, z || -230); player.v.set(0, 0, vz); player.grounded = false; __run(1); } };
+    __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(120);
+    const out = { start: quiet(), band0: op('band') };
+    hold(3, -46, 30); out.at3 = quiet();
+    hold(1.5, -46, 30); out.at45 = quiet(); out.band = op('band'); out.tbar = op('tbar'); out.map = op('mapwrap');
+    /* a new district, while the band that names it is away */
+    toastEl.textContent = ''; hold(0.3, 300, 30, 150); out.zone = elZone.textContent; out.said = toastEl.textContent;
+    document.body.classList.add('run'); out.mapRun = op('mapwrap'); document.body.classList.remove('run');
+    /* down onto the street at speed, roll, and off again: never stopped */
+    player.p.set(-350, 2.2, -182); player.v.set(26, -4, 0); player.grounded = false; player.airT = 1;
+    __run(20); jumpEdge = true; __run(20); out.afterRoll = quiet();
+    tapKey('KeyH'); __run(2); out.afterH = quiet(); tapKey('KeyH');
+    hold(4.5, -46, 30); out.again = quiet();
+    player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(30); out.justStopped = quiet(); __run(40); out.stopped = quiet(); out.bandBack = op('band');
+    hold(4.5, -46, 30); const pl = planes[0];
+    player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(2); mountEdge = true; __run(60); out.riding = !!player.riding; out.aboard = quiet();
+    player.riding = null; st.remove();
+    return out;
+  });
+  check('the readouts are there at a standstill and three seconds into a flight', !r.start && r.band0 === 1 && !r.at3);
+  check('after four seconds on the move they are gone, and the map only dims', r.at45 && r.band === 0 && r.tbar === 0 && r.map > 0.2 && r.map < 0.6,
+    'band ' + r.band + ', map ' + r.map);
+  check('a district entered while they are away announces itself', r.zone.length > 3 && r.said === r.zone, '"' + r.said + '"');
+  check('in a ring run the map stays', r.mapRun === 1, 'opacity ' + r.mapRun);
+  check('a roll across the ground is not a stop; H, a real stop and boarding an aircraft are',
+    r.afterRoll && !r.afterH && r.again && r.justStopped && !r.stopped && r.bandBack === 1 && r.riding && !r.aboard,
+    JSON.stringify({ afterRoll: r.afterRoll, afterH: r.afterH, again: r.again, stopped: r.stopped, aboard: r.aboard }));
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

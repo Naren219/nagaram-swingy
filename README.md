@@ -25,6 +25,8 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
+**Gamepad** (any standard-mapped pad; rumble where the pad has it): the triggers are the two webs, the left stick moves and winches, the right stick looks. **A** jump, hold to glide · **B** or **RB** dive · **LB** zip · **X** cling, board · **Y** photo mode · **start** pause · **back** ring run. D-pad: up time of day, right next course, down leave run, left respawn.
+
 **Touch devices** (landscape only — the game asks you to rotate, and locks landscape where the platform allows) split the controls by hand role. The right thumb owns the two held primaries: **web** and **jump/glide**, and both double as aim surfaces — keep the button held and drag the same thumb to steer. The left hand owns movement plus everything you need *during* a swing, while the right thumb is pinned on the web: a floating stick that appears wherever the thumb lands (steer + winch), with **zip** and **dive** just above it. A **board aircraft** button appears whenever a plane is in reach, and **run** in the top-left corner starts a ring run (**next** and **end** appear beside it while one is on). Mobile also renders at a reduced pixel ratio with a smaller shadow map to hold frame rate.
 
 ### Ring runs
@@ -35,6 +37,11 @@ A course is nothing but a seed. **Today's** course comes from the date (UTC), so
 
 Other things to know:
 
+- Come down on a roof or the street faster than you can run and you roll instead of stopping: for a third of a second the ground barely slows you. Jump out of the roll and the speed goes with you.
+- Meet a wall while travelling along it at speed and you run it: the wall carries most of your weight for up to 1.3 s. Jump to kick off it. No button, and not while on a line or in a dive. It only slows a descent — a wall will not lift you.
+- The line is a rope: it travels from the hand to the anchor, and hangs in a curve whenever it is longer than the gap it spans.
+- The sash off the left shoulder streams along the air going past, so it shows your speed, a crosswind and a thermal.
+- The readouts fade after four seconds on the move and return when you stop, board an aircraft or press H. A district you enter while they are away is named on screen.
 - Aircraft crossing the city are valid web anchors — latch one and it tows you. If a web is latched to a hull, E climbs the line aboard from any distance.
 - Release a swing while climbing hard and the body throws itself into a somersault — a violent release doubles it. No button; it's earned by the swing.
 - The gopurams are gateways, not scenery: fly the passage through any of the four, and the prakaram walls have low arches worth threading at speed.
@@ -88,11 +95,18 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 110 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 152 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
-The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, and ring runs flown on rails (the clock must read length ÷ speed at any frame rate).
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, and the fading readouts.
 
 The suite is three files under `test/`. `smoke.js` is the entry point and holds the three passes that drive the page in real time. `fixed-step.js` holds the fixed-step pass as one function per subject, listed in `SECTIONS`; each starts from `__reset()`, so a section does not depend on what ran before it, and a new subject is a new function added to that list. `harness.js` is the server, the browser and the tally of checks.
+
+The fixed-step pass runs on its own, and `ONLY` picks sections by name — the quick loop while working on one subject:
+
+```sh
+node test/fixed-step.js
+ONLY=landing,wallRun node test/fixed-step.js
+```
 
 ```sh
 npm install                       # one devDependency: playwright
@@ -123,14 +137,15 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `65-broadphase.js` | spatial hash over solid AABBs |
 | `70-vegetation.js` | palm and tree scattering, batched by ground cell for culling |
 | `75-traffic.js` | vehicles, boats, kites, aircraft |
-| `80-physics.js` | XPBD solver, contacts, water volumes, thermals, anchor search |
+| `80-physics.js` | XPBD solver, contacts, landing roll, wall-run, water volumes, thermals, anchor search |
 | `82-thermal-motes.js` | rising chaff and haze marking each thermal |
 | `84-water-fx.js` | splash and skim rings |
-| `85-rig.js` | character rig geometry, procedural posing, somersault |
+| `85-rig.js` | character rig geometry, procedural posing, somersault and landing roll, the drawn line |
+| `86-sash.js` | the sash: a cloth chain simulated in the player's frame |
 | `90-camera.js` | boom, collision, orientation |
-| `92-input.js` | keyboard, pointer lock, touch, photo mode, settings |
-| `94-audio.js` | synthesised ambience and one-shots |
-| `96-hud.js` | minimap, readouts |
+| `92-input.js` | keyboard, pointer lock, touch, gamepad, photo mode, settings |
+| `94-audio.js` | synthesised ambience, the sound of the line and the body, one-shots |
+| `96-hud.js` | minimap, readouts and when they fade |
 | `97-runs.js` | ring runs: course generation from a seed, clock, saved bests, ghost |
 | `99-loop.js` | main loop |
 | `tail.html` | closing tags |
@@ -149,6 +164,10 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 - The maidan and the temple tank are reserved by `onOpenGround()`. Anything new that places things in the world (buildings, lanes, props) must ask it.
 - **Vegetation is batched per ground cell and frustum-culled** (`vegBatches`). r128 turns culling off on every `InstancedMesh`; one un-culled, shadow-casting batch of plants was 85% of the frame. A batch's instances must stay inside its geometry's bounding sphere.
 - **Physics announces, it does not act.** `80-physics.js` calls `emit('splash', …)` and the HUD, rig, audio and effects `listen()`; it must not reach into the DOM, the rig or the audio itself. An event with no listener is dead weight: add one when something needs it.
+- **The roll and the wall-run only decline to take; they never give.** During a roll the legs steer but cannot push while you are faster than a sprint, and the wall carries weight only on the way down. Either rule relaxed is a free source of speed or height. Both have checks that fail if energy rises.
+- **`player.touch`, not `player.contact`, says whether anything was touched this substep.** `contact` is cleared by every solver pass that finds you already pushed clear, so on flat ground it ends most steps false. Landings and wall-runs are read from `touch`.
+- **The drawn line is a picture.** `drawStrand()` animates the strand's travel and its sag from the solver's `len`, `age` and `tension`; nothing in physics reads it back.
+- **The sash is simulated as offsets from its pin, against air velocity minus the player's.** Simulated in world space it whips on every respawn and goes limp in photo mode.
 - **A course never touches the world's random stream.** `buildCourse()` has its own generator, so the city is identical whether or not a run was ever started.
 - **A saved best belongs to the rings it was flown through.** Saves carry `courseSig()`, a fingerprint of the ring positions, and `bestFor()` is the only place a save is read. Change the generator, its constants or the city and old times quietly stop counting, which is the point.
 - **Everything a run shows follows from `run.state`, in `syncRunView()`.** Do not show, hide or label run UI anywhere else.
