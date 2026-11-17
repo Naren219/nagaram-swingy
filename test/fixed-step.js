@@ -531,8 +531,54 @@ async function wallRun(page, check) {
     r.kick.vOut.toFixed(1) + ' m/s off the wall, ' + r.kick.vy.toFixed(1) + ' up, ' + r.kick.left + ' s of wall in hand');
 }
 
+async function strandPicture(page, check) {
+  /* the drawn line: it leaves the hand and reaches the anchor in a time set
+     by distance, not by the display; it is dead straight while it carries
+     weight; and when it is longer than the gap it hangs by what a rope of that
+     length would. Polarity: a line switched off draws nothing at all. */
+  const r = await page.evaluate(() => {
+    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_SEG + k) * 16 + 5] !== 0 || a[(i * STRAND_SEG + k) * 16 + 4] !== 0) n++; return n; };
+    const A = { x: -46, y: 260, z: -230, pl: null };
+    const arrive = (hz) => {
+      __reset(hz); assist = false; player.p.set(-46, 180, -230); player.v.set(0, 0, 0); player.grounded = false; __run(2);
+      fireWebAt(0, A);
+      let f = 0, early = splats[0].visible; const tip0 = strandTip[0].distanceTo(player.p);
+      do { __run(1); f++; if (splats[0].visible && strandTip[0].distanceTo(player.webs[0].a) > 0.5) early = true; }
+      while (f < hz && strandTip[0].distanceTo(player.webs[0].a) > 0.5);
+      const tip1 = f === 1 ? 0 : -1;   // one frame in, it must not be there yet
+      return { t: f / hz, early, tip0, tip1, splat: splats[0].visible };
+    };
+    const a60 = arrive(60), a144 = arrive(144), a240 = arrive(240);
+    /* hang on it until it is carrying you */
+    __run(240 * 4);
+    const w = player.webs[0];
+    const taut = { sag: strandSag[0], tension: w.tension, segs: drawn(0), other: drawn(1) };
+    /* now hold still off to one side, some 10 m nearer the anchor than the line is long */
+    for (let i = 0; i < 240; i++) { player.p.set(A.x + 60, A.y - 36, A.z); player.v.set(0, 0, 0); __run(1); }
+    const d = w.hand.distanceTo(w.a), slack = { sag: strandSag[0], want: Math.min(Math.sqrt(0.375 * d * (w.len - d)), 0.3 * d), len: w.len, d };
+    slack.across = Math.hypot(w.a.x - w.hand.x, w.a.z - w.hand.z) / d;   // how much of "down" is across the line
+    /* the middle of the drawn line really is that far off the straight one */
+    const mid = new THREE.Vector3(), m4 = new THREE.Matrix4();
+    strandMesh.getMatrixAt(STRAND_SEG / 2, m4); mid.setFromMatrixPosition(m4);
+    const line = new THREE.Line3(w.hand.clone(), w.a.clone()), on = new THREE.Vector3();
+    line.closestPointToPoint(mid, true, on); slack.off = mid.distanceTo(on);
+    releaseWeb(0); __run(2); assist = true;
+    return { a60, a144, a240, taut, slack, want: shootTime(80), gone: drawn(0), splatGone: !splats[0].visible };
+  });
+  const ts = [r.a60, r.a144, r.a240];
+  check('the strand reaches an anchor 80 m off in the same time at 60/144/240 Hz',
+    ts.every(a => a.t >= r.want - 0.001 && a.t < r.want + 0.03 && a.tip1 === -1 && !a.early && a.splat),
+    ts.map(a => a.t.toFixed(3)).join(' / ') + ' s (travel time ' + r.want.toFixed(3) + ' s)');
+  check('a line carrying weight is drawn straight, all of it', r.taut.tension > 1200 && r.taut.sag < 0.02 && r.taut.segs === 8 && r.taut.other === 0,
+    'sag ' + r.taut.sag.toFixed(3) + ' m at ' + (r.taut.tension / 1000).toFixed(1) + ' kN, ' + r.taut.segs + ' segments');
+  check('a slack line hangs like a rope of its length', r.slack.want > 3 && Math.abs(r.slack.sag - r.slack.want) < 0.02 * r.slack.want &&
+    Math.abs(r.slack.off - r.slack.sag * r.slack.across) < 0.05 * r.slack.sag,
+    'sag ' + r.slack.sag.toFixed(1) + ' m for ' + (r.slack.len - r.slack.d).toFixed(1) + ' m of slack over ' + r.slack.d.toFixed(0) + ' m (rope: ' + r.slack.want.toFixed(1) + '), drawn ' + r.slack.off.toFixed(1) + ' m off the chord');
+  check('a released line draws nothing', r.gone === 0 && r.splatGone, r.gone + ' segments');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun];
+  motionEvents, landing, wallRun, strandPicture];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
