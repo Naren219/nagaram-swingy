@@ -100,12 +100,18 @@ function honk(vol) {
   o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
 }
 
+/* How much of the street reaches you, 0..1 and a little over. Everything on
+   the ground thins out as you climb, unless you have stopped to listen
+   (91-perch.js): then most of it comes back up to you. */
+function ambAlt(y) {
+  const alt = clamp(1 - (y - 22) / 230, 0, 1);
+  return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
+}
 let tBell = 6, tGull = 3, tHonk = 2;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
-  /* everything on the ground thins out as you climb */
-  const alt = clamp(1 - (p.y - 22) / 230, 0, 1);
+  const alt = ambAlt(p.y);
   const dSea = p.x - SAND_X;                       // positive once over sand
   const surfN = clamp(1 - Math.abs(dSea) / 300, 0, 1);
   const dCore = Math.hypot(p.x, p.z);

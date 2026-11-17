@@ -863,8 +863,76 @@ async function ropeWrap(page, check) {
   check('a line never holds more bends than it has room for', fz.on.maxNb <= r.max, 'most at once ' + fz.on.maxNb + ' of ' + r.max);
 }
 
+async function perching(page, check) {
+  /* Stand still somewhere high and the game steps back: readouts gone, camera
+     out and turning slowly, the street audible. Anything you do ends it. */
+  const r = await page.evaluate(() => {
+    const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+    const stand = (hz, y) => {
+      __reset(hz); yaw = 0.4; pitch = -0.1;
+      if (y === undefined) player.p.set(b.x, b.h + 0.85, b.z); else player.p.set(-350, y, -182);
+      player.v.set(0, 0, 0); __run(hz);                      // settle on the surface
+    };
+    const camOut = () => camera.position.distanceTo(player.p);
+    const out = {};
+    for (const hz of [60, 144]) {
+      stand(hz);
+      const d0 = camOut(), y0 = yaw; __run(hz * 2);
+      const early = { perch, cls: document.body.classList.contains('perch'), turned: yaw - y0 };   // 3 s in: not yet
+      __run(hz * 7); const y1 = yaw; __run(hz * 5);
+      out['hz' + hz] = { grounded: player.grounded, early, perch, k: perchK, cls: document.body.classList.contains('perch'),
+        out: camOut() - d0, rate: (yaw - y1) / 5, hear: ambAlt(player.p.y) };
+    }
+    /* the aim ring, from a lower roof beside the tower so there is something to aim at */
+    {
+      const m = buildings.filter(c => c !== b && c.h > 25 && c.h < b.h - 40).reduce((a, c) => Math.hypot(c.x - b.x, c.z - b.z) < Math.hypot(a.x - b.x, a.z - b.z) ? c : a);
+      __reset(60); player.p.set(m.x, m.h + 0.85, m.z); player.v.set(0, 0, 0);
+      const dx = b.x - m.x, dz = b.z - m.z, dy = (b.h + m.h) / 2 - m.h;
+      yaw = Math.atan2(-dx, dz); pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      __run(120); const before = aimMark.visible ? aimMat.opacity : 0;
+      let f = 0; while (perchK < 0.95 && f++ < 900) __run(1);
+      out.ring = { before, seen: aimMark.visible, after: aimMat.opacity, k: perchK };
+    }
+    /* perch on the tower again at 144 Hz: look by hand, then move */
+    stand(144); __run(144 * 14);
+    yaw += 0.3; __run(144); const yl = yaw; __run(144);
+    out.look = { perch, drift: yaw - yl };
+    __run(144 * 4); const yr = yaw; __run(144 * 2);
+    out.resumed = (yaw - yr) / 2;
+    keys['KeyW'] = true; __run(6); out.move = { perch, cls: document.body.classList.contains('perch'), frames: 6 };
+    __run(138); out.move.k = perchK; keys['KeyW'] = false;
+    out.deaf = ambAlt(player.p.y);
+    /* each thing that must end it or prevent it */
+    const ends = {};
+    for (const [name, fn] of [['jump', () => { jumpEdge = true; }], ['web', () => { held[0] = true; }], ['dive', () => { keys['ShiftLeft'] = true; }]]) {
+      stand(60); __run(60 * 6); const was = perch; fn(); __run(4); ends[name] = was && !perch; held[0] = false; keys['ShiftLeft'] = false; releaseWeb(0);
+    }
+    out.ends = ends;
+    stand(60, 0.85); __run(60 * 8); out.street = { perch, y: player.p.y, grounded: player.grounded };
+    stand(60); setPhoto(true); __run(60 * 8); out.photo = perch; setPhoto(false);
+    stand(60); armRun(); player.p.set(b.x, b.h + 0.85, b.z); player.v.set(0, 0, 0); __run(60 * 8); out.run = { perch, flying: flying() }; quitRun();
+    __reset(); respawn();
+    return out;
+  });
+  for (const hz of [60, 144]) {
+    const o = r['hz' + hz];
+    check('three seconds of standing still is not yet a perch at ' + hz + ' Hz', o.grounded && !o.early.perch && !o.early.cls && o.early.turned === 0, 'perched ' + o.early.perch);
+    check('standing on a roof becomes a perch at ' + hz + ' Hz', o.perch && o.cls && o.k > 0.97, 'in by ' + (o.k * 100).toFixed(0) + '%');
+    check('the camera pulls out at ' + hz + ' Hz', o.out > 6 && o.out < 11, (o.out).toFixed(1) + ' m further back');
+    check('and turns slowly about you at ' + hz + ' Hz', Math.abs(o.rate - 0.06) < 0.004, o.rate.toFixed(3) + ' rad/s');
+  }
+  check('the aim ring fades with the readouts', r.ring.before > 0.4 && r.ring.seen && r.ring.after < 0.06, 'opacity ' + r.ring.before.toFixed(2) + ' before, ' + r.ring.after.toFixed(3) + ' perched');
+  check('perched, the street reaches you on the tallest roof', r.hz60.hear > r.deaf + 0.4, 'heard ' + r.hz60.hear.toFixed(2) + ' against ' + r.deaf.toFixed(2) + ' in passing');
+  check('looking for yourself keeps the perch and stops the turn', r.look.perch && r.look.drift === 0, 'drift ' + r.look.drift.toFixed(4) + ' rad in the second after');
+  check('left alone again, the turn resumes', Math.abs(r.resumed - 0.06) < 0.004, r.resumed.toFixed(3) + ' rad/s');
+  check('a step ends it at once', !r.move.perch && !r.move.cls && r.move.k < 0.02, 'gone inside ' + r.move.frames + ' frames at 144 Hz; ' + (r.move.k * 100).toFixed(1) + '% left a second later');
+  check('so does a jump, a web or a dive', r.ends.jump && r.ends.web && r.ends.dive, JSON.stringify(r.ends));
+  check('the street is not a perch', r.street.grounded && !r.street.perch, 'standing at ' + r.street.y.toFixed(1) + ' m');
+  check('nor is photo mode, nor a ring run', !r.photo && r.run.flying && !r.run.perch, 'photo ' + r.photo + ', run ' + r.run.perch);
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
@@ -877,7 +945,7 @@ module.exports = async function fixedStep({ newPage, BASE, check }) {
     window.__run = (n) => { for (let i = 0; i < n; i++) frame(); };
     window.__reset = (hz) => {
       window.__dt = 1 / (hz || 60);
-      player.riding = null; ropeWrap = false;
+      player.riding = null; ropeWrap = false; perchStill = 0; perchK = 0;
       held[0] = held[1] = false; releaseWeb(0); releaseWeb(1);
       for (const k of Object.keys(keys)) keys[k] = false;
     };

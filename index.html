@@ -158,6 +158,11 @@
   body.quiet #band,body.quiet #tbar,body.quiet #help{opacity:0}
   body.quiet #mapwrap{opacity:.4}
   body.quiet.run #mapwrap{opacity:1}
+  /* ---- perched: the readouts leave slowly and are back the moment you move ---- */
+  #hud{transition:opacity .3s}
+  body.perch #hud{opacity:0;transition:opacity 2.4s}
+  #pbtn{transition:opacity .3s,border-color .15s}
+  body.perch #pbtn{opacity:.25;transition:opacity 2.4s}
   /* ---- photo mode: nothing between the eye and the city ---- */
   body.photo #hud,body.photo #pbtn{display:none}
 
@@ -3034,12 +3039,14 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip;
+  pivot.y += 1.05 - camDip + perchK * 0.9;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
-  const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
+  /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
+     lower in a wider frame; where it looks is still exactly where you aim */
+  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
   boomDir.set(-Math.sin(yaw) * cbp, Math.sin(bp), Math.cos(yaw) * cbp);
-  const want = camDist + clamp(spd * 0.055, 0, 3.4);
+  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT;
   camPos.copy(pivot).addScaledVector(boomDir, -want);
   camPos.y += 0.55;
 
@@ -3072,6 +3079,41 @@ function updateCamera(dt) {
   if (Math.abs(camera.fov - fovS) > 0.01) { camera.fov = fovS; camera.updateProjectionMatrix(); }
 }
 
+/* =====================================================================
+   PERCH
+   ---------------------------------------------------------------------
+   Stopping used to be the absence of play: the same view, the same readouts,
+   nothing to do. Stand still somewhere high for a few seconds and the game
+   steps back instead. The readouts and the aim ring fade, the camera pulls
+   out and begins a slow turn about you, and the sounds of the streets come
+   up to where you are. It is a place to look at the city from.
+
+   No button and nothing to learn. Looking around by hand keeps the perch and
+   takes the turn over for a while; moving, jumping or firing a web ends it at
+   once. `perchK` (0..1) is how far in it is, and is all anything else reads.
+   ===================================================================== */
+const PERCH_AFTER = 3.5;      // seconds of standing still before it begins
+const PERCH_Y = 16;           // metres up that counts as somewhere high
+const PERCH_OUT = 8.5;        // metres further back the camera sits
+const PERCH_TURN = 0.06;      // rad/s of the slow turn (a full circle in 105 s)
+const PERCH_HANDS = 4;        // seconds the turn waits after you look for yourself
+let perch = false, perchK = 0, perchStill = 0, perchHands = 0, perchYaw = 0, perchPitch = 0;
+function updatePerch(dt, busy) {
+  const here = (player.grounded || player.clinging) && !player.riding && !player.inWater && !photoMode && !flying()
+    && player.p.y > PERCH_Y && player.v.lengthSq() < 0.3 && !busy
+    && !player.webs[0].on && !player.webs[1].on;
+  perchStill = here ? perchStill + dt : 0;
+  const on = perchStill > PERCH_AFTER;
+  if (on !== perch) { perch = on; perchHands = 0; document.body.classList.toggle('perch', on); }
+  /* eases in over a few seconds; gone in a fraction of one */
+  perchK = damp(perchK, on ? 1 : 0, on ? 0.9 : 7, dt);
+  if (on) {
+    /* the view moved and it was not this that moved it: it is yours for now */
+    if (Math.abs(yaw - perchYaw) > 1e-6 || Math.abs(pitch - perchPitch) > 1e-6) perchHands = PERCH_HANDS;
+    if (perchHands > 0) perchHands -= dt; else yaw += PERCH_TURN * perchK * dt;
+  }
+  perchYaw = yaw; perchPitch = pitch;
+}
 /* =====================================================================
    INPUT · AUDIO · HUD
    ===================================================================== */
@@ -3561,12 +3603,18 @@ function honk(vol) {
   o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
 }
 
+/* How much of the street reaches you, 0..1 and a little over. Everything on
+   the ground thins out as you climb, unless you have stopped to listen
+   (91-perch.js): then most of it comes back up to you. */
+function ambAlt(y) {
+  const alt = clamp(1 - (y - 22) / 230, 0, 1);
+  return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
+}
 let tBell = 6, tGull = 3, tHonk = 2;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
-  /* everything on the ground thins out as you climb */
-  const alt = clamp(1 - (p.y - 22) / 230, 0, 1);
+  const alt = ambAlt(p.y);
   const dSea = p.x - SAND_X;                       // positive once over sand
   const surfN = clamp(1 - Math.abs(dSea) / 300, 0, 1);
   const dCore = Math.hypot(p.x, p.z);
@@ -4237,6 +4285,7 @@ function frame() {
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
   inp.mount = mountEdge;
+  updatePerch(dt, fb !== 0 || rl !== 0 || jumpEdge || !!keys['Space'] || inp.tuck || inp.zip || held[0] || held[1]);
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -4284,14 +4333,15 @@ function frame() {
     else aimMark.position.lerp(_d, 1 - Math.exp(-26 * dt));
     aimMark.scale.setScalar(clamp(aimPt.t * 0.021, 0.34, 2.6));
     /* dimmer when the assist picked it rather than your crosshair */
-    aimMat.opacity = aimPt.off < 0.01 ? 0.95 : 0.52;
-    aimBack.opacity = aimPt.off < 0.01 ? 0.55 : 0.30;
+    const show = 1 - perchK;        // perched, the ring is not what you are looking at
+    aimMat.opacity = (aimPt.off < 0.01 ? 0.95 : 0.52) * show;
+    aimBack.opacity = (aimPt.off < 0.01 ? 0.55 : 0.30) * show;
     const gp = guideGeo.attributes.position;
     gp.setXYZ(0, pRender.x, pRender.y + 0.9, pRender.z);
     gp.setXYZ(1, aimMark.position.x, aimMark.position.y, aimMark.position.z);
     gp.needsUpdate = true;
     guide.visible = true;
-    guide.material.opacity = aimPt.off < 0.01 ? 0.26 : 0.14;
+    guide.material.opacity = (aimPt.off < 0.01 ? 0.26 : 0.14) * show;
   } else { aimMark.visible = false; guide.visible = false; }
   if (missFlash > 0) missFlash -= dt;
 

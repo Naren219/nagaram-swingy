@@ -37,12 +37,14 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip;
+  pivot.y += 1.05 - camDip + perchK * 0.9;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
-  const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
+  /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
+     lower in a wider frame; where it looks is still exactly where you aim */
+  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
   boomDir.set(-Math.sin(yaw) * cbp, Math.sin(bp), Math.cos(yaw) * cbp);
-  const want = camDist + clamp(spd * 0.055, 0, 3.4);
+  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT;
   camPos.copy(pivot).addScaledVector(boomDir, -want);
   camPos.y += 0.55;
 
