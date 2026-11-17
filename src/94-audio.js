@@ -128,11 +128,12 @@ function updateAudio(dt) {
   let eng = 0;
   let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
+    if (pl.kind !== 'plane' && pl.kind !== 'train') continue;
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
-    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {

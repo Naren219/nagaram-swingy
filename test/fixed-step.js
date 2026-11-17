@@ -942,15 +942,15 @@ async function windSigns(page, check) {
       __reset(); updateWind = () => { WIND.set(wx, 0, wz); windHead = Math.atan2(wz, wx); };
       __run(30);
       let ox = 0, oz = 0, tx = 0, tz = 0;
-      for (let i = 0; i < kites.length; i++) {
+      for (let i = 0; i < KITES_ON; i++) {
         kites.mesh.getMatrixAt(i, m4); m4.decompose(pos, q, sc);
         ox += pos.x - kites[i].x; oz += pos.z - kites[i].z;
         tail.set(0, 0, -1).applyQuaternion(q); tx += tail.x; tz += tail.z;
       }
-      const n = kites.length;
+      const n = KITES_ON;
       return { ox: ox / n, oz: oz / n, tx: tx / n, tz: tz / n, ux: windUni.uWind.value.x, uz: windUni.uWind.value.y };
     };
-    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: kites.length };
+    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: KITES_ON };
     for (const f of flags) {
       /* nothing solid within a pennant's length of its hoist, at its height */
       for (const b of buildings) if (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2 && f.y < b.h + 3) out.low++;
@@ -1083,7 +1083,8 @@ async function metro(page, check) {
     }
     /* a web finds it, and tows */
     __reset(); t.ph = 0; __run(1);
-    const o = { x: METRO.x - 30, y: t.p.y + 6, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.98, -0.2, 0, 60);
+    /* from below the roof: from above, a tow that swings you onto it is a landing and lets go */
+    const o = { x: METRO.x - 30, y: t.p.y - 4, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.99, 0.13, 0, 60);
     out.aim = !!hit && hit.pl === t;
     player.p.set(o.x, o.y, o.z); player.v.set(0, 0, 0); player.grounded = false;
     fireWebAt(0, { x: hit.x, y: hit.y, z: hit.z, pl: t });
@@ -1100,7 +1101,7 @@ async function metro(page, check) {
     out.off = { riding: !!player.riding, vz: player.v.z, tv };
     /* the aircraft are what they were */
     out.top = TRAIN_A * TRAIN_W; out.period = 2 * Math.PI / TRAIN_W;
-    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => !p.train).length };
+    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => p.kind === 'plane').length };
     __reset(); respawn();
     return out;
   });
@@ -1123,8 +1124,102 @@ async function metro(page, check) {
   check('the aircraft are the carriers they were', r.plane.hx === 13 && r.plane.hz === 12 && r.plane.deck === 1.45 && r.plane.n === 5, r.plane.n + ' aircraft, hull ' + r.plane.hx + ' x ' + r.plane.hz);
 }
 
+async function carriers(page, check) {
+  /* Boats, kites, crane jibs and the wheel's cars are carriers, as the
+     aircraft and the train are. A deck is something to land on; a kite is
+     something to be dragged by. */
+  const r = await page.evaluate(() => {
+    const out = {}, o = new THREE.Vector3();
+    const jib = planes.find(p => p.kind === 'jib'), car = planes.find(p => p.kind === 'car');
+    /* off whatever deck the last part left you on, or the first frame lands you back on it */
+    const clear = () => { __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); };
+    /* a jib is found by its own box, turned with it, not by a box round it */
+    clear(); jib.ph = Math.PI / 4 / 1.5; __run(1);
+    const aimAt = (lx, ly, lz) => {      // straight down from 30 m above the point
+      planePoint(jib, lx, ly, lz, o);
+      const h = rayHitPlanes(o.x, o.y + 30, o.z, 0, -1, 0, 33);
+      return !!h && h.pl === jib;
+    };
+    out.jibTip = aimAt(0, 0, jib.hz - 1);
+    /* 20 m north of its centre is inside any world-aligned box round the jib, and nowhere near the jib itself */
+    worldToPlane(jib, jib.p.x, jib.p.y, jib.p.z + 20, o);
+    out.jibBeside = aimAt(0, 0, 0) && !aimAt(o.x, o.y, o.z);
+    out.yaw = jib.yaw;
+    /* the masts stand in nothing, and the jib clears every roof it swings over */
+    let overlap = 0, clip = 0;
+    for (let b = CRANES.box0; b < CRANES.box1; b++) for (let c = 0; c < NBOX; c++) {
+      if (c >= CRANES.box0 && c < CRANES.box1) continue;
+      let hit = true;
+      for (let k = 0; k < 3; k++) if (BOXES[b * 6 + k] >= BOXES[c * 6 + 3 + k] || BOXES[b * 6 + 3 + k] <= BOXES[c * 6 + k]) hit = false;
+      if (hit) overlap++;
+    }
+    for (const j of planes.filter(p => p.kind === 'jib')) for (let k = 0; k <= 60; k++) {
+      j.ph = k / 60 * Math.PI * 2; j.step(j, 0);
+      for (let z = -j.hz; z <= j.hz; z += 2) {
+        planePoint(j, 0, -j.hy, z, o);
+        for (const b of buildings) if (Math.abs(o.x - b.x) < b.w / 2 && Math.abs(o.z - b.z) < b.d / 2 && b.h > o.y - 1 && b.h !== j.crane.base) clip++;
+      }
+    }
+    out.cranes = CRANES.length; out.overlap = overlap; out.clip = clip;
+    /* come down on a boat afloat and it carries you */
+    clear(); const boat = boats.find(b => b.wet); __run(1);
+    player.p.set(boat.p.x, boat.p.y + 6, boat.p.z); player.v.copy(boat.v); player.grounded = false; player.airT = 1;
+    let lands = 0; const L = (s) => lands++; listen('land', L);
+    __run(60);
+    out.boat = { riding: player.riding === boat, y: player.p.y - boat.p.y - boat.deck };
+    const lo = player.rideLo.clone(), b0 = boat.p.clone(); __run(240);
+    planePoint(boat, lo.x, lo.y, lo.z, o);
+    out.boat.slip = o.distanceTo(player.p); out.boat.moved = boat.p.distanceTo(b0); out.boat.lands = lands;
+    /* only from above: rising up past a car goes on by */
+    clear(); __run(1);
+    player.p.set(car.p.x, car.p.y - car.hy - 3, car.p.z); player.v.set(car.v.x, 16, car.v.z); player.grounded = false;
+    __run(40); out.passUp = player.riding === null;
+    /* stand on a car and it takes you over the top of the wheel */
+    clear(); FERRIS.a = -Math.PI / 2 - car.a0 + 0.3; __run(2);   // two: the jump to there reads as a speed for a frame
+    player.p.set(car.p.x, car.p.y + 4, car.p.z); player.v.copy(car.v); player.grounded = false; __run(60);
+    const y0 = player.p.y; out.carRide = player.riding === car;
+    let top = y0, rad = 0;
+    for (let i = 0; i < 60 * 60; i++) { __run(1); top = Math.max(top, player.p.y); for (const c of planes) if (c.kind === 'car') rad = Math.max(rad, Math.abs(Math.hypot(c.p.y + CAR_HANG + CAR_HY - FERRIS.y, c.p.z - FERRIS.z) - FERRIS.r)); }
+    out.carRise = top - y0; out.carTop = top; out.rad = rad;
+    /* land on a jib and walk it */
+    clear(); jib.ph = 0; __run(2);
+    planePoint(jib, 0, 0, jib.hz - 6, o);
+    player.p.set(o.x, o.y + 5, o.z); player.v.copy(jib.v); player.grounded = false; __run(60);
+    out.jibRide = player.riding === jib; const j0 = player.p.clone(); __run(60 * 8);
+    out.jibCarry = player.p.distanceTo(j0);
+    /* a kite drags you down-wind, sinking under you, and cannot be boarded */
+    const realWind = updateWind;
+    updateWind = () => { WIND.set(5, 0, 0); windHead = 0; };
+    clear(); __run(2);
+    const k = kites.slice(0, KITES_ON).sort((a, b) => b.p.y - a.p.y)[0];
+    k.ox = k.oy = k.oz = 0; __run(1);
+    player.p.set(k.p.x - 30, k.p.y - 40, k.p.z); player.v.set(0, 0, 0); player.grounded = false;
+    const kx = k.p.x, ky = k.p.y, px = player.p.x;
+    fireWebAt(0, { x: k.p.x, y: k.p.y, z: k.p.z, pl: k });
+    __run(60 * 8);
+    out.kite = { on: player.webs[0].on, kiteRun: k.p.x - kx, sink: ky - k.p.y, run: player.p.x - px, low: k.p.y };
+    mountEdge = true; __run(2); out.kite.boarded = !!player.riding;
+    releaseWeb(0); const off = Math.hypot(k.ox, k.oy, k.oz); __run(60 * 60);
+    out.kite.back = Math.hypot(k.ox, k.oy, k.oz) / off;
+    updateWind = realWind;
+    listeners.land.splice(listeners.land.indexOf(L), 1);
+    __reset(); respawn();
+    return out;
+  });
+  check('a crane jib is found by its own box as it slews', r.jibTip && r.jibBeside, 'jib at ' + (r.yaw * 180 / Math.PI).toFixed(0) + '°: tip ' + r.jibTip + ', 20 m north of its centre not found ' + r.jibBeside);
+  check('two cranes, masts in nothing, jibs clear of every roof they swing over', r.cranes === 2 && r.overlap === 0 && r.clip === 0, r.cranes + ' cranes, ' + r.overlap + ' overlaps, ' + r.clip + ' points of jib in a roof');
+  check('come down on a boat and you are aboard', r.boat.riding && Math.abs(r.boat.y) < 1e-6 && r.boat.lands === 1, 'riding ' + r.boat.riding + ', ' + r.boat.lands + ' landing');
+  check('the boat sails and carries you', r.boat.moved > 6 && r.boat.slip < 1e-6, 'sailed ' + r.boat.moved.toFixed(1) + ' m in 4 s, slip ' + (r.boat.slip * 1000).toFixed(3) + ' mm');
+  check('a deck is only landed on from above', r.passUp);
+  check('a car of the wheel takes you over the top', r.carRide && r.carRise > 25 && r.rad < 1e-3, 'rose ' + r.carRise.toFixed(1) + ' m to ' + r.carTop.toFixed(0) + ' m; cars within ' + (r.rad * 1000).toFixed(2) + ' mm of the rim');
+  check('a crane jib is somewhere to stand, and it carries you round', r.jibRide && r.jibCarry > 5, 'carried ' + r.jibCarry.toFixed(1) + ' m in 8 s');
+  check('a kite drags you down-wind and sinks under you', r.kite.on && r.kite.kiteRun > 25 && r.kite.sink > 2 && r.kite.run > 25 && r.kite.low >= 26 - 1e-6,
+    'kite ran ' + r.kite.kiteRun.toFixed(0) + ' m and sank ' + r.kite.sink.toFixed(1) + ' m; the player went ' + r.kite.run.toFixed(0) + ' m');
+  check('a kite cannot be boarded, and is walked back out once let go', !r.kite.boarded && r.kite.back < 0.15, 'boarded ' + r.kite.boarded + ', ' + (r.kite.back * 100).toFixed(0) + '% of its drift left after a minute');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro, carriers];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

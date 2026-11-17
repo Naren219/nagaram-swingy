@@ -188,18 +188,57 @@ function solveContacts(p) {
    access from any distance — you are literally attached, so E climbs the line
    aboard. Without one, E reaches the nearest point on a hull's box, not its
    centre: a centre test fails from a wingtip anchor even with the line winched
-   to minimum. The mobile board button shows exactly when this returns a hull. */
+   to minimum. The box is the hull's own, turned with it. A kite has no deck.
+   The mobile board button shows exactly when this returns a hull. */
+const _bp = V3();
 function boardablePlane(P) {
-  for (const w of player.webs) if (w.on && w.pl) return w.pl;
+  for (const w of player.webs) if (w.on && w.pl && w.pl.deck != null) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
+    if (pl.deck == null || pl.off) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 15 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 15) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    const dx = Math.max(Math.abs(_bp.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(_bp.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(_bp.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
   return near;
+}
+/* aboard: on the deck where you are, held to its walkway */
+function boardCarrier(pl, P) {
+  worldToPlane(pl, P.x, P.y, P.z, player.rideLo);
+  player.rideLo.x = clamp(player.rideLo.x, -pl.walkX, pl.walkX);
+  player.rideLo.z = clamp(player.rideLo.z, -pl.walkZ, pl.walkZ);
+  player.rideLo.y = pl.deck;
+  player.riding = pl;
+  releaseWeb(0); releaseWeb(1);
+  emit('board', pl);
+}
+/* Come down on a deck and you are standing on it: a boat, the train's roof, a
+   crane's jib, a car of the wheel, an aircraft's spine. Only from above and
+   only coming down onto it, so a swing up past one goes on by. Anywhere on its
+   box will do (an aircraft's wing puts you on its spine). The hull moved
+   between frames, so where you were a substep ago is allowed to read a little
+   below the deck. */
+const _lp = V3();
+function landOnCarrier(P, prev, V) {
+  for (const pl of planes) {
+    if (pl.deck == null || pl.off || V.y - pl.v.y > 0) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 2 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 2) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    if (_bp.y >= pl.deck || _bp.y < pl.deck - 1.5) continue;
+    if (Math.abs(_bp.x) > Math.max(pl.walkX, pl.hx) + 0.3 || Math.abs(_bp.z) > Math.max(pl.walkZ, pl.hz) + 0.3) continue;
+    worldToPlane(pl, prev.x, prev.y, prev.z, _lp);
+    if (_lp.y < pl.deck - 0.3) continue;
+    const hit = pl.v.y - V.y;
+    boardCarrier(pl, P);
+    pinRider(); V.copy(pl.v);
+    if (hit > 1.5) emit('land', hit, 1, false);
+    return true;
+  }
+  return false;
 }
 
 const _pp = V3(), _tmp = V3(), _tmp2 = V3();
@@ -221,17 +260,9 @@ function stepPhysics(h, inp) {
 
   /* ---- riding an aircraft ---- */
   if (!player.riding && inp.mount) {
+    /* snap onto the spine of the hull rather than wherever you grabbed */
     const near = boardablePlane(P);
-    if (near) {
-      worldToPlane(near, P.x, P.y, P.z, player.rideLo);
-      /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
-      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
-      player.rideLo.y = near.deck;
-      player.riding = near;
-      releaseWeb(0); releaseWeb(1);
-      emit('board', near);
-    }
+    if (near) boardCarrier(near, P);
   }
   if (player.riding) {
     const pl = player.riding;
@@ -385,6 +416,7 @@ function stepPhysics(h, inp) {
   if (vm > 150) V.multiplyScalar(150 / vm);
   const ux = V.x, uy = V.y, uz = V.z;     // the velocity you arrive with, before anything stops it
   P.x += V.x * h; P.y += V.y * h; P.z += V.z * h;
+  if (landOnCarrier(P, _pp, V)) { player.touch = true; player.airT = 0; return; }
 
   /* ---- rope length control ---- */
   for (const w of player.webs) {

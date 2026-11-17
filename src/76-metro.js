@@ -51,7 +51,7 @@ const TRAIN_A = (METRO.z1 - METRO.z0) / 2 - TRAIN_HZ - 5;  // how far either sid
   const mesh = new THREE.Mesh(mergeGeos(cars), mat);
   mesh.castShadow = true; mesh.frustumCulled = false; scene.add(mesh);
   planes.push({
-    train: true, mesh, ph: 0.6, w: TRAIN_W,
+    kind: 'train', step: updateTrain, train: true, mesh, ph: 0.6, w: TRAIN_W,
     p: V3(METRO.x, TRAIN_Y, 0), v: V3(), yaw: 0,
     hx: CAR_W / 2, hy: CAR_H / 2, hz: TRAIN_HZ, reach: 0.8, deck: CAR_H / 2 + 0.3, walkX: 1.0, walkZ: TRAIN_HZ - 1
   });

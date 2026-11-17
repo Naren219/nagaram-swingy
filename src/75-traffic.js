@@ -93,16 +93,30 @@ const V_BOAT = mergeGeos([
   { geo: BOXB, matrix: M4(0, 1.0, 0, 2.0, 0.16, 7.6), color: 0xd9c9a4 },
   { geo: BOXB, matrix: M4(0, 1.0, -0.5, 0.18, 5.4, 0.18), color: 0x7a6544 },
   { geo: BOXB, matrix: M4(0.02, 1.6, 1.0, 0.06, 3.6, 2.9), color: 0xe6dcc4 }]);
+/* Boats and kites used to be scenery. They are carriers now (see AIRCRAFT
+   below): what is drawn is where the carrier is, and the carrier is what a
+   web latches and a landing stands on. Their own random stream, so the city
+   placed after them is the city it was. */
+const RIDE_UP = 0.85;      // a rider's centre above the surface they stand on
+const BOAT_HX = 1.1, BOAT_HY = 0.58, BOAT_HZ = 4.25;   // hull and deck, about the hull's centre
 const boats = [];
+const kites = [];
+const KITE_MAX = 72;       // room for more of them, of which KITES_ON are up
+const KITES_ON = 26;
 {
   const im = new THREE.InstancedMesh(V_BOAT, vegMat, 34);
   im.castShadow = true; im.frustumCulled = false; scene.add(im);
-  const m = new THREE.Matrix4();
+  const m = new THREE.Matrix4(), br = mulberry32(7310);
   for (let i = 0; i < 34; i++) {
     const wet = i > 17;
-    const x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
+    let x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
     const z = rnd(-420, 300);
-    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU) });
+    /* afloat, each sails a slow circle offshore; on the sand it stays put */
+    const r = wet ? 30 + br() * 70 : 0, spd = 2.5 + br() * 2.5, th = br() * TAU;
+    if (wet) x = Math.max(x, SEA_X + 18 + 2 * r);
+    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU),
+      kind: 'boat', step: sailBoat, cx: x - r * Math.cos(th), cz: z - r * Math.sin(th), r, th, w: wet ? (br() < 0.5 ? -1 : 1) * spd / r : 0,
+      p: V3(x, 0, z), v: V3(), hx: BOAT_HX, hy: BOAT_HY, hz: BOAT_HZ, reach: 1.2, deck: BOAT_HY + RIDE_UP, walkX: 0.6, walkZ: 3.3 });
     m.compose(V3(x, 0, z), new THREE.Quaternion(), V3(1, 1, 1));
     im.setMatrixAt(i, m);
   }
@@ -111,11 +125,19 @@ const boats = [];
 const V_KITE = mergeGeos([
   { geo: BOXB, matrix: M4(0, 0, 0, 1.5, 0.04, 1.5, PI / 4), color: 0xe0402c },
   { geo: BOXB, matrix: M4(0, -0.02, -1.6, 0.12, 0.03, 2.6), color: 0xf0c93a }]);
-const kites = [];
 {
-  const im = new THREE.InstancedMesh(V_KITE, vegMat, 26);
+  const im = new THREE.InstancedMesh(V_KITE, vegMat, KITE_MAX);
   im.frustumCulled = false; scene.add(im);
-  for (let i = 0; i < 26; i++) kites.push({ x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) });
+  const kr = mulberry32(4417), krnd = (a, b) => a + kr() * (b - a);
+  for (let i = 0; i < KITE_MAX; i++) {
+    /* the first 26 draw from the world's stream, as they always have */
+    const k = i < 26 ? { x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) }
+                     : { x: krnd(-EXT, EXT), z: krnd(-EXT, EXT), y: krnd(50, 140), ph: krnd(0, TAU), r: krnd(9, 26) };
+    Object.assign(k, { kind: 'kite', step: flyKite, p: V3(k.x, k.y, k.z), v: V3(), yaw: 0, a: 0, held: 0, ox: 0, oy: 0, oz: 0,
+      hx: 1.2, hy: 0.5, hz: 1.2, reach: 2.2, deck: null });
+    kites.push(k);
+  }
+  im.count = KITES_ON;
   kites.mesh = im;
 }
 /* ---------------------------------------------------------------
@@ -144,7 +166,7 @@ const planes = [];
     mesh.castShadow = true; mesh.frustumCulled = false;
     scene.add(mesh);
     planes.push({
-      mesh,
+      kind: 'plane', step: flyPlane, mesh,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
       cx: rnd(-120, 120), cz: rnd(-160, 120),
@@ -157,19 +179,60 @@ const planes = [];
     });
   }
 }
-function updatePlanes(dt) {
-  for (const pl of planes) {
-    if (pl.train) { updateTrain(pl, dt); continue; }
-    pl.ph += pl.w * dt;
-    const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-    const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
-    pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
-    pl.p.set(px, py, pz);
-    /* nose points along the tangent; bank into the turn */
-    pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
-    pl.mesh.position.copy(pl.p);
-    pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+/* every carrier moves itself: the aircraft here, the train in 76-metro.js,
+   boats, kites, crane jibs and the wheel's cars (77-cranes-wheel.js) */
+for (const b of boats) planes.push(b);
+for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
+function flyPlane(pl, dt) {
+  pl.ph += pl.w * dt;
+  const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  pl.p.set(px, py, pz);
+  /* nose points along the tangent; bank into the turn */
+  pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.mesh.position.copy(pl.p);
+  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+}
+/* afloat, a boat sails its circle and rides the swell; beached, it sits */
+function sailBoat(b, dt) {
+  if (b.wet) b.th += b.w * dt;
+  const x = b.wet ? b.cx + Math.cos(b.th) * b.r : b.x, z = b.wet ? b.cz + Math.sin(b.th) * b.r : b.z;
+  const y = (b.wet ? Math.sin(T * 1.1 + b.ph) * 0.35 - 0.3 : 0) + BOAT_HY;
+  b.v.set(x - b.p.x, y - b.p.y, z - b.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  b.p.set(x, y, z);
+  if (b.wet) b.yaw = Math.atan2(-Math.sin(b.th) * b.w, Math.cos(b.th) * b.w);
+}
+/* A kite flies down-wind of whoever holds it, nose into the breeze and its
+   tail streaming behind: look up and you can read which way the air is going
+   and how hard. In a calm it wanders in wide lazy circles; as the wind rises
+   it is carried out along it and held there. (k.x, k.z) is the hand on the
+   ground. Put a web on one and it takes you where the wind is going, sinking
+   under you, faster the less wind there is to hold it up; let go and it is
+   walked back out to where it flew. */
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+const KITE_LOW = 26;       // a dragged kite comes no lower than this
+function flyKite(k, dt) {
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
+  k.held = 0;
+  for (const w of player.webs) if (w.on && w.pl === k) k.held = 1;
+  if (k.held) {
+    const run = 1.2 + 0.75 * ws;
+    k.ox += hx * run * dt; k.oz += hz * run * dt;
+    k.oy = Math.max(KITE_LOW - k.y, k.oy - (0.7 + 2.3 * (1 - fly)) * dt);
+  } else {
+    const f = Math.exp(-dt / 25);
+    k.ox *= f; k.oy *= f; k.oz *= f;
   }
+  const a = T * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+  k.a = a; k.fly = fly;
+  const x = k.x + hx * out + Math.cos(a) * r + k.ox, y = k.y + Math.sin(a * 1.6) * 5 + k.oy, z = k.z + hz * out + Math.sin(a) * r + k.oz;
+  k.v.set(x - k.p.x, y - k.p.y, z - k.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  k.p.set(x, y, z);
+}
+function updatePlanes(dt) {
+  for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
 /* local offset -> world, so a latched anchor rides the hull */
 function planePoint(pl, lx, ly, lz, out) {
@@ -181,21 +244,31 @@ function worldToPlane(pl, wx, wy, wz, out) {
   const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
   return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
 }
-/* slab test against each hull; only five of them, so brute force */
+/* Slab test against each hull, in the hull's own frame: a crane jib is a long
+   thin box turned to wherever it is pointing, and a world-aligned box round
+   it would catch rays a jib's length away. A sphere round each hull turns
+   most of them away before the slab test. No arrays: this runs for every aim
+   ray, every frame. */
 const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null };
 function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
+    if (pl.off) continue;
+    const ex = pl.hx + pl.reach, ey = pl.hy + pl.reach * 0.5, ez = pl.hz + pl.reach;
+    const qx = pl.p.x - ox, qy = pl.p.y - oy, qz = pl.p.z - oz;
+    const tc = qx * dx + qy * dy + qz * dz, r2 = ex * ex + ey * ey + ez * ez;
+    if (tc < -Math.sqrt(r2) || tc - Math.sqrt(r2) > best) continue;
+    if (qx * qx + qy * qy + qz * qz - tc * tc > r2) continue;
+    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     let t0 = 0.02, t1 = best, ok = true;
-    /* no arrays: this runs for every aim ray, every frame */
     for (let a = 0; a < 3 && ok; a++) {
-      const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
-      const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
-      const lo = c - h, hi = c + h;
-      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
+      /* the ray in the hull's frame (worldToPlane), about the hull's centre */
+      const o = a === 0 ? -qx * c + qz * sn : a === 1 ? -qy : -qx * sn - qz * c;
+      const d = a === 0 ? dx * c - dz * sn : a === 1 ? dy : dx * sn + dz * c;
+      const h = a === 0 ? ex : a === 1 ? ey : ez;
+      if (Math.abs(d) < 1e-8) { if (o < -h || o > h) ok = false; continue; }
       const inv = 1 / d;
-      let n = (lo - o) * inv, f = (hi - o) * inv;
+      let n = (-h - o) * inv, f = (h - o) * inv;
       if (n > f) { const tmp = n; n = f; f = tmp; }
       if (n > t0) t0 = n;
       if (f < t1) t1 = f;
@@ -208,33 +281,23 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   _ph2.x = ox + dx * best; _ph2.y = oy + dy * best; _ph2.z = oz + dz * best;
   return _ph2;
 }
-
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
-const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+/* what is drawn is where the carriers are */
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
     const b = boats[i];
-    const bob = b.wet ? Math.sin(t * 1.1 + b.ph) * 0.35 : 0;
     e.set(b.wet ? Math.sin(t * 0.9 + b.ph) * 0.08 : 0.12, b.yaw, b.wet ? Math.cos(t * 0.7 + b.ph) * 0.06 : 0.05);
-    m.compose(p.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), UNIT);
+    m.compose(p.set(b.p.x, b.p.y - BOAT_HY, b.p.z), q.setFromEuler(e), UNIT);
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
-  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
-     tail streaming behind: look up and you can read which way the air is
-     going and how hard. In a calm it wanders in wide lazy circles; as the
-     wind rises it is carried out along it and held there. (k.x, k.z) is the
-     hand on the ground. */
-  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
-  const hx = Math.cos(windHead), hz = Math.sin(windHead);
-  for (let i = 0; i < kites.length; i++) {
-    const k = kites[i];
-    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
-    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
+  for (let i = 0; i < KITES_ON; i++) {
+    const k = kites[i], a = k.a, fly = k.fly || 0;
+    /* a dragged kite stands up in the wind, nose high */
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly - 0.5 * k.held, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(k.p, q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;
 }
-

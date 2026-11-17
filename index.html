@@ -265,7 +265,7 @@
   <div class="tbtn" id="tJump">jump</div>
   <div class="tbtn" id="tZip">zip</div>
   <div class="tbtn" id="tTuck">dive</div>
-  <div class="tbtn" id="tBoard">board aircraft</div>
+  <div class="tbtn" id="tBoard">board</div>
   <div class="tbtn" id="tRun">run</div>
   <div class="tbtn" id="tRunNext">next</div>
   <div class="tbtn" id="tRunQuit">end</div>
@@ -645,6 +645,34 @@ for (const [mx, mz, mh] of [[-410, -430, 96], [300, -450, 88], [-300, 380, 82], 
   addBox(mx, 0, mz, 7, mh, 7);
 }
 
+
+/* --- tower cranes on two tech-park roofs, a tower going up. The mast stands
+   on the roof, the jib slews round above it (77-cranes-wheel.js). A roof is
+   only chosen where the jib clears every neighbour it can sweep over. Like the
+   metro, the masts are solid but go into the hash late. --- */
+const CRANES = [];
+{
+  const MAST = 26, JIB = 40, TAIL = 12;
+  const roofOf = (x, z, r) => {          // the highest roof within r of (x, z)
+    let top = 0;
+    for (const b of buildings) {
+      const dx = Math.max(Math.abs(x - b.x) - b.w / 2, 0), dz = Math.max(Math.abs(z - b.z) - b.d / 2, 0);
+      if (dx * dx + dz * dz < r * r) top = Math.max(top, b.h);
+    }
+    return top;
+  };
+  const site = buildings.filter(b => b.kind === 'glass' && b.h < 120)
+    .map(b => ({ b, clear: b.h + MAST - roofOf(b.x, b.z, JIB + 3) }))
+    .filter(s => s.clear > 6).sort((a, b) => b.clear - a.clear || a.b.x - b.b.x);
+  CRANES.box0 = boxesArr.length / 6;
+  for (const { b } of site) {
+    if (CRANES.length === 2) break;
+    if (CRANES.some(c => Math.hypot(c.x - b.x, c.z - b.z) < 2 * JIB + 6)) continue;
+    CRANES.push({ x: b.x, z: b.z, base: b.h, top: b.h + MAST, jib: JIB, tail: TAIL });
+    addBox(b.x, b.h, b.z, 2.2, MAST, 2.2);
+  }
+  CRANES.box1 = boxesArr.length / 6;
+}
 /* =====================================================================
    GEOMETRY HELPERS
    ===================================================================== */
@@ -1361,12 +1389,14 @@ function hashBox(b) {
       const k = hkey(i, j); let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(b);
     }
 }
-/* The metro's boxes are held back until the plants, traffic and boats have
-   been placed (76-metro.js puts them in). Placement asks freeAt() and draws
-   from the world's random stream until it has enough: one more box in the way
-   is one more draw, and every palm, aircraft and kite after it would land
-   somewhere else. This way the city is the same city, plus a metro. */
-for (let b = 0; b < NBOX; b++) if (b < METRO.box0 || b >= METRO.box1) hashBox(b);
+/* The metro's boxes and the crane masts are held back until the plants,
+   traffic and boats have been placed (76-metro.js and 77-cranes-wheel.js put
+   them in). Placement asks freeAt() and draws from the world's random stream
+   until it has enough: one more box in the way is one more draw, and every
+   palm, aircraft and kite after it would land somewhere else. This way the
+   city is the same city, plus a metro and two cranes. */
+const lateBox = (b) => (b >= METRO.box0 && b < METRO.box1) || (b >= CRANES.box0 && b < CRANES.box1);
+for (let b = 0; b < NBOX; b++) if (!lateBox(b)) hashBox(b);
 function freeAt(x, z, r) {
   const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
   for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
@@ -1611,16 +1641,30 @@ const V_BOAT = mergeGeos([
   { geo: BOXB, matrix: M4(0, 1.0, 0, 2.0, 0.16, 7.6), color: 0xd9c9a4 },
   { geo: BOXB, matrix: M4(0, 1.0, -0.5, 0.18, 5.4, 0.18), color: 0x7a6544 },
   { geo: BOXB, matrix: M4(0.02, 1.6, 1.0, 0.06, 3.6, 2.9), color: 0xe6dcc4 }]);
+/* Boats and kites used to be scenery. They are carriers now (see AIRCRAFT
+   below): what is drawn is where the carrier is, and the carrier is what a
+   web latches and a landing stands on. Their own random stream, so the city
+   placed after them is the city it was. */
+const RIDE_UP = 0.85;      // a rider's centre above the surface they stand on
+const BOAT_HX = 1.1, BOAT_HY = 0.58, BOAT_HZ = 4.25;   // hull and deck, about the hull's centre
 const boats = [];
+const kites = [];
+const KITE_MAX = 72;       // room for more of them, of which KITES_ON are up
+const KITES_ON = 26;
 {
   const im = new THREE.InstancedMesh(V_BOAT, vegMat, 34);
   im.castShadow = true; im.frustumCulled = false; scene.add(im);
-  const m = new THREE.Matrix4();
+  const m = new THREE.Matrix4(), br = mulberry32(7310);
   for (let i = 0; i < 34; i++) {
     const wet = i > 17;
-    const x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
+    let x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
     const z = rnd(-420, 300);
-    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU) });
+    /* afloat, each sails a slow circle offshore; on the sand it stays put */
+    const r = wet ? 30 + br() * 70 : 0, spd = 2.5 + br() * 2.5, th = br() * TAU;
+    if (wet) x = Math.max(x, SEA_X + 18 + 2 * r);
+    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU),
+      kind: 'boat', step: sailBoat, cx: x - r * Math.cos(th), cz: z - r * Math.sin(th), r, th, w: wet ? (br() < 0.5 ? -1 : 1) * spd / r : 0,
+      p: V3(x, 0, z), v: V3(), hx: BOAT_HX, hy: BOAT_HY, hz: BOAT_HZ, reach: 1.2, deck: BOAT_HY + RIDE_UP, walkX: 0.6, walkZ: 3.3 });
     m.compose(V3(x, 0, z), new THREE.Quaternion(), V3(1, 1, 1));
     im.setMatrixAt(i, m);
   }
@@ -1629,11 +1673,19 @@ const boats = [];
 const V_KITE = mergeGeos([
   { geo: BOXB, matrix: M4(0, 0, 0, 1.5, 0.04, 1.5, PI / 4), color: 0xe0402c },
   { geo: BOXB, matrix: M4(0, -0.02, -1.6, 0.12, 0.03, 2.6), color: 0xf0c93a }]);
-const kites = [];
 {
-  const im = new THREE.InstancedMesh(V_KITE, vegMat, 26);
+  const im = new THREE.InstancedMesh(V_KITE, vegMat, KITE_MAX);
   im.frustumCulled = false; scene.add(im);
-  for (let i = 0; i < 26; i++) kites.push({ x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) });
+  const kr = mulberry32(4417), krnd = (a, b) => a + kr() * (b - a);
+  for (let i = 0; i < KITE_MAX; i++) {
+    /* the first 26 draw from the world's stream, as they always have */
+    const k = i < 26 ? { x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) }
+                     : { x: krnd(-EXT, EXT), z: krnd(-EXT, EXT), y: krnd(50, 140), ph: krnd(0, TAU), r: krnd(9, 26) };
+    Object.assign(k, { kind: 'kite', step: flyKite, p: V3(k.x, k.y, k.z), v: V3(), yaw: 0, a: 0, held: 0, ox: 0, oy: 0, oz: 0,
+      hx: 1.2, hy: 0.5, hz: 1.2, reach: 2.2, deck: null });
+    kites.push(k);
+  }
+  im.count = KITES_ON;
   kites.mesh = im;
 }
 /* ---------------------------------------------------------------
@@ -1662,7 +1714,7 @@ const planes = [];
     mesh.castShadow = true; mesh.frustumCulled = false;
     scene.add(mesh);
     planes.push({
-      mesh,
+      kind: 'plane', step: flyPlane, mesh,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
       cx: rnd(-120, 120), cz: rnd(-160, 120),
@@ -1675,19 +1727,60 @@ const planes = [];
     });
   }
 }
-function updatePlanes(dt) {
-  for (const pl of planes) {
-    if (pl.train) { updateTrain(pl, dt); continue; }
-    pl.ph += pl.w * dt;
-    const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-    const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
-    pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
-    pl.p.set(px, py, pz);
-    /* nose points along the tangent; bank into the turn */
-    pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
-    pl.mesh.position.copy(pl.p);
-    pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+/* every carrier moves itself: the aircraft here, the train in 76-metro.js,
+   boats, kites, crane jibs and the wheel's cars (77-cranes-wheel.js) */
+for (const b of boats) planes.push(b);
+for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
+function flyPlane(pl, dt) {
+  pl.ph += pl.w * dt;
+  const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  pl.p.set(px, py, pz);
+  /* nose points along the tangent; bank into the turn */
+  pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.mesh.position.copy(pl.p);
+  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+}
+/* afloat, a boat sails its circle and rides the swell; beached, it sits */
+function sailBoat(b, dt) {
+  if (b.wet) b.th += b.w * dt;
+  const x = b.wet ? b.cx + Math.cos(b.th) * b.r : b.x, z = b.wet ? b.cz + Math.sin(b.th) * b.r : b.z;
+  const y = (b.wet ? Math.sin(T * 1.1 + b.ph) * 0.35 - 0.3 : 0) + BOAT_HY;
+  b.v.set(x - b.p.x, y - b.p.y, z - b.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  b.p.set(x, y, z);
+  if (b.wet) b.yaw = Math.atan2(-Math.sin(b.th) * b.w, Math.cos(b.th) * b.w);
+}
+/* A kite flies down-wind of whoever holds it, nose into the breeze and its
+   tail streaming behind: look up and you can read which way the air is going
+   and how hard. In a calm it wanders in wide lazy circles; as the wind rises
+   it is carried out along it and held there. (k.x, k.z) is the hand on the
+   ground. Put a web on one and it takes you where the wind is going, sinking
+   under you, faster the less wind there is to hold it up; let go and it is
+   walked back out to where it flew. */
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+const KITE_LOW = 26;       // a dragged kite comes no lower than this
+function flyKite(k, dt) {
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
+  k.held = 0;
+  for (const w of player.webs) if (w.on && w.pl === k) k.held = 1;
+  if (k.held) {
+    const run = 1.2 + 0.75 * ws;
+    k.ox += hx * run * dt; k.oz += hz * run * dt;
+    k.oy = Math.max(KITE_LOW - k.y, k.oy - (0.7 + 2.3 * (1 - fly)) * dt);
+  } else {
+    const f = Math.exp(-dt / 25);
+    k.ox *= f; k.oy *= f; k.oz *= f;
   }
+  const a = T * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+  k.a = a; k.fly = fly;
+  const x = k.x + hx * out + Math.cos(a) * r + k.ox, y = k.y + Math.sin(a * 1.6) * 5 + k.oy, z = k.z + hz * out + Math.sin(a) * r + k.oz;
+  k.v.set(x - k.p.x, y - k.p.y, z - k.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  k.p.set(x, y, z);
+}
+function updatePlanes(dt) {
+  for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
 /* local offset -> world, so a latched anchor rides the hull */
 function planePoint(pl, lx, ly, lz, out) {
@@ -1699,21 +1792,31 @@ function worldToPlane(pl, wx, wy, wz, out) {
   const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
   return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
 }
-/* slab test against each hull; only five of them, so brute force */
+/* Slab test against each hull, in the hull's own frame: a crane jib is a long
+   thin box turned to wherever it is pointing, and a world-aligned box round
+   it would catch rays a jib's length away. A sphere round each hull turns
+   most of them away before the slab test. No arrays: this runs for every aim
+   ray, every frame. */
 const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null };
 function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
+    if (pl.off) continue;
+    const ex = pl.hx + pl.reach, ey = pl.hy + pl.reach * 0.5, ez = pl.hz + pl.reach;
+    const qx = pl.p.x - ox, qy = pl.p.y - oy, qz = pl.p.z - oz;
+    const tc = qx * dx + qy * dy + qz * dz, r2 = ex * ex + ey * ey + ez * ez;
+    if (tc < -Math.sqrt(r2) || tc - Math.sqrt(r2) > best) continue;
+    if (qx * qx + qy * qy + qz * qz - tc * tc > r2) continue;
+    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     let t0 = 0.02, t1 = best, ok = true;
-    /* no arrays: this runs for every aim ray, every frame */
     for (let a = 0; a < 3 && ok; a++) {
-      const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
-      const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
-      const lo = c - h, hi = c + h;
-      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
+      /* the ray in the hull's frame (worldToPlane), about the hull's centre */
+      const o = a === 0 ? -qx * c + qz * sn : a === 1 ? -qy : -qx * sn - qz * c;
+      const d = a === 0 ? dx * c - dz * sn : a === 1 ? dy : dx * sn + dz * c;
+      const h = a === 0 ? ex : a === 1 ? ey : ez;
+      if (Math.abs(d) < 1e-8) { if (o < -h || o > h) ok = false; continue; }
       const inv = 1 / d;
-      let n = (lo - o) * inv, f = (hi - o) * inv;
+      let n = (-h - o) * inv, f = (h - o) * inv;
       if (n > f) { const tmp = n; n = f; f = tmp; }
       if (n > t0) t0 = n;
       if (f < t1) t1 = f;
@@ -1726,36 +1829,26 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   _ph2.x = ox + dx * best; _ph2.y = oy + dy * best; _ph2.z = oz + dz * best;
   return _ph2;
 }
-
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
-const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+/* what is drawn is where the carriers are */
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
     const b = boats[i];
-    const bob = b.wet ? Math.sin(t * 1.1 + b.ph) * 0.35 : 0;
     e.set(b.wet ? Math.sin(t * 0.9 + b.ph) * 0.08 : 0.12, b.yaw, b.wet ? Math.cos(t * 0.7 + b.ph) * 0.06 : 0.05);
-    m.compose(p.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), UNIT);
+    m.compose(p.set(b.p.x, b.p.y - BOAT_HY, b.p.z), q.setFromEuler(e), UNIT);
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
-  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
-     tail streaming behind: look up and you can read which way the air is
-     going and how hard. In a calm it wanders in wide lazy circles; as the
-     wind rises it is carried out along it and held there. (k.x, k.z) is the
-     hand on the ground. */
-  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
-  const hx = Math.cos(windHead), hz = Math.sin(windHead);
-  for (let i = 0; i < kites.length; i++) {
-    const k = kites[i];
-    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
-    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
+  for (let i = 0; i < KITES_ON; i++) {
+    const k = kites[i], a = k.a, fly = k.fly || 0;
+    /* a dragged kite stands up in the wind, nose high */
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly - 0.5 * k.held, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(k.p, q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;
 }
-
 /* =====================================================================
    THE METRO
    ---------------------------------------------------------------------
@@ -1809,7 +1902,7 @@ const TRAIN_A = (METRO.z1 - METRO.z0) / 2 - TRAIN_HZ - 5;  // how far either sid
   const mesh = new THREE.Mesh(mergeGeos(cars), mat);
   mesh.castShadow = true; mesh.frustumCulled = false; scene.add(mesh);
   planes.push({
-    train: true, mesh, ph: 0.6, w: TRAIN_W,
+    kind: 'train', step: updateTrain, train: true, mesh, ph: 0.6, w: TRAIN_W,
     p: V3(METRO.x, TRAIN_Y, 0), v: V3(), yaw: 0,
     hx: CAR_W / 2, hy: CAR_H / 2, hz: TRAIN_HZ, reach: 0.8, deck: CAR_H / 2 + 0.3, walkX: 1.0, walkZ: TRAIN_HZ - 1
   });
@@ -1823,6 +1916,143 @@ function updateTrain(pl, dt) {
   pl.mesh.position.copy(pl.p);
 }
 metroTrain.p.z = (METRO.z0 + METRO.z1) / 2 + TRAIN_A * Math.sin(metroTrain.ph);
+/* =====================================================================
+   CRANES AND THE FERRIS
+   ---------------------------------------------------------------------
+   Two more things that move and can be used, both slow.
+
+   Tower cranes stand on two tech-park roofs (CRANES, 10-world.js). The mast
+   is solid; the jib slews back and forth above the roof and is a carrier:
+   hang a web from it and it carries you round, or come down on it and walk
+   its length.
+
+   A big wheel turns on the sand north of the marina. Each of its cars is a
+   carrier: latch one and it lifts you, or stand on its roof and ride it over
+   the top for the highest view on the beach.
+
+   Neither structure is solid beyond the crane masts: a box cannot follow a
+   rim that turns, so the wheel's frame is for looking at.
+   ===================================================================== */
+for (let b = CRANES.box0; b < CRANES.box1; b++) hashBox(b);    // see 65-broadphase.js
+
+const CRANE_W = 0.06;          // rad/s of the slew at its fastest
+const craneMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+{
+  const Y = 0xe3ac1d, G = 0x55595e;
+  const mastGeo = mergeGeos([
+    { geo: BOXB, matrix: M4(0, 0, 0, 2.2, 1, 2.2), color: Y },
+    { geo: BOXB, matrix: M4(0, 0, 0, 2.4, 0.04, 2.4), color: G }]);
+  for (const c of CRANES) {
+    const len = c.top - c.base;
+    const mast = new THREE.Mesh(mergeGeos([
+      { geo: BOXB, matrix: M4(0, 0, 0, 2.2, len, 2.2), color: Y },
+      { geo: BOXB, matrix: M4(0, 0, 0, 4.2, 0.8, 4.2), color: G },                 // foot on the roof
+      { geo: BOXB, matrix: M4(0, len - 2.2, -1.9, 1.8, 1.8, 1.6), color: 0xd8d2c4 } // the operator's cab
+    ]), craneMat);
+    mast.position.set(c.x, c.base, c.z); mast.castShadow = true; scene.add(mast);
+    /* the turning part, about the top of the mast with +z along the jib */
+    const jib = new THREE.Mesh(mergeGeos([
+      { geo: BOXB, matrix: M4(0, 0, (c.jib - c.tail) / 2, 1.8, 1.8, c.jib + c.tail), color: Y },
+      { geo: BOXB, matrix: M4(0, 1.8, 0, 1.2, 7, 1.2), color: Y },                     // the apex
+      { geo: BOXB, matrix: M4(0, -1.6, -c.tail + 2.2, 2.6, 2.6, 3.6), color: 0x8e8a80 },// counterweight
+      { geo: BOXB, matrix: M4(0, -0.5, c.jib * 0.7, 1.4, 0.5, 1.8), color: G },          // trolley
+      { geo: BOXB, matrix: M4(0, -9.5, c.jib * 0.7, 0.05, 9, 0.05), color: 0x2a2a2a },   // its hoist line
+      { geo: BOXB, matrix: M4(0, -10.6, c.jib * 0.7, 0.9, 1.1, 0.9), color: 0xc8432b }   // and hook block
+    ]), craneMat);
+    jib.position.set(c.x, c.top, c.z); jib.castShadow = true; scene.add(jib);
+    const zc = (c.jib - c.tail) / 2, hz = (c.jib + c.tail) / 2;
+    planes.push({
+      kind: 'jib', step: slewJib, mesh: jib, crane: c, zc,
+      ph: c.x * 0.013, y0: c.z * 0.017, w: CRANE_W,
+      p: V3(c.x, c.top + 0.9, c.z), v: V3(), yaw: 0,
+      hx: 0.9, hy: 0.9, hz, reach: 1.4, deck: 0.9 + RIDE_UP, walkX: 0.3, walkZ: hz - 0.8
+    });
+  }
+}
+/* the slew eases out to either side and back, as a driver would */
+function slewJib(j, dt) {
+  j.ph += j.w * dt;
+  j.yaw = j.y0 + 1.5 * Math.sin(j.ph);
+  const c = j.crane, x = c.x + Math.sin(j.yaw) * j.zc, z = c.z + Math.cos(j.yaw) * j.zc;
+  j.v.set(x - j.p.x, 0, z - j.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  j.p.set(x, c.top + 0.9, z);
+  j.mesh.rotation.y = j.yaw;
+}
+
+/* ---- the wheel ---- */
+const FERRIS = { x: 462, z: 222, y: 37, r: 30, cars: 16, w: 0.04, a: 0 };
+const CAR_HX = 1.25, CAR_HY = 1.1, CAR_HANG = 1.7;     // a car's half-size, and how far below the rim it hangs
+{
+  /* nothing beached where the legs stand */
+  for (const b of boats) if (!b.wet && Math.abs(b.z - FERRIS.z) < FERRIS.r + 6 && Math.abs(b.x - FERRIS.x) < 12) {
+    b.z = FERRIS.z + Math.sign(b.z - FERRIS.z || 1) * (FERRIS.r + 8);
+    b.p.z = b.z;
+  }
+  const W = 0xe9e4da, ST = 0x9aa3a8, parts = [];
+  /* two rims, an axle between them, spokes out to each rim */
+  for (const sx of [-2.4, 2.4]) {
+    for (let i = 0; i < 40; i++) {
+      const a = (i + 0.5) * TAU / 40, seg = FERRIS.r * TAU / 40 + 0.3;
+      /* a box turned about x by -a points its z along the radius; a quarter
+         turn more lays it along the rim */
+      parts.push({ geo: BOX, matrix: new THREE.Matrix4().makeRotationX(-a - PI / 2).setPosition(sx, Math.sin(a) * FERRIS.r, Math.cos(a) * FERRIS.r)
+        .multiply(new THREE.Matrix4().makeScale(0.45, 0.45, seg)), color: W });
+    }
+    for (let i = 0; i < FERRIS.cars; i++) {
+      const a = i * TAU / FERRIS.cars;
+      parts.push({ geo: BOX, matrix: new THREE.Matrix4().makeRotationX(-a).setPosition(sx, Math.sin(a) * FERRIS.r / 2, Math.cos(a) * FERRIS.r / 2)
+        .multiply(new THREE.Matrix4().makeScale(0.16, 0.16, FERRIS.r)), color: ST });
+    }
+  }
+  for (let i = 0; i < FERRIS.cars; i++) {          // the bars the cars hang from
+    const a = i * TAU / FERRIS.cars;
+    parts.push({ geo: BOX, matrix: M4(0, Math.sin(a) * FERRIS.r, Math.cos(a) * FERRIS.r, 5.2, 0.2, 0.2), color: ST });
+  }
+  parts.push({ geo: BOX, matrix: M4(0, 0, 0, 7, 1.6, 1.6), color: ST });
+  const rim = new THREE.Mesh(mergeGeos(parts), craneMat);
+  rim.position.set(FERRIS.x, FERRIS.y, FERRIS.z); rim.castShadow = true; scene.add(rim);
+  FERRIS.rim = rim;
+  /* the A-frame legs either side, which do not turn */
+  const legs = [];
+  for (const sx of [-4.2, 4.2]) for (const sz of [-1, 1]) {
+    const lean = Math.atan2(FERRIS.r * 0.42, FERRIS.y), len = Math.hypot(FERRIS.r * 0.42, FERRIS.y);
+    legs.push({ geo: BOXB, matrix: new THREE.Matrix4().makeRotationX(-sz * lean).setPosition(sx, 0, sz * FERRIS.r * 0.42)
+      .multiply(new THREE.Matrix4().makeScale(0.9, len, 0.9)), color: ST });
+  }
+  legs.push({ geo: BOXB, matrix: M4(0, -0.2, 0, 12, 0.4, FERRIS.r * 0.84 + 4), color: 0xb7aa92 });
+  const frame = new THREE.Mesh(mergeGeos(legs), craneMat);
+  frame.position.set(FERRIS.x, 0, FERRIS.z); frame.castShadow = true; scene.add(frame);
+  /* the cars: one instance each, upright whatever the rim is doing */
+  const CAR_COL = [0xc8432b, 0x2f8f83, 0xe3ac1d, 0x3a6ea5];
+  const carGeo = mergeGeos([
+    { geo: BOXB, matrix: M4(0, -CAR_HY, 0, CAR_HX * 2, CAR_HY * 2, CAR_HX * 2), color: 0xffffff },
+    { geo: BOXB, matrix: M4(0, -0.1, 0, CAR_HX * 2 + 0.06, 0.7, CAR_HX * 2 - 0.5), color: 0x1f2c35 },
+    { geo: BOXB, matrix: M4(0, CAR_HY, 0, 0.15, CAR_HANG - 0.2, 0.15), color: ST }]);
+  const carMesh = new THREE.InstancedMesh(carGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), FERRIS.cars);
+  carMesh.castShadow = true; carMesh.frustumCulled = false; scene.add(carMesh);
+  const col = new THREE.Color();
+  for (let i = 0; i < FERRIS.cars; i++) {
+    carMesh.setColorAt(i, col.setHex(CAR_COL[i % 4]));
+    planes.push({
+      kind: 'car', step: turnCar, idx: i, a0: i * TAU / FERRIS.cars,
+      p: V3(), v: V3(), yaw: 0,
+      hx: CAR_HX, hy: CAR_HY, hz: CAR_HX, reach: 1.0, deck: CAR_HY + RIDE_UP, walkX: 0.5, walkZ: 0.5
+    });
+  }
+  FERRIS.carMesh = carMesh;
+}
+/* the first car turns the wheel; every car hangs plumb below its bar */
+function turnCar(c, dt) {
+  if (c.idx === 0) { FERRIS.a += FERRIS.w * dt; FERRIS.rim.rotation.x = -FERRIS.a; }
+  const a = c.a0 + FERRIS.a;
+  const x = FERRIS.x, y = FERRIS.y + Math.sin(a) * FERRIS.r - CAR_HANG - CAR_HY, z = FERRIS.z + Math.cos(a) * FERRIS.r;
+  c.v.set(x - c.p.x, y - c.p.y, z - c.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  c.p.set(x, y, z);
+  const arr = FERRIS.carMesh.instanceMatrix.array, o = c.idx * 16;
+  arr[o] = 1; arr[o + 5] = 1; arr[o + 10] = 1; arr[o + 15] = 1;
+  arr[o + 12] = x; arr[o + 13] = y + CAR_HY; arr[o + 14] = z;
+  FERRIS.carMesh.instanceMatrix.needsUpdate = true;
+}
 /* =====================================================================
    PHYSICS
    XPBD: integrate -> solve distance constraints + contacts -> derive v
@@ -2013,18 +2243,57 @@ function solveContacts(p) {
    access from any distance — you are literally attached, so E climbs the line
    aboard. Without one, E reaches the nearest point on a hull's box, not its
    centre: a centre test fails from a wingtip anchor even with the line winched
-   to minimum. The mobile board button shows exactly when this returns a hull. */
+   to minimum. The box is the hull's own, turned with it. A kite has no deck.
+   The mobile board button shows exactly when this returns a hull. */
+const _bp = V3();
 function boardablePlane(P) {
-  for (const w of player.webs) if (w.on && w.pl) return w.pl;
+  for (const w of player.webs) if (w.on && w.pl && w.pl.deck != null) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
+    if (pl.deck == null || pl.off) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 15 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 15) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    const dx = Math.max(Math.abs(_bp.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(_bp.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(_bp.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
   return near;
+}
+/* aboard: on the deck where you are, held to its walkway */
+function boardCarrier(pl, P) {
+  worldToPlane(pl, P.x, P.y, P.z, player.rideLo);
+  player.rideLo.x = clamp(player.rideLo.x, -pl.walkX, pl.walkX);
+  player.rideLo.z = clamp(player.rideLo.z, -pl.walkZ, pl.walkZ);
+  player.rideLo.y = pl.deck;
+  player.riding = pl;
+  releaseWeb(0); releaseWeb(1);
+  emit('board', pl);
+}
+/* Come down on a deck and you are standing on it: a boat, the train's roof, a
+   crane's jib, a car of the wheel, an aircraft's spine. Only from above and
+   only coming down onto it, so a swing up past one goes on by. Anywhere on its
+   box will do (an aircraft's wing puts you on its spine). The hull moved
+   between frames, so where you were a substep ago is allowed to read a little
+   below the deck. */
+const _lp = V3();
+function landOnCarrier(P, prev, V) {
+  for (const pl of planes) {
+    if (pl.deck == null || pl.off || V.y - pl.v.y > 0) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 2 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 2) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    if (_bp.y >= pl.deck || _bp.y < pl.deck - 1.5) continue;
+    if (Math.abs(_bp.x) > Math.max(pl.walkX, pl.hx) + 0.3 || Math.abs(_bp.z) > Math.max(pl.walkZ, pl.hz) + 0.3) continue;
+    worldToPlane(pl, prev.x, prev.y, prev.z, _lp);
+    if (_lp.y < pl.deck - 0.3) continue;
+    const hit = pl.v.y - V.y;
+    boardCarrier(pl, P);
+    pinRider(); V.copy(pl.v);
+    if (hit > 1.5) emit('land', hit, 1, false);
+    return true;
+  }
+  return false;
 }
 
 const _pp = V3(), _tmp = V3(), _tmp2 = V3();
@@ -2046,17 +2315,9 @@ function stepPhysics(h, inp) {
 
   /* ---- riding an aircraft ---- */
   if (!player.riding && inp.mount) {
+    /* snap onto the spine of the hull rather than wherever you grabbed */
     const near = boardablePlane(P);
-    if (near) {
-      worldToPlane(near, P.x, P.y, P.z, player.rideLo);
-      /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
-      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
-      player.rideLo.y = near.deck;
-      player.riding = near;
-      releaseWeb(0); releaseWeb(1);
-      emit('board', near);
-    }
+    if (near) boardCarrier(near, P);
   }
   if (player.riding) {
     const pl = player.riding;
@@ -2210,6 +2471,7 @@ function stepPhysics(h, inp) {
   if (vm > 150) V.multiplyScalar(150 / vm);
   const ux = V.x, uy = V.y, uz = V.z;     // the velocity you arrive with, before anything stops it
   P.x += V.x * h; P.y += V.y * h; P.z += V.z * h;
+  if (landOnCarrier(P, _pp, V)) { player.touch = true; player.airT = 0; return; }
 
   /* ---- rope length control ---- */
   for (const w of player.webs) {
@@ -3973,11 +4235,12 @@ function updateAudio(dt) {
   let eng = 0;
   let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
+    if (pl.kind !== 'plane' && pl.kind !== 'train') continue;
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
-    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
