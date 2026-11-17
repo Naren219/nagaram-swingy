@@ -198,9 +198,15 @@ function poseRig(dt, inp) {
     smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
     smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
   } else if (player.grounded) {
-    runPhase += dt * clamp(spd * 1.5, 0, 26);
+    /* on an aircraft the body's speed is the aircraft's; the legs only move
+       when you walk the hull */
+    const gait = player.riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 6 : spd;
+    const stride = Math.floor(runPhase / PI);
+    runPhase += dt * clamp(gait * 1.5, 0, 26);
     const s = Math.sin(runPhase), c = Math.cos(runPhase);
-    const amp = clamp(spd / 9, 0, 1.1);
+    const amp = clamp(gait / 9, 0, 1.1);
+    /* a foot comes down every half cycle of the run */
+    if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
     smoothEuler(spine, -0.12 - amp * 0.22, 0, 0, k);
     smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16, k);
     smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);

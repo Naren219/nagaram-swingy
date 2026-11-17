@@ -365,7 +365,76 @@ async function lineBite(page, check) {
   check('a line that bites announces it once; a miss does not', bite.onMiss === 0 && bite.onHit === 1, JSON.stringify(bite));
 }
 
-const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite];
+async function motionEvents(page, check) {
+  /* what the sound of moving is hung on: a landing is announced once, with
+     the speed it happened at; so is a release; a foot comes down at a rate set
+     by ground speed and not by the display; and the rush of something going by
+     is there beside a wall at speed and nowhere else. Polarity: standing still
+     and open sky must both read nothing. */
+  const ev = await page.evaluate(() => {
+    const seen = { land: [], release: [], step: 0 };
+    listen('land', (hit, ny) => seen.land.push({ hit, ny }));
+    listen('release', (spd, age) => seen.release.push({ spd, age }));
+    listen('step', () => seen.step++);
+    const drop = (hz, h) => {
+      __reset(hz); seen.land.length = 0;
+      player.p.set(-350, 0.85 + h, -182); player.v.set(0, 0, 0); player.airT = 1;
+      __run(hz * 3);
+      return { n: seen.land.length, hit: seen.land[0] ? seen.land[0].hit : 0, ny: seen.land[0] ? seen.land[0].ny : 0 };
+    };
+    const d60 = drop(60, 12), d240 = drop(240, 12);
+    seen.land.length = 0; __run(240 * 2); const standing = seen.land.length;
+
+    /* a wall, met side-on in flight */
+    __reset();
+    const b = buildings.find(b => b.h > 70 && b.kind === 'glass');
+    seen.land.length = 0;
+    player.p.set(b.x + b.w / 2 + 6, b.h * 0.6, b.z); player.v.set(-14, 0, 0); player.airT = 1; __run(40);
+    const wall = seen.land[0] || { hit: 0, ny: 9 };
+
+    __reset(); seen.release.length = 0;
+    player.p.set(-46, 80, -230); player.v.set(0, 0, 25);
+    fireWebAt(0, { x: -46, y: 130, z: -200, pl: null }); __run(45); releaseWeb(0); releaseWeb(0);
+    const rel = { n: seen.release.length, age: seen.release[0] ? seen.release[0].age : 0 };
+
+    const walk = (hz) => {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); yaw = 0; pitch = 0; __run(hz);
+      seen.step = 0; __run(hz); const still = seen.step;
+      keys['KeyW'] = true; __run(hz * 3); keys['KeyW'] = false;
+      return { still, steps: seen.step };
+    };
+    const w60 = walk(60), w240 = walk(240);
+
+    /* beside a tower at 108 km/h, then the same flight in open sky, then slowly */
+    __reset(); yaw = 0; pitch = 0; updateCamDirs();
+    const P = new THREE.Vector3(b.x + b.w / 2 + 3.85, b.h * 0.6, b.z), fast = new THREE.Vector3(0, 0, 30);
+    player.grounded = false;
+    const beside = Object.assign({}, proximity(P, fast));
+    const sky = proximity(new THREE.Vector3(P.x, 420, P.z), fast).lvl;
+    const slow = proximity(P, new THREE.Vector3(0, 0, 6)).lvl;
+    yaw = Math.PI; updateCamDirs();
+    const flipped = proximity(P, fast).pan;
+    return { d60, d240, standing, wall, rel, w60, w240, beside, sky, slow, flipped, want: Math.sqrt(2 * G * 12) };
+  });
+  check('a landing is announced once, at the speed it happened',
+    ev.d60.n === 1 && ev.d240.n === 1 && Math.abs(ev.d60.hit - ev.want) < 2.5 && Math.abs(ev.d240.hit - ev.want) < 2.5 && ev.d60.ny > 0.9,
+    'a 12 m drop: ' + ev.d60.hit.toFixed(1) + ' m/s at 60 Hz, ' + ev.d240.hit.toFixed(1) + ' at 240 Hz (free fall ' + ev.want.toFixed(1) + ')');
+  check('standing on the street announces nothing', ev.standing === 0, ev.standing + ' landings in 2 s');
+  check('a wall met side-on is a landing too, and says it was a wall', ev.wall.hit > 10 && ev.wall.hit < 16 && Math.abs(ev.wall.ny) < 0.1,
+    ev.wall.hit.toFixed(1) + ' m/s, normal y ' + ev.wall.ny.toFixed(2));
+  check('a release is announced once, with its time on the line', ev.rel.n === 1 && Math.abs(ev.rel.age - 0.75) < 0.03,
+    ev.rel.n + ' event(s), ' + ev.rel.age.toFixed(2) + ' s');
+  check('footfalls follow ground speed, not the frame rate', ev.w60.still === 0 && ev.w240.still === 0 && ev.w60.steps > 6 && Math.abs(ev.w60.steps - ev.w240.steps) <= 1,
+    ev.w60.steps + ' steps in 3 s at 60 Hz, ' + ev.w240.steps + ' at 240 Hz');
+  check('the rush of a wall going by: there beside a tower at speed', ev.beside.lvl > 0.2 && ev.beside.l > 0.5 && ev.beside.r === 0,
+    'level ' + ev.beside.lvl.toFixed(2) + ', wall side ' + ev.beside.l.toFixed(2));
+  check('no rush in open sky or at walking pace', ev.sky === 0 && ev.slow === 0, 'sky ' + ev.sky + ', slow ' + ev.slow);
+  check('the rush is heard on the side the wall is on', ev.beside.pan > 0.5 && ev.flipped < -0.5,
+    'pan ' + ev.beside.pan.toFixed(2) + ' facing along the wall, ' + ev.flipped.toFixed(2) + ' facing back');
+}
+
+const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
+  motionEvents];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
@@ -384,10 +453,22 @@ module.exports = async function fixedStep({ newPage, BASE, check }) {
     };
   });
   await page.waitForTimeout(150);   // let the one already-queued rAF callback drain
+  /* ONLY=motionEvents,webEnergy runs just those; the sections are independent */
+  const only = (process.env.ONLY || '').split(',').filter(Boolean);
   for (const section of SECTIONS) {
+    if (only.length && !only.includes(section.name)) continue;
     await page.evaluate(() => __reset());
     await section(page, check);
   }
   check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
   await ctx.close();
 };
+
+/* run directly for this pass alone:  node test/fixed-step.js */
+if (require.main === module) {
+  (async () => {
+    const suite = await require('./harness').start();
+    await module.exports(suite);
+    await suite.finish();
+  })().catch(e => { console.error('FIXED-STEP CRASHED:', e); process.exit(1); });
+}
