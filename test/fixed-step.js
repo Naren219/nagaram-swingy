@@ -931,8 +931,44 @@ async function perching(page, check) {
   check('nor is photo mode, nor a ring run', !r.photo && r.run.flying && !r.run.perch, 'photo ' + r.photo + ', run ' + r.run.perch);
 }
 
+async function windSigns(page, check) {
+  /* The wind the glide flies through is the wind the city shows. The kites are
+     moved on the CPU and can be measured outright; the pennants and palms are
+     bent in a shader, so what is checked is that they are handed the same wind. */
+  const r = await page.evaluate(() => {
+    const realWind = updateWind;
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), tail = new THREE.Vector3();
+    const blow = (wx, wz) => {
+      __reset(); updateWind = () => { WIND.set(wx, 0, wz); windHead = Math.atan2(wz, wx); };
+      __run(30);
+      let ox = 0, oz = 0, tx = 0, tz = 0;
+      for (let i = 0; i < kites.length; i++) {
+        kites.mesh.getMatrixAt(i, m4); m4.decompose(pos, q, sc);
+        ox += pos.x - kites[i].x; oz += pos.z - kites[i].z;
+        tail.set(0, 0, -1).applyQuaternion(q); tx += tail.x; tz += tail.z;
+      }
+      const n = kites.length;
+      return { ox: ox / n, oz: oz / n, tx: tx / n, tz: tz / n, ux: windUni.uWind.value.x, uz: windUni.uWind.value.y };
+    };
+    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: kites.length };
+    for (const f of flags) {
+      /* nothing solid within a pennant's length of its hoist, at its height */
+      for (const b of buildings) if (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2 && f.y < b.h + 3) out.low++;
+    }
+    updateWind = realWind; __run(2);
+    out.back = Math.abs(windUni.uWind.value.x - WIND.x) + Math.abs(windUni.uWind.value.y - WIND.z);
+    return out;
+  });
+  check('kites fly down-wind of the hand that holds them', r.east.ox > 15 && Math.abs(r.east.oz) < 8 && r.north.oz < -15 && Math.abs(r.north.ox) < 8,
+    'mean offset ' + r.east.ox.toFixed(0) + ', ' + r.east.oz.toFixed(0) + ' m in an easterly 5 m/s; ' + r.north.ox.toFixed(0) + ', ' + r.north.oz.toFixed(0) + ' m in a northerly');
+  check('and their tails stream behind them', r.east.tx > 0.6 && r.north.tz < -0.6, 'mean tail direction ' + r.east.tx.toFixed(2) + ' along an easterly, ' + r.north.tz.toFixed(2) + ' along a northerly');
+  check('in a calm they only wander', Math.hypot(r.calm.ox, r.calm.oz) < 8, 'mean offset ' + Math.hypot(r.calm.ox, r.calm.oz).toFixed(1) + ' m over ' + r.kites + ' kites');
+  check('pennants and palms are handed the wind the glide uses', r.east.ux === 5 && r.east.uz === 0 && r.north.uz === -5 && r.back < 1e-9, 'shader wind ' + r.east.ux + ', ' + r.east.uz + ' for an easterly 5');
+  check('there are pennants to read, each clear of its roof', r.n >= 20 && r.low === 0, r.n + ' pennants, ' + r.low + ' with the hoist under 3 m above the roof');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

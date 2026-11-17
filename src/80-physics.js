@@ -73,10 +73,12 @@ function thermalAt(x, y, z) {
 }
 
 const WIND = V3();
+let windHead = 0;          // where it is blowing TO, radians; still meaningful in a dead calm
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
   const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)   // strength swells
                         + 1.1 * Math.sin(t * 0.0053));          // and dies away
+  windHead = a;
   WIND.set(Math.cos(a) * s, 0, Math.sin(a) * s);
 }
 

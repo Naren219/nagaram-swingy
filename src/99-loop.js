@@ -117,6 +117,7 @@ function frame() {
   updateTraffic(dt);
   updateProps(T);
   updateMotes(T);
+  updateWindSigns(T);
   updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);

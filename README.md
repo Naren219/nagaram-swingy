@@ -28,6 +28,8 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 
 **Gamepad** (any standard-mapped pad; rumble where the pad has it): the triggers are the two webs, the left stick moves and winches, the right stick looks. **A** jump, hold to glide · **B** or **RB** dive · **LB** zip · **X** cling, board · **Y** photo mode · **start** pause · **back** ring run. D-pad: up time of day, right next course, down leave run, left respawn.
 
+**Wind you can read.** The breeze steers the glide, and the city shows it: pennants on the gopurams and the tallest roofs point down-wind and hang when it drops, kites fly down-wind of whoever holds them with their tails streaming, and the palms lean with it.
+
 **Perching.** Stand still on anything more than sixteen metres up and, after a few seconds, the game steps back: the readouts and the aim ring fade, the camera pulls out and turns slowly about you, and the sounds of the streets come up to where you are. Look around yourself and the turn waits for you. Move, jump or fire a web and everything is back at once. There is no button for it.
 
 **The line round corners (trial, `B`).** As shipped, a web is a length between you and its anchor and passes straight through any building in the way. With the trial on, the line is a taut string the city can touch: where it meets the edge of a building it bends there, and you swing about the bend on the rope that is left. Round a corner and the swing tightens and whips; swing back and the bend lets go. It is off by default while it is being judged, the setting is remembered, and keyboard is the only way to switch it for now.
@@ -100,9 +102,9 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 182 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 187 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
-The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, the fading readouts, the perch, and the line bending round a corner (against the same swing with the trial off, and three minutes of a random flyer).
+The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, ring runs flown on rails (the clock must read length ÷ speed at any frame rate), the landing roll and the wall-run (neither may add speed, height or energy), the events sound hangs on, the drawn line's travel and sag, the sash, a mocked gamepad, the fading readouts, the perch, kites against a set wind, and the line bending round a corner (against the same swing with the trial off, and three minutes of a random flyer).
 
 The suite is three files under `test/`. `smoke.js` is the entry point and holds the three passes that drive the page in real time. `fixed-step.js` holds the fixed-step pass as one function per subject, listed in `SECTIONS`; each starts from `__reset()`, so a section does not depend on what ran before it, and a new subject is a new function added to that list. `harness.js` is the server, the browser and the tally of checks.
 
@@ -147,6 +149,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `84-water-fx.js` | splash and skim rings |
 | `85-rig.js` | character rig geometry, procedural posing, somersault and landing roll, the drawn line |
 | `81-wrap.js` | trial: the bends a line takes round box edges, and what the solver hangs you from |
+| `83-wind-signs.js` | the wind made visible: pennants, and the uniforms the plants lean by |
 | `86-sash.js` | the sash: a cloth chain simulated in the player's frame |
 | `90-camera.js` | boom, collision, orientation |
 | `91-perch.js` | the perch: when standing still somewhere high becomes a view |
@@ -177,6 +180,7 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 - **Ask `webEnd(w)` and `webFree(w)`, not `w.a` and `w.len`, for what the player hangs from.** With no bends they are the anchor and the whole line; with the trial on they are the last corner and the rope past it. `w.a` is still where the web is stuck and `w.len` is still all of the rope.
 - **A bend changes what you swing about, never how much rope there is.** The path anchor → bends → body is the same length the step before and the step after a bend forms or lets go; a jump there is a free kick. The winch stops at the last bend (`wrapSeal`) for the same reason.
 - **Cast toward the anchor, not from it.** An anchor is on a wall, and `rayHit` starting on a wall cannot tell that wall from open air.
+- **One wind.** Pennants, kites, palms, the sash and the aero model all read `WIND` (and `windHead`, its heading, which stays meaningful in a dead calm). A second, prettier wind for the scenery would make the scenery a liar.
 - **`perchK` is the only thing the perch exports.** Camera, aim ring and ambience each read that one number; the perch itself touches only `yaw` (the slow turn) and a class on `<body>`. It must never hold the player: every input that means "I am playing" ends it the same frame.
 - **The sash is simulated as offsets from its pin, against air velocity minus the player's.** Simulated in world space it whips on every respawn and goes limp in photo mode.
 - **A course never touches the world's random stream.** `buildCourse()` has its own generator, so the city is identical whether or not a run was ever started.

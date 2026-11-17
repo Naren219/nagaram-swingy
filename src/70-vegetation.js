@@ -39,6 +39,29 @@ function treeGeo(seed) {
   return mergeGeos(p);
 }
 const vegMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+/* Plants lean with the wind (83-wind-signs.js): pushed over along it by the
+   square of their height, so a trunk bends and its foot stays planted, with
+   a slow gust travelling through the grove and a quick shiver in the crown.
+   Applied after the instance transform, where +x and +z are the world's. The
+   depth material carries the same bend, or the shadow would stand still
+   under a moving tree. */
+const PLANT_BEND = 0.0026;      // metres of lean per (m/s of wind) per (metre of height) squared
+function plantSway(sh) {
+  sh.uniforms.uWind = windUni.uWind; sh.uniforms.uTime = windUni.uTime;
+  sh.vertexShader = 'uniform vec2 uWind;\nuniform float uTime;\n' + sh.vertexShader.replace('#include <project_vertex>', `
+    vec4 mvPosition = instanceMatrix * vec4(transformed, 1.0);
+    {
+      vec4 wp = modelMatrix * mvPosition;
+      float gust = 1.0 + 0.45 * sin(uTime * 1.3 + wp.x * 0.07 + wp.z * 0.05);
+      float h = max(mvPosition.y, 0.0);
+      mvPosition.xz += uWind * (h * h * ${PLANT_BEND} * gust)
+        + vec2(sin(uTime * 4.7 + wp.x * 1.3), cos(uTime * 4.1 + wp.z * 1.1)) * (length(uWind) * 0.012 * smoothstep(5.0, 10.0, h));
+    }
+    mvPosition = modelViewMatrix * mvPosition;
+    gl_Position = projectionMatrix * mvPosition;`);
+}
+const plantMat = vegMat.clone(); plantMat.onBeforeCompile = plantSway;
+const plantDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); plantDepth.onBeforeCompile = plantSway;
 const VEG_CELL = 220;
 function scatter(geoFn, count, test, scaleLo, scaleHi) {
   const geos = [geoFn(0.3), geoFn(1.4), geoFn(2.7)];
@@ -71,11 +94,12 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
       reach = Math.max(reach, Math.hypot(x - c.cx, z - c.cz) + (bs.center.length() + bs.radius) * Math.max(s, sy));
     }
   }
-  for (const g of geos) g.boundingSphere.set(V3(0, 0, 0), reach);
+  for (const g of geos) g.boundingSphere.set(V3(0, 0, 0), reach + 4);   // and room to lean
   const m = new THREE.Matrix4();
   for (const c of cells.values()) {
     const n = c.list.length / 5;
-    const im = new THREE.InstancedMesh(geos[c.g], vegMat, n);
+    const im = new THREE.InstancedMesh(geos[c.g], plantMat, n);
+    im.customDepthMaterial = plantDepth;
     for (let i = 0; i < n; i++) {
       const [dx, dz, s, sy, ry] = c.list.slice(i * 5, i * 5 + 5);
       m.compose(pos.set(dx, 0, dz), q.setFromEuler(e.set(0, ry, 0)), scl.set(s, sy, s));

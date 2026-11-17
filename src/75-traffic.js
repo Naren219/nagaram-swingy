@@ -206,6 +206,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
 }
 
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
@@ -216,11 +217,18 @@ function updateProps(t) {
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
+  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
+     tail streaming behind: look up and you can read which way the air is
+     going and how hard. In a calm it wanders in wide lazy circles; as the
+     wind rises it is carried out along it and held there. (k.x, k.z) is the
+     hand on the ground. */
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
   for (let i = 0; i < kites.length; i++) {
     const k = kites[i];
-    const a = t * 0.22 + k.ph;
-    e.set(Math.sin(a * 1.7) * 0.5, a, Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), KITE_SCALE);
+    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;
