@@ -8,7 +8,8 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = Number(process.env.PORT) || 8517;
-const BASE = 'http://localhost:' + PORT + '/';
+/* the reference city: no squalls, an ordinary breeze, no festival (11-city-day.js) */
+const BASE = 'http://localhost:' + PORT + '/?day=plain';
 const SHOTS = path.join(ROOT, 'test', 'screenshots');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css' };
 

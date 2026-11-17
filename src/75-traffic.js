@@ -101,8 +101,8 @@ const RIDE_UP = 0.85;      // a rider's centre above the surface they stand on
 const BOAT_HX = 1.1, BOAT_HY = 0.58, BOAT_HZ = 4.25;   // hull and deck, about the hull's centre
 const boats = [];
 const kites = [];
-const KITE_MAX = 72;       // room for more of them, of which KITES_ON are up
-const KITES_ON = 26;
+const KITE_MAX = 72;       // a festival day (11-city-day.js) flies all of them; any other day, 26
+const KITES_ON = CITY_DAY.kites ? KITE_MAX : 26;
 {
   const im = new THREE.InstancedMesh(V_BOAT, vegMat, 34);
   im.castShadow = true; im.frustumCulled = false; scene.add(im);

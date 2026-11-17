@@ -56,9 +56,11 @@ function frame() {
   updatePerch(dt, fb !== 0 || rl !== 0 || jumpEdge || !!keys['Space'] || inp.tuck || inp.zip || held[0] || held[1]);
 
   /* ---- fixed-step physics ---- */
+  updateWeather(dt);
   updateWind(T);
   if (!photoMode) dayT = (dayT + dt / DAY_LEN) % 1;
   applyDay();
+  applyWeather(dt);
   if (photoMode) {
     /* the player and aircraft freeze for the shot; the rest of the city lives on */
     acc = 0; pPrev.copy(player.p); pRender.copy(player.p);
