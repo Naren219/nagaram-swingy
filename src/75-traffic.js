@@ -205,15 +205,14 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   return _ph2;
 }
 
-const _propM = new THREE.Matrix4(), _propQ = new THREE.Quaternion(), _propE = new THREE.Euler();
-const _propP = V3(), _UNIT = V3(1, 1, 1), _KITE_S = V3(1.6, 1.6, 1.6);
+const KITE_SCALE = V3(1.6, 1.6, 1.6);
 function updateProps(t) {
-  const m = _propM, q = _propQ, e = _propE;
+  const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
     const b = boats[i];
     const bob = b.wet ? Math.sin(t * 1.1 + b.ph) * 0.35 : 0;
     e.set(b.wet ? Math.sin(t * 0.9 + b.ph) * 0.08 : 0.12, b.yaw, b.wet ? Math.cos(t * 0.7 + b.ph) * 0.06 : 0.05);
-    m.compose(_propP.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), _UNIT);
+    m.compose(p.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), UNIT);
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
@@ -221,7 +220,7 @@ function updateProps(t) {
     const k = kites[i];
     const a = t * 0.22 + k.ph;
     e.set(Math.sin(a * 1.7) * 0.5, a, Math.cos(a * 1.3) * 0.4);
-    m.compose(_propP.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), _KITE_S);
+    m.compose(p.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;

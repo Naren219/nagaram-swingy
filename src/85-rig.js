@@ -109,7 +109,6 @@ const splats = [0, 1].map(() => {
   m.visible = false; scene.add(m); return m;
 });
 
-const _YUP = V3(0, 1, 0);
 const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _d = V3(), _up = V3(0, -1, 0);
 const _sa = V3(), _sb = V3();   // shoulder world positions, for arm assignment
 function aimAt(nodeObj, worldDir, parentQ) {
@@ -159,7 +158,7 @@ function poseRig(dt, inp) {
   else _bz.copy(inp.fwd).multiplyScalar(-1);
   if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
   if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(_YUP).normalize());
+  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
   player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
   _by.set(0, 1, 0);
   _bx.copy(_by).cross(_bz);
@@ -275,7 +274,7 @@ function poseRig(dt, inp) {
     _d.copy(w.a).sub(w.hand);
     const L = _d.length();
     strands[i].position.copy(w.hand);
-    strands[i].quaternion.setFromUnitVectors(_YUP, _d.multiplyScalar(1 / L));
+    strands[i].quaternion.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
     strands[i].scale.set(1, L, 1);
     splats[i].position.copy(w.a);
     const th = clamp(w.tension / 9000, 0, 1);

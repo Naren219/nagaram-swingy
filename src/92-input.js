@@ -11,6 +11,7 @@ function setPaused(on) {
   if (paused === on) return;
   paused = on;
   pauseEl.classList.toggle('on', on);
+  if (on) renderer.render(scene, camera);   // the frame that stays up; the loop draws nothing while paused
   pbtn.classList.toggle('on', on);
   held[0] = held[1] = false;
   for (const k of Object.keys(keys)) delete keys[k];
@@ -132,8 +133,8 @@ addEventListener('mousedown', e => {
   if (!locked() || photoMode) return;
   /* holding keeps trying: a shot fired a frame before an anchor comes into
      view now connects the instant it does, instead of silently failing */
-  if (e.button === 0) { held[0] = true; if (fireWebAt(0, aimPt)) thwip(); }
-  if (e.button === 2) { held[1] = true; if (fireWebAt(1, aimPt)) thwip(); }
+  if (e.button === 0) { held[0] = true; fireWebAt(0, aimPt); }
+  if (e.button === 2) { held[1] = true; fireWebAt(1, aimPt); }
 });
 addEventListener('mouseup', e => {
   if (e.button === 0) { held[0] = false; releaseWeb(0); }
@@ -185,7 +186,7 @@ function bindHold(id, down, up, aims) {
   });
 }
 bindHold('tWeb',
-  () => { held[0] = true; if (!player.webs[0].on && aimPt && fireWebAt(0, aimPt)) thwip(); },
+  () => { held[0] = true; if (!player.webs[0].on && aimPt) fireWebAt(0, aimPt); },
   () => { held[0] = false; releaseWeb(0); },
   true);                                                // held web thumb also aims
 bindHold('tJump', () => { jumpEdge = true; keys['Space'] = true; }, () => { keys['Space'] = false; },

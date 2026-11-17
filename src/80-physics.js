@@ -12,8 +12,7 @@ const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on 
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)
-     attach(hand)  release(hand, secondsOnTheLine) */
+     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand) */
 const listeners = Object.create(null);
 function listen(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 function emit(type, a, b, c, d) {
@@ -179,6 +178,18 @@ function boardablePlane(P) {
 }
 
 const _pp = V3(), _tmp = V3(), _tmp2 = V3();
+/* what is fixed to an aircraft, put where the aircraft now is */
+function pinAnchors() {
+  for (const w of player.webs) if (w.on && w.pl) planePoint(w.pl, w.lo.x, w.lo.y, w.lo.z, w.a);
+}
+function pinRider() {
+  planePoint(player.riding, player.rideLo.x, player.rideLo.y, player.rideLo.z, player.p);
+}
+/* The one jump. The lift is part of it: velocity is derived from position, so
+   those 4 cm are worth another 4.8 m/s by the end of the step. */
+const JUMP_V = 12.4, JUMP_LIFT = 0.04;
+function takeOff() { player.v.y = JUMP_V; player.p.y += JUMP_LIFT; player.coyote = 0; }
+
 function stepPhysics(h, inp) {
   const P = player.p, V = player.v;
   _pp.copy(P);
@@ -205,7 +216,7 @@ function stepPhysics(h, inp) {
     const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
     player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -9.5, 9.5);
     player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -1.2, 1.2);
-    planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, P);
+    pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
     player.lastAccel.set(0, 0, 0);
@@ -277,7 +288,7 @@ function stepPhysics(h, inp) {
     const runA = inp.tuck ? 62 : 42;
     ax += inp.mx * runA; az += inp.mz * runA;
     ax -= V.x * 6.2; az -= V.z * 6.2;
-    if (inp.jump) { V.y = 12.4; P.y += 0.04; }
+    if (inp.jump) takeOff();
   } else if (player.inWater) {
     ax += inp.mx * 15; az += inp.mz * 15;                 // swim
     if (inp.jump) V.y = Math.max(V.y, 10.5);              // kick for the surface
@@ -292,9 +303,7 @@ function stepPhysics(h, inp) {
   } else {
     /* Coyote time: a jump pressed just after running off an edge still counts.
        Only while falling and off the line, so it cannot stack on a real jump. */
-    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) {
-      V.y = 12.4; P.y += 0.04; player.coyote = 0;
-    }
+    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) takeOff();
     const air = inp.glide ? 15 : 11;
     ax += inp.mx * air; az += inp.mz * air;
     if (inp.tuck) { ax += inp.fwd.x * 16; ay += inp.fwd.y * 16; az += inp.fwd.z * 16; }
@@ -336,7 +345,7 @@ function stepPhysics(h, inp) {
   const K = 0.94;
   /* a latched aircraft carries its anchor with it, so the constraint target
      has to be re-evaluated every substep — that is what tows the player */
-  for (const w of player.webs) if (w.on && w.pl) planePoint(w.pl, w.lo.x, w.lo.y, w.lo.z, w.a);
+  pinAnchors();
 
   for (let it = 0; it < 5; it++) {
     for (const w of player.webs) {
@@ -366,11 +375,8 @@ function stepPhysics(h, inp) {
    fixed to a hull (the rider, a latched anchor) would be drawn where the
    aircraft was a frame ago: 14 cm of slip at 144 Hz. Re-pin them every frame. */
 function pinToPlanes(render) {
-  for (const w of player.webs) if (w.on && w.pl) planePoint(w.pl, w.lo.x, w.lo.y, w.lo.z, w.a);
-  if (player.riding) {
-    planePoint(player.riding, player.rideLo.x, player.rideLo.y, player.rideLo.z, player.p);
-    render.copy(player.p);
-  }
+  pinAnchors();
+  if (player.riding) { pinRider(); render.copy(player.p); }
 }
 
 /* ---- attaching ---- */
@@ -474,6 +480,5 @@ function releaseWeb(i) {
   if (!other.on && !player.grounded && !player.riding && !player.inWater && player.v.y > 12) {
     emit('flip', player.v.y > 21 ? 2 : 1);
   }
-  emit('release', i, w.age);
 }
 

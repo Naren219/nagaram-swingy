@@ -6,24 +6,23 @@
    one, and ?run=1234 in the address makes any other, so a course can be
    shared as a link. Your best time on each is kept with a ghost of the
    flight that set it.
+
+   Three words, used strictly: a COURSE is a set of rings, a RING is one
+   hoop, a RUN is one attempt at a course.
    ===================================================================== */
-const RUN_GATES = 12;      // rings in a course
-const GATE_R = 11;         // metres from the centre that count as through
+const COURSE_RINGS = 12;
+const PASS_R = 11;         // metres from a ring's centre that count as through
 const RING_R = 9;          // drawn radius: a little inside what counts
 const GHOST_HZ = 10, GHOST_MAX = 3000;   // five minutes of ghost at most
 const RUN_KEY = 'nagaram.runs';
 
-const runSeedToday = () => { const d = new Date(); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); };
-const COURSES = [
-  { id: 'day-' + runSeedToday(), name: 'today', seed: runSeedToday() },
-  { id: 'c1', name: 'course one', seed: 1101 },
-  { id: 'c2', name: 'course two', seed: 2202 },
-  { id: 'c3', name: 'course three', seed: 3303 }
-];
-{
-  const m = /[?&]run=(\d{1,9})\b/.exec(location.search);
-  if (m) COURSES.unshift({ id: 'seed-' + m[1], name: 'seed ' + m[1], seed: +m[1] });
-}
+const COURSES = (() => {
+  const d = new Date(), today = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  const shared = /[?&]run=(\d{1,9})\b/.exec(location.search);
+  const seeds = [['day-' + today, 'today', today], ['c1', 'course one', 1101], ['c2', 'course two', 2202], ['c3', 'course three', 3303]];
+  if (shared) seeds.unshift(['seed-' + shared[1], 'seed ' + shared[1], +shared[1]]);
+  return seeds.map(([id, name, seed]) => ({ id, name, seed, rings: null, sig: '' }));   // rings are built on first use
+})();
 
 /* tallest roof within r of a point: a ring is only fair where there is
    something to swing from */
@@ -66,12 +65,12 @@ function buildCourse(seed) {
     return { x, y, z, ux: 0, uz: 1 };
   };
   for (let attempt = 0; attempt < 200; attempt++) {
-    const gates = [];
+    const rings = [];
     let head = rr(0, TAU), g = null;
     for (let t = 0; t < 40 && !g; t++) g = place(rr(-LIM * 0.7, LIM * 0.6), rr(-LIM * 0.7, LIM * 0.7));
     while (g) {
-      gates.push(g);
-      if (gates.length === RUN_GATES) break;
+      rings.push(g);
+      if (rings.length === COURSE_RINGS) break;
       let nx = null;
       for (let t = 0; t < 60 && !nx; t++) {
         const a = head + rr(-1.2, 1.2), d = rr(130, 230);
@@ -80,25 +79,43 @@ function buildCourse(seed) {
       }
       g = nx;
     }
-    if (gates.length < RUN_GATES) continue;
+    if (rings.length < COURSE_RINGS) continue;
     /* each ring faces the way you leave it; the last faces the way you came */
-    for (let i = 0; i < RUN_GATES; i++) {
-      const a = gates[Math.min(i, RUN_GATES - 2)], b = gates[Math.min(i, RUN_GATES - 2) + 1];
+    for (let i = 0; i < COURSE_RINGS; i++) {
+      const a = rings[Math.min(i, COURSE_RINGS - 2)], b = rings[Math.min(i, COURSE_RINGS - 2) + 1];
       const l = Math.hypot(b.x - a.x, b.z - a.z);
-      gates[i].ux = (b.x - a.x) / l; gates[i].uz = (b.z - a.z) / l;
+      rings[i].ux = (b.x - a.x) / l; rings[i].uz = (b.z - a.z) / l;
     }
-    return gates;
+    return rings;
   }
   return null;
 }
+/* A fingerprint of where the rings actually are. A saved time is only a
+   record on the course it was flown on, and the same seed gives a different
+   course the moment the generator, its constants or the city change. */
+function courseSig(rings) {
+  let h = 2166136261;
+  for (const r of rings) for (const v of [r.x, r.y, r.z]) h = Math.imul(h ^ Math.round(v * 10), 16777619);
+  return (h >>> 0).toString(36);
+}
 
-/* ---- saved bests ---- */
-let runSaves = {};
-try { runSaves = JSON.parse(localStorage.getItem(RUN_KEY)) || {}; } catch (e) {}
-function saveRuns() {
-  /* yesterday's daily course can never be flown again; its ghost only costs space */
-  for (const k of Object.keys(runSaves)) if (k.startsWith('day-') && k !== 'day-' + runSeedToday()) delete runSaves[k];
-  try { localStorage.setItem(RUN_KEY, JSON.stringify(runSaves)); } catch (e) {}
+/* ---- saved bests: { [course id]: { sig, time, splits, ghost } } ---- */
+const runSaves = (() => {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(RUN_KEY)); } catch (e) {}
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+  /* a daily course that is no longer on offer can never be flown again; its
+     ghost only costs space. Judged against the courses this page loaded with,
+     so a run that finishes after midnight still keeps its time. */
+  for (const k of Object.keys(s)) if (k.startsWith('day-') && !COURSES.some(c => c.id === k)) delete s[k];
+  return s;
+})();
+function writeSaves() { try { localStorage.setItem(RUN_KEY, JSON.stringify(runSaves)); } catch (e) {} }
+/* the one place a save is trusted: anything stale or misshapen is no best at all */
+function bestFor(course) {
+  const s = runSaves[course.id];
+  if (!s || s.sig !== course.sig || typeof s.time !== 'number' || !Array.isArray(s.splits) || s.splits.length !== COURSE_RINGS) return null;
+  return { time: s.time, splits: s.splits, ghost: unpackGhost(s.ghost) };
 }
 /* ghost path: x, y, z in decimetres as int16, base64 */
 function packGhost(a, n) {
@@ -108,85 +125,104 @@ function packGhost(a, n) {
 }
 function unpackGhost(s) {
   try {
+    if (typeof s !== 'string') throw 0;
     const raw = atob(s), b = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
     return new Int16Array(b.buffer);
-  } catch (e) { return null; }
+  } catch (e) { return new Int16Array(0); }   // a best with no ghost is still a best
 }
 
 /* ---- what you see ---- */
-const ringMat = new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false });
-const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false });
 const RING_GEO = new THREE.TorusGeometry(RING_R, 0.42, 6, 30);
-const runRing = new THREE.Mesh(RING_GEO, ringMat), runRing2 = new THREE.Mesh(RING_GEO, ringMat2);
+const ringNow = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false }));
+const ringAfter = new THREE.Mesh(RING_GEO,
+  new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false }));
 /* a shaft of light over the next ring, so it can be found from across the city */
-const runBeam = new THREE.Mesh(
-  new THREE.CylinderGeometry(1.6, 1.6, 420, 8, 1, true).translate(0, 210, 0),
+const ringBeam = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.6, 1.6, 420, 8, 1, true).translate(0, 210 + RING_R, 0),
   new THREE.MeshBasicMaterial({ color: 0xffc85a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false, fog: false }));
-const runGhost = new THREE.Mesh(
+const ghostMesh = new THREE.Mesh(
   new THREE.OctahedronGeometry(1, 0).scale(0.55, 1.05, 0.55),
   new THREE.MeshBasicMaterial({ color: 0x3ef0ff, transparent: true, opacity: 0.5, depthWrite: false, fog: false }));
-for (const m of [runRing, runRing2, runBeam, runGhost]) { m.visible = false; m.frustumCulled = false; scene.add(m); }
+for (const m of [ringNow, ringAfter, ringBeam, ghostMesh]) { m.visible = false; m.frustumCulled = false; scene.add(m); }
 
-const runEl = document.getElementById('run'), runArrow = document.getElementById('garrow');
+const runEl = document.getElementById('run'), runArrow = document.getElementById('runarrow');
 const runNm = runEl.querySelector('.nm'), runGt = runEl.querySelector('.gt');
 const runTm = runEl.querySelector('.tm'), runDf = runEl.querySelector('.df');
 const fmtRun = (t) => Math.floor(t / 60) + ':' + (t % 60 < 10 ? '0' : '') + (Math.floor(t % 60 * 10) / 10).toFixed(1);
 const fmtDiff = (d) => (d < 0 ? '−' : '+') + Math.abs(d).toFixed(1);
 
 /* ---- state ---- */
-const ringRun = {
+const run = {
   state: 'off',            // off · armed (waiting at ring one) · live · done
-  ci: 0, gates: null, next: 0, t: 0, dPrev: 1e9,
-  splits: [], best: null, ghost: null,
-  rec: new Int16Array(GHOST_MAX * 3), recN: 0, hudT: 0
+  ci: 0,                   // which of COURSES
+  rings: null, next: 0,    // the course being flown, and the ring you are after
+  t: 0, splits: [],        // the clock, and its reading at each ring
+  dPrev: Infinity,         // distance to the next ring a frame ago
+  best: null,              // { time, splits, ghost } to beat, or null
+  rec: new Int16Array(GHOST_MAX * 3), recN: 0
 };
-function placeRings() {
-  const on = ringRun.state === 'armed' || ringRun.state === 'live';
-  const a = on ? ringRun.gates[ringRun.next] : null, b = on ? ringRun.gates[ringRun.next + 1] : null;
-  runRing.visible = runBeam.visible = !!a;
-  runRing2.visible = !!b;
-  if (a) { runRing.position.set(a.x, a.y, a.z); runRing.rotation.y = Math.atan2(a.ux, a.uz); runBeam.position.set(a.x, a.y + RING_R, a.z); }
-  if (b) { runRing2.position.set(b.x, b.y, b.z); runRing2.rotation.y = Math.atan2(b.ux, b.uz); }
+const flying = () => run.state === 'armed' || run.state === 'live';
+/* seconds against your best: at the last ring passed while flying, overall once done */
+function runDelta() {
+  if (!run.best) return null;
+  if (run.state === 'done') return run.t - run.best.time;
+  if (run.state === 'live' && run.next > 1) return run.splits[run.next - 1] - run.best.splits[run.next - 1];
+  return null;
 }
-function armRun() {
-  const c = COURSES[ringRun.ci];
-  if (!c.gates) c.gates = buildCourse(c.seed);
-  if (!c.gates) { toast('no course for that seed'); return; }
-  ringRun.gates = c.gates; ringRun.state = 'armed'; ringRun.next = 0; ringRun.t = 0; ringRun.dPrev = 1e9; ringRun.recN = 0;
-  ringRun.splits.length = 0;
-  const s = runSaves[c.id];
-  ringRun.best = s && typeof s.t === 'number' ? s : null;
-  ringRun.ghost = ringRun.best && ringRun.best.g ? unpackGhost(ringRun.best.g) : null;
-  runGhost.visible = false;
-  /* the approach: back along the line the course leaves ring one on, as far
-     as there is clear air, a little above it and already moving */
-  const g = ringRun.gates[0], l = Math.hypot(1, 0.25);
-  const hit = rayHit(g.x, g.y, g.z, -g.ux / l, 0.25 / l, -g.uz / l, 70);
+/* Everything on screen follows from the run's state, and this is the only
+   place that says how. Call it after changing the state or the next ring;
+   nothing else shows, hides or labels a thing. (The ghost and the arrow also
+   move every frame while flying: see updateRun.) */
+function syncRunView() {
+  const shown = run.state !== 'off';
+  const a = flying() ? run.rings[run.next] : null, b = flying() ? run.rings[run.next + 1] : null;
+  for (const [mesh, ring] of [[ringNow, a], [ringAfter, b], [ringBeam, a]]) {
+    mesh.visible = !!ring;
+    if (ring) { mesh.position.set(ring.x, ring.y, ring.z); mesh.rotation.y = Math.atan2(ring.ux, ring.uz); }
+  }
+  if (run.state !== 'live') ghostMesh.visible = false;
+  if (!flying()) runArrow.classList.remove('on');
+  runEl.classList.toggle('on', shown);
+  runEl.classList.toggle('done', run.state === 'done');
+  document.body.classList.toggle('run', shown);
+  if (!shown) return;
+  const d = runDelta();
+  runNm.textContent = COURSES[run.ci].name;
+  runGt.textContent = run.next + '/' + COURSE_RINGS;
+  runTm.textContent = run.state === 'armed' ? 'fly through the ring' : fmtRun(run.t);
+  runDf.textContent = d === null ? '' : fmtDiff(d);
+  runDf.classList.toggle('up', d !== null && d < 0);
+}
+/* put the player on the approach: back along the line the course leaves ring
+   one on, as far as there is clear air, a little above it and already moving */
+function toApproach(ring) {
+  const l = Math.hypot(1, 0.25), bx = -ring.ux / l, by = 0.25 / l, bz = -ring.uz / l;
+  const hit = rayHit(ring.x, ring.y, ring.z, bx, by, bz, 70);
   const d = hit ? Math.max(4, hit.t - 5) : 70;
   respawn();
-  player.p.set(g.x - g.ux / l * d, g.y + 0.25 / l * d, g.z - g.uz / l * d);
-  player.v.set(g.ux * 20, 0, g.uz * 20);
+  player.p.set(ring.x + bx * d, ring.y + by * d, ring.z + bz * d);
+  player.v.set(ring.ux * 20, 0, ring.uz * 20);
   held[0] = held[1] = false;
-  yaw = Math.atan2(-g.ux, g.uz); pitch = -0.1;
-  placeRings();
-  runEl.classList.add('on'); runEl.classList.remove('done');
-  document.body.classList.add('run');
-  runNm.textContent = c.name;
-  toast(c.name + ' · ' + RUN_GATES + ' rings · ' + (ringRun.best ? 'best ' + fmtRun(ringRun.best.t) : 'no time yet'));
-  drawRunHud(true);
+  yaw = Math.atan2(-ring.ux, ring.uz); pitch = -0.1;
 }
-function quitRun() {
-  if (ringRun.state === 'off') return;
-  ringRun.state = 'off'; placeRings(); runGhost.visible = false;
-  runEl.classList.remove('on'); runArrow.classList.remove('on');
-  document.body.classList.remove('run');
+function armRun() {
+  const c = COURSES[run.ci];
+  if (!c.rings) {
+    c.rings = buildCourse(c.seed);
+    if (!c.rings) { toast('no course for that seed'); return; }
+    c.sig = courseSig(c.rings);
+  }
+  run.state = 'armed'; run.rings = c.rings; run.next = 0;
+  run.t = 0; run.splits.length = 0; run.dPrev = Infinity; run.recN = 0;
+  run.best = bestFor(c);
+  toApproach(c.rings[0]);
+  syncRunView();
+  toast(c.name + ' · ' + COURSE_RINGS + ' rings · ' + (run.best ? 'best ' + fmtRun(run.best.time) : 'no time yet'));
 }
-function nextCourse() {
-  ringRun.ci = (ringRun.ci + 1) % COURSES.length;
-  armRun();
-}
-function gateChime(last) {
+function quitRun() { run.state = 'off'; syncRunView(); }
+function nextCourse() { run.ci = (run.ci + 1) % COURSES.length; armRun(); }
+function ringChime(last) {
   if (!AC) return;
   const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
   o.type = 'sine';
@@ -198,79 +234,80 @@ function gateChime(last) {
   o.connect(g); g.connect(master); o.start(t); o.stop(t + (last ? 0.75 : 0.36));
 }
 function finishRun() {
-  const c = COURSES[ringRun.ci], t = ringRun.t, old = ringRun.best;
-  ringRun.state = 'done'; placeRings(); runGhost.visible = false; runArrow.classList.remove('on');
-  runEl.classList.add('done');
-  if (!old || t < old.t) {
-    runSaves[c.id] = { t, s: ringRun.splits.map(v => +v.toFixed(2)), g: packGhost(ringRun.rec, ringRun.recN * 3) };
-    saveRuns();
-    toast(fmtRun(t) + (old ? ' · new best by ' + (old.t - t).toFixed(1) + ' s' : ' · first time set'));
+  const c = COURSES[run.ci], old = run.best;
+  run.state = 'done';
+  if (!old || run.t < old.time) {
+    runSaves[c.id] = { sig: c.sig, time: run.t, splits: run.splits.map(v => +v.toFixed(2)), ghost: packGhost(run.rec, run.recN * 3) };
+    writeSaves();
+    toast(fmtRun(run.t) + (old ? ' · new best by ' + (old.time - run.t).toFixed(1) + ' s' : ' · first time set'));
   } else {
-    toast(fmtRun(t) + ' · ' + fmtDiff(t - old.t) + ' on your best');
+    toast(fmtRun(run.t) + ' · ' + fmtDiff(run.t - old.time) + ' on your best');
   }
-  drawRunHud(true);
+  syncRunView();   // run.best is still the time you were chasing, so the readout shows the margin
 }
-function drawRunHud(force) {
-  ringRun.hudT -= 1; if (!force && ringRun.hudT > 0) return; ringRun.hudT = 4;   // every fourth frame is plenty
-  runGt.textContent = Math.min(ringRun.next, RUN_GATES) + '/' + RUN_GATES;
-  runTm.textContent = ringRun.state === 'armed' ? 'fly through the ring' : fmtRun(ringRun.t);
-  /* against your best: at the last ring passed while flying, overall once done */
-  let d = null;
-  if (ringRun.best) {
-    if (ringRun.state === 'done') d = ringRun.t - ringRun.best.t;
-    else if (ringRun.state === 'live' && ringRun.next > 1 && ringRun.best.s) d = ringRun.splits[ringRun.next - 1] - ringRun.best.s[ringRun.next - 1];
+
+/* ---- one frame of a run, in four steps ---- */
+/* the ghost is sampled on simulation time, so it replays at any frame rate */
+function recordGhost() {
+  while (run.recN < GHOST_MAX && run.recN <= run.t * GHOST_HZ) {
+    const o = run.recN++ * 3;
+    run.rec[o] = Math.round(player.p.x * 10); run.rec[o + 1] = Math.round(player.p.y * 10); run.rec[o + 2] = Math.round(player.p.z * 10);
   }
-  runDf.textContent = d === null || !isFinite(d) ? '' : fmtDiff(d);
-  runDf.classList.toggle('up', d !== null && d < 0);
 }
-/* called once a frame, after physics, while the simulation is running */
-function updateRun(dt) {
-  if (ringRun.state !== 'armed' && ringRun.state !== 'live') return;
-  if (ringRun.state === 'live') {
-    ringRun.t += dt;
-    /* the ghost is sampled on simulation time, so it replays at any frame rate */
-    while (ringRun.recN < GHOST_MAX && ringRun.recN <= ringRun.t * GHOST_HZ) {
-      const o = ringRun.recN++ * 3;
-      ringRun.rec[o] = Math.round(player.p.x * 10); ringRun.rec[o + 1] = Math.round(player.p.y * 10); ringRun.rec[o + 2] = Math.round(player.p.z * 10);
-    }
-    if (ringRun.ghost) {
-      const f = ringRun.t * GHOST_HZ, i = Math.floor(f), n = ringRun.ghost.length / 3;
-      runGhost.visible = i + 1 < n;
-      if (runGhost.visible) {
-        const a = i * 3, k = f - i, G = ringRun.ghost;
-        runGhost.position.set(lerp(G[a], G[a + 3], k) / 10, lerp(G[a + 1], G[a + 4], k) / 10 + 0.4, lerp(G[a + 2], G[a + 5], k) / 10);
-        runGhost.rotation.y = ringRun.t * 2.2;
-      }
-    }
-  }
-  const g = ringRun.gates[ringRun.next];
-  const d = Math.hypot(player.p.x - g.x, player.p.y - g.y, player.p.z - g.z);
-  if (d < GATE_R) {
-    /* the frame saw you already inside: back the clock up to the crossing */
-    const late = ringRun.dPrev > d && ringRun.dPrev < 1e8 ? dt * clamp((GATE_R - d) / (ringRun.dPrev - d), 0, 1) : 0;
-    if (ringRun.next === 0) { ringRun.state = 'live'; ringRun.t = late; ringRun.recN = 0; }
-    ringRun.splits[ringRun.next] = ringRun.t - late;
-    ringRun.next++; ringRun.dPrev = 1e9;
-    gateChime(ringRun.next === RUN_GATES);
-    if (ringRun.next === RUN_GATES) { ringRun.t -= late; finishRun(); return; }
-    placeRings(); drawRunHud(true);
-  } else ringRun.dPrev = d;
-  /* a pointer at the screen edge when the next ring is not in view */
-  const n = ringRun.gates[ringRun.next];
-  _d.set(n.x, n.y, n.z).sub(camera.position);
+function flyGhost(path) {
+  const f = run.t * GHOST_HZ, i = Math.floor(f), a = i * 3, k = f - i;
+  ghostMesh.visible = a + 5 < path.length;
+  if (!ghostMesh.visible) return;
+  ghostMesh.position.set(lerp(path[a], path[a + 3], k) / 10, lerp(path[a + 1], path[a + 4], k) / 10 + 0.4, lerp(path[a + 2], path[a + 5], k) / 10);
+  ghostMesh.rotation.y = run.t * 2.2;
+}
+/* Has the next ring been passed? Returns how long ago within this frame, or
+   -1. A frame only ever sees you already inside, so the crossing is placed by
+   how far in you are against how far you came. (On the first frame dPrev is
+   infinite and that fraction is zero, which is right: there is no before.) */
+function ringCrossed(dt) {
+  const r = run.rings[run.next], was = run.dPrev;
+  const d = Math.hypot(player.p.x - r.x, player.p.y - r.y, player.p.z - r.z);
+  if (d >= PASS_R) { run.dPrev = d; return -1; }
+  run.dPrev = Infinity;
+  return dt * clamp((PASS_R - d) / (was - d), 0, 1);
+}
+function passRing(late) {
+  if (run.next === 0) { run.state = 'live'; run.t = late; }
+  const at = run.t - late;            // what the clock read at the crossing itself
+  run.splits[run.next++] = at;
+  ringChime(run.next === COURSE_RINGS);
+  if (run.next === COURSE_RINGS) { run.t = at; finishRun(); } else syncRunView();
+}
+/* a pointer at the screen edge when the next ring is not in view */
+function pointAtRing(r) {
+  _d.set(r.x, r.y, r.z).sub(camera.position);
   const sx = _d.dot(camRight), sy = _d.dot(camUp), sz = _d.dot(camFwd);
   const off = sz < 0 || Math.abs(sx) > sz * 0.62 || Math.abs(sy) > sz * 0.4;
   if (runArrow.classList.contains('on') !== off) runArrow.classList.toggle('on', off);
   if (off) runArrow.style.transform = 'rotate(' + Math.atan2(sx, sy).toFixed(3) + 'rad) translateY(-118px)';
-  drawRunHud(false);
+}
+/* called once a frame, after physics, while the simulation is running */
+function updateRun(dt) {
+  if (!flying()) return;
+  if (run.state === 'live') {
+    run.t += dt;
+    recordGhost();
+    if (run.best) flyGhost(run.best.ghost);
+    const clock = fmtRun(run.t);      // tenths: the text changes ten times a second, not every frame
+    if (runTm.textContent !== clock) runTm.textContent = clock;
+  }
+  const late = ringCrossed(dt);
+  if (late >= 0) passRing(late);
+  if (flying()) pointAtRing(run.rings[run.next]);
 }
 /* rings still to fly, on the minimap (called inside its scaled transform) */
 function drawRunOnMap(c, f) {
-  if (ringRun.state !== 'armed' && ringRun.state !== 'live') return;
-  for (let i = RUN_GATES - 1; i >= ringRun.next; i--) {
-    const g = ringRun.gates[i], first = i === ringRun.next;
+  if (!flying()) return;
+  for (let i = COURSE_RINGS - 1; i >= run.next; i--) {
+    const r = run.rings[i], first = i === run.next;
     c.fillStyle = first ? '#ffb52e' : 'rgba(255,181,46,.4)';
-    c.beginPath(); c.arc((g.x - player.p.x) * f, (g.z - player.p.z) * f, first ? 3.2 : 1.8, 0, TAU); c.fill();
+    c.beginPath(); c.arc((r.x - player.p.x) * f, (r.z - player.p.z) * f, first ? 3.2 : 1.8, 0, TAU); c.fill();
   }
 }
 

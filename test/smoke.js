@@ -523,7 +523,7 @@ const server = http.createServer((req, res) => {
       window.requestAnimationFrame = () => 0;
       renderer.render = () => {};
       window.__dt = 1 / 60; clock.getDelta = () => window.__dt;
-      window.run = (n) => { for (let i = 0; i < n; i++) frame(); };
+      window.__run = (n) => { for (let i = 0; i < n; i++) frame(); };
     });
     await page.waitForTimeout(150);   // let the one already-queued rAF callback drain
 
@@ -535,20 +535,20 @@ const server = http.createServer((req, res) => {
         for (let i = 0; i < N; i++) {
           player.riding = null;
           player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0);   // open road junction
-          run(Math.ceil(hz / 3) + (i % 7));                        // settle, at a varying accumulator phase
+          __run(Math.ceil(hz / 3) + (i % 7));                        // settle, at a varying accumulator phase
           const y0 = player.p.y;
-          jumpEdge = true; run(Math.ceil(hz / 20));
+          jumpEdge = true; __run(Math.ceil(hz / 20));
           if (player.p.y > y0 + 0.3) jumped++;
           const pl = planes[0];
-          player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); run(2 + (i % 5));
+          player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(2 + (i % 5));
           player.p.set(pl.p.x, pl.p.y + 3, pl.p.z);
-          mountEdge = true; run(2);
+          mountEdge = true; __run(2);
           if (player.riding) boarded++;
         }
         player.riding = null;
         /* and one press is still exactly one jump */
-        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); run(hz);
-        jumpEdge = true; run(Math.ceil(hz / 10));
+        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(hz);
+        jumpEdge = true; __run(Math.ceil(hz / 10));
         return { N, jumped, boarded, vy: player.v.y };
       }, hz);
       check('every jump press lands at ' + hz + ' Hz', r.jumped === r.N, r.jumped + '/' + r.N);
@@ -571,7 +571,7 @@ const server = http.createServer((req, res) => {
         let maxY = -1e9;
         for (let f = 0; f < 60 * 15; f++) {
           if (every && f % every === 0 && player.webs[0].on) { releaseWeb(0); fireWebAt(0, A); }
-          run(1); maxY = Math.max(maxY, player.p.y);
+          __run(1); maxY = Math.max(maxY, player.p.y);
         }
         const out = { rise: maxY - y0, gain: (E() - e0) / G };
         releaseWeb(0); assist = true; return out;
@@ -618,9 +618,9 @@ const server = http.createServer((req, res) => {
       const inThermal = buildings.filter(b => Math.hypot(b.x - mt.x, b.z - mt.z) < mt.r).length;
       /* walk in from the street, over the ghats, to the water */
       __dt = 1 / 60; player.riding = null;
-      player.p.set(TANK.x - TANK.half - 18, 0.85, TANK.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0; run(30);
+      player.p.set(TANK.x - TANK.half - 18, 0.85, TANK.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0; __run(30);
       let top = 0; keys['KeyW'] = true;
-      for (let f = 0; f < 60 * 9; f++) { run(1); top = Math.max(top, player.p.y); }
+      for (let f = 0; f < 60 * 9; f++) { __run(1); top = Math.max(top, player.p.y); }
       keys['KeyW'] = false;
       return { n: buildings.length, touching, lanes, inThermal, top, reach: player.p.x - TANK.x, endY: player.p.y };
     });
@@ -652,7 +652,7 @@ const server = http.createServer((req, res) => {
       }
       const drawn = (x, y, z, yw, pt) => {
         __dt = 1 / 60; player.riding = null; yaw = yw; pitch = pt;
-        for (let i = 0; i < 40; i++) { player.p.set(x, y, z); player.v.set(0, 0, 0); run(1); }
+        for (let i = 0; i < 40; i++) { player.p.set(x, y, z); player.v.set(0, 0, 0); __run(1); }
         scene.updateMatrixWorld(); camera.updateMatrixWorld();
         const cam = new THREE.Frustum().setFromProjectionMatrix(
           new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
@@ -677,14 +677,14 @@ const server = http.createServer((req, res) => {
       const out = {}, o = new THREE.Vector3(), pl = planes[0];
       for (const hz of [60, 144, 240]) {
         __dt = 1 / hz; held[0] = held[1] = false; releaseWeb(0); releaseWeb(1); player.riding = null;
-        player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); run(3); mountEdge = true; run(6);
+        player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(3); mountEdge = true; __run(6);
         let rider = player.riding ? 0 : 99, anchor = 99;
-        for (let i = 0; i < 200; i++) { run(1); planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, o); rider = Math.max(rider, o.distanceTo(pRender)); }
+        for (let i = 0; i < 200; i++) { __run(1); planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, o); rider = Math.max(rider, o.distanceTo(pRender)); }
         player.riding = null; player.p.set(pl.p.x, pl.p.y - 30, pl.p.z); player.v.copy(pl.v);
         const w = player.webs[0];
         if (fireWebAt(0, { x: pl.p.x, y: pl.p.y - 2, z: pl.p.z, pl })) {
           anchor = 0;
-          for (let i = 0; i < 200 && w.on; i++) { run(1); planePoint(pl, w.lo.x, w.lo.y, w.lo.z, o); anchor = Math.max(anchor, o.distanceTo(w.a)); }
+          for (let i = 0; i < 200 && w.on; i++) { __run(1); planePoint(pl, w.lo.x, w.lo.y, w.lo.z, o); anchor = Math.max(anchor, o.distanceTo(w.a)); }
         }
         releaseWeb(0); out[hz] = Math.max(rider, anchor);
       }
@@ -700,16 +700,16 @@ const server = http.createServer((req, res) => {
       const b = buildings.find(b => b.h > 30 && b.w > 14 && freeAt(b.x + b.w / 2 + 8, b.z, 6));
       const offEdge = (delay) => {
         player.p.set(b.x + b.w / 2 - 3, b.h + 2.5, b.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0;
-        run(50); const roofY = player.p.y, stood = player.grounded;
+        __run(50); const roofY = player.p.y, stood = player.grounded;
         keys['KeyW'] = true;
-        let f = 0; while (player.grounded && f++ < 300) run(1);
-        run(delay); jumpEdge = true; run(3);
+        let f = 0; while (player.grounded && f++ < 300) __run(1);
+        __run(delay); jumpEdge = true; __run(3);
         keys['KeyW'] = false;
         return { stood, left: f < 300, vy: player.v.y, drop: roofY - player.p.y };
       };
       const hop = (again) => {
-        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); run(30);
-        jumpEdge = true; run(6); if (again) jumpEdge = true; run(6);
+        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(30);
+        jumpEdge = true; __run(6); if (again) jumpEdge = true; __run(6);
         return player.v.y;
       };
       return { found: !!b, soon: offEdge(6), late: offEdge(18), once: hop(false), twice: hop(true) };
@@ -724,11 +724,11 @@ const server = http.createServer((req, res) => {
     /* a paused game draws one frame and then leaves the GPU alone */
     const idle = await page.evaluate(() => {
       let draws = 0; renderer.render = () => { draws++; };
-      __dt = 1 / 60; run(5); const playing = draws;
-      setPaused(true); draws = 0; run(120); const paused1 = draws;
-      dispatchEvent(new Event('resize')); run(60); const resized = draws - paused1;
-      const t0 = T; run(10); const frozen = T === t0;
-      setPaused(false); draws = 0; run(5); const resumed = draws;
+      __dt = 1 / 60; __run(5); const playing = draws;
+      draws = 0; setPaused(true); __run(120); const paused1 = draws;   // the one frame is drawn by pausing itself
+      dispatchEvent(new Event('resize')); __run(60); const resized = draws - paused1;
+      const t0 = T; __run(10); const frozen = T === t0;
+      setPaused(false); draws = 0; __run(5); const resumed = draws;
       renderer.render = () => {};
       return { playing, paused1, resized, frozen, resumed };
     });
@@ -738,7 +738,7 @@ const server = http.createServer((req, res) => {
     /* vehicles are written straight into the instance buffer; check that
        against a matrix composed the long way */
     const traf = await page.evaluate(() => {
-      __dt = 1 / 60; run(30);
+      __dt = 1 / 60; __run(30);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
       let worst = 0;
       for (const v of vehicles) {
@@ -762,7 +762,7 @@ const server = http.createServer((req, res) => {
       for (let d = 0; d < 366; d++) {
         const day = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() + d));
         const g = buildCourse(day.getUTCFullYear() * 10000 + (day.getUTCMonth() + 1) * 100 + day.getUTCDate());
-        if (!g || g.length !== RUN_GATES) { failed++; continue; }
+        if (!g || g.length !== COURSE_RINGS) { failed++; continue; }
         for (let i = 0; i < g.length; i++) {
           if (!clearAt(g[i].x, g[i].y, g[i].z, RING_R) || roofNear(g[i].x, g[i].z, 70) < g[i].y) bad++;
           if (i && g[i].y - g[i - 1].y > 30.01) steep++;
@@ -777,32 +777,32 @@ const server = http.createServer((req, res) => {
     const fly = await page.evaluate(() => {
       const rail = (hz, speed) => {
         __dt = 1 / hz; armRun();
-        const g = ringRun.gates, pts = [{ x: g[0].x - g[0].ux * 40, y: g[0].y, z: g[0].z - g[0].uz * 40 }].concat(g);
+        const g = run.rings, pts = [{ x: g[0].x - g[0].ux * 40, y: g[0].y, z: g[0].z - g[0].uz * 40 }].concat(g);
         pts.push({ x: g[11].x + g[11].ux * 30, y: g[11].y, z: g[11].z + g[11].uz * 30 });
         let len = 0; for (let i = 1; i < g.length; i++) len += Math.hypot(g[i].x - g[i - 1].x, g[i].y - g[i - 1].y, g[i].z - g[i - 1].z);
-        const states = [ringRun.state]; let ghostSeen = 0, ghostOff = 0, f = 0;
+        const states = [run.state]; let ghostSeen = 0, ghostOff = 0, f = 0;
         /* constant speed along the whole polyline: the step carries over each corner */
         let s = 0;
         for (let i = 1; i < pts.length; i++) {
           const a = pts[i - 1], b = pts[i], L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
           for (; s < L; s += speed / hz) {
             player.p.set(a.x + (b.x - a.x) * s / L, a.y + (b.y - a.y) * s / L, a.z + (b.z - a.z) * s / L); player.v.set(0, 0, 0);
-            run(1); f++;
-            if (states[states.length - 1] !== ringRun.state) states.push(ringRun.state);
-            if (runGhost.visible) { ghostSeen++; ghostOff = Math.max(ghostOff, runGhost.position.distanceTo(player.p)); }
+            __run(1); f++;
+            if (states[states.length - 1] !== run.state) states.push(run.state);
+            if (ghostMesh.visible) { ghostSeen++; ghostOff = Math.max(ghostOff, ghostMesh.position.distanceTo(player.p)); }
           }
           s -= L;
         }
-        return { t: ringRun.t, want: len / speed, states: states.join('>'), splits: ringRun.splits.slice(), ghostSeen, ghostOff,
-          hud: runEl.textContent, shown: runEl.classList.contains('on'), rings: runRing.visible };
+        return { t: run.t, want: len / speed, states: states.join('>'), splits: run.splits.slice(), ghostSeen, ghostOff,
+          hud: runEl.textContent, shown: runEl.classList.contains('on'), rings: ringNow.visible };
       };
-      ringRun.ci = 1;
-      const first = rail(60, 50), saved1 = runSaves.c1 && runSaves.c1.t;
-      const slower = rail(144, 40), saved2 = runSaves.c1.t;
-      const faster = rail(60, 60), saved3 = runSaves.c1.t;
+      run.ci = 1;
+      const first = rail(60, 50), saved1 = runSaves.c1 && runSaves.c1.time;
+      const slower = rail(144, 40), saved2 = runSaves.c1.time;
+      const faster = rail(60, 60), saved3 = runSaves.c1.time;
       const stored = JSON.parse(localStorage.getItem(RUN_KEY)).c1;
       quitRun();
-      return { first, slower, faster, saved1, saved2, saved3, storedT: stored.t, ghostBytes: stored.g.length, off: ringRun.state, hidden: !runEl.classList.contains('on') && !runRing.visible };
+      return { first, slower, faster, saved1, saved2, saved3, storedT: stored.time, ghostBytes: stored.ghost.length, off: run.state, hidden: !runEl.classList.contains('on') && !ringNow.visible };
     });
     check('runs: armed, live from the first ring, done at the last', fly.first.states === 'armed>live>done' && fly.first.shown && !fly.first.rings,
       fly.first.states + ' · "' + fly.first.hud + '"');
@@ -814,6 +814,51 @@ const server = http.createServer((req, res) => {
     check('runs: the ghost replays the best flight', fly.first.ghostSeen === 0 && fly.slower.ghostSeen > 100 && fly.faster.ghostSeen > 100,
       'seen on ' + fly.slower.ghostSeen + ' frames of the second run');
     check('runs: leaving clears the rings and the readout', fly.off === 'off' && fly.hidden);
+
+    /* a saved time is a record only on the course it was flown on, and only if
+       it is whole. Polarity: the untouched save is accepted first. */
+    const trust = await page.evaluate(() => {
+      const c = COURSES[1], good = JSON.stringify(runSaves.c1);
+      const bestWith = (edit) => { runSaves.c1 = JSON.parse(good); edit(runSaves.c1); armRun(); const b = run.best; quitRun(); return b; };
+      const intact = bestWith(() => {});
+      const out = {
+        intact: !!intact && intact.time === JSON.parse(good).time && intact.ghost.length > 30,
+        movedCourse: bestWith(s => { s.sig = 'elsewhere'; }) === null,
+        badTime: bestWith(s => { s.time = '12'; }) === null,
+        shortSplits: bestWith(s => { s.splits.pop(); }) === null,
+        noGhost: (b => !!b && b.ghost.length === 0)(bestWith(s => { delete s.ghost; })),
+        sig: c.sig
+      };
+      runSaves.c1 = JSON.parse(good);
+      return out;
+    });
+    check('runs: a save from a different course, or a damaged one, is no best at all',
+      trust.intact && trust.movedCourse && trust.badTime && trust.shortSplits && trust.noGhost, JSON.stringify(trust));
+
+    /* the page that stayed open past midnight: its daily course is yesterday's
+       by the calendar, and the time set on it must still be kept */
+    const late = await page.evaluate(() => {
+      const ci = COURSES.findIndex(c => c.id.startsWith('day-')), id = COURSES[ci].id;
+      const real = Date.prototype.getUTCDate; Date.prototype.getUTCDate = function () { return real.call(this) + 1; };
+      run.ci = ci; armRun(); __dt = 1 / 60;
+      for (const r of run.rings) { player.p.set(r.x, r.y, r.z); player.v.set(0, 0, 0); __run(1); }
+      Date.prototype.getUTCDate = real;
+      const kept = JSON.parse(localStorage.getItem(RUN_KEY))[id];
+      const state = run.state; quitRun();
+      return { state, kept: !!kept && kept.time > 0 };
+    });
+    check('runs: a daily time set after midnight is kept', late.state === 'done' && late.kept, JSON.stringify(late));
+
+    /* the sound of a line biting belongs to whoever listens for it, once */
+    const bite = await page.evaluate(() => {
+      let n = 0; listen('attach', () => n++);
+      player.riding = null; releaseWeb(0);
+      fireWebAt(0, null); const onMiss = n;
+      fireWebAt(0, { x: player.p.x, y: player.p.y + 30, z: player.p.z }); const onHit = n;
+      releaseWeb(0);
+      return { onMiss, onHit };
+    });
+    check('a line that bites announces it once; a miss does not', bite.onMiss === 0 && bite.onHit === 1, JSON.stringify(bite));
     check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
     await ctx.close();
   }

@@ -17,13 +17,10 @@ function frame() {
     resumeWait -= dt;
     if (resumeWait <= 0 && document.pointerLockElement !== renderer.domElement) setFreeLook(true);
   }
-  if (paused) {                                    // resuming never jumps
-    /* Nothing moves while paused, so the frame already on screen is still
-       right. Redrawing it at the display rate kept the GPU as busy as play. */
-    if (pauseDirty) { renderer.render(scene, camera); pauseDirty = false; }
-    return;
-  }
-  pauseDirty = true;
+  /* Nothing moves while paused, so nothing is drawn: setPaused and a resize
+     each put up one frame themselves. Redrawing at the display rate kept the
+     GPU as busy as play. */
+  if (paused) return;                              // resuming never jumps
   T += dt;
   if (keys['ArrowLeft']) yaw -= 2.3 * dt;
   if (keys['ArrowRight']) yaw += 2.3 * dt;
@@ -91,7 +88,7 @@ function frame() {
   aimPt = photoMode ? null : findAnchor(camFwd, camRight, camUp, player.p, aimPt);
   aimOk = !!aimPt;
   for (let i = 0; i < 2; i++) {
-    if (held[i] && !player.webs[i].on && aimPt && fireWebAt(i, aimPt)) thwip();
+    if (held[i] && !player.webs[i].on && aimPt) fireWebAt(i, aimPt);
   }
   if (aimPt && !(player.webs[0].on && player.webs[1].on)) {
     aimMark.visible = true;
