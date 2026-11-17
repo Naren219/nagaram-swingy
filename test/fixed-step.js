@@ -1,0 +1,393 @@
+/*
+ * The fixed-step pass of the smoke suite. smoke.js runs it; see there for how
+ * to run the suite.
+ *
+ * It takes the loop away from requestAnimationFrame and the GPU: frames are
+ * run synchronously on a chosen dt, so a 240 Hz display can be simulated
+ * exactly and nothing here waits on the wall clock. In the page:
+ *
+ *   __run(n)       run n frames, each of __dt seconds
+ *   __reset(hz)    a clean player at a frame rate (60 by default): off any
+ *                  aircraft, both lines released, nothing held, no key down
+ *
+ * Every section starts from __reset(), so a section does not depend on what
+ * ran before it. One section is one subject; a new one goes in SECTIONS.
+ */
+
+async function inputEdges(page, check) {
+  /* presses on a display faster than the 120 Hz physics: frames with no
+     substep must not swallow the edge. Polarity: 60 Hz has always passed. */
+  for (const hz of [60, 144, 240]) {
+    const r = await page.evaluate((hz) => {
+      __dt = 1 / hz; let jumped = 0, boarded = 0; const N = 120;
+      for (let i = 0; i < N; i++) {
+        player.riding = null;
+        player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0);   // open road junction
+        __run(Math.ceil(hz / 3) + (i % 7));                        // settle, at a varying accumulator phase
+        const y0 = player.p.y;
+        jumpEdge = true; __run(Math.ceil(hz / 20));
+        if (player.p.y > y0 + 0.3) jumped++;
+        const pl = planes[0];
+        player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(2 + (i % 5));
+        player.p.set(pl.p.x, pl.p.y + 3, pl.p.z);
+        mountEdge = true; __run(2);
+        if (player.riding) boarded++;
+      }
+      player.riding = null;
+      /* and one press is still exactly one jump */
+      player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(hz);
+      jumpEdge = true; __run(Math.ceil(hz / 10));
+      return { N, jumped, boarded, vy: player.v.y };
+    }, hz);
+    check('every jump press lands at ' + hz + ' Hz', r.jumped === r.N, r.jumped + '/' + r.N);
+    check('every board press lands at ' + hz + ' Hz', r.boarded === r.N, r.boarded + '/' + r.N);
+    check('one press is one jump at ' + hz + ' Hz', r.vy > 12 && r.vy < 16, 'vy ' + r.vy.toFixed(1) + ' m/s after 0.1 s');
+  }
+}
+
+async function webEnergy(page, check) {
+  /* tapping the web must not manufacture energy. Fixed pendulum, assist off,
+     identical start; the only difference between runs is the tapping. */
+  const pend = await page.evaluate(() => {
+    const swing = (every) => {
+      __reset(); assist = false;
+      const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+      const A = { x: b.x - b.w / 2 - 14, y: b.h + 60, z: b.z, pl: null };   // free air beside the tallest tower
+      const L = 40, th = Math.PI / 3, y0 = A.y - L * Math.cos(th);
+      player.p.set(A.x, y0, A.z + L * Math.sin(th)); player.v.set(0, 0, 0);
+      fireWebAt(0, A);
+      const E = () => 0.5 * player.v.lengthSq() + G * player.p.y, e0 = E();
+      let maxY = -1e9;
+      for (let f = 0; f < 60 * 15; f++) {
+        if (every && f % every === 0 && player.webs[0].on) { releaseWeb(0); fireWebAt(0, A); }
+        __run(1); maxY = Math.max(maxY, player.p.y);
+      }
+      const out = { rise: maxY - y0, gain: (E() - e0) / G };
+      releaseWeb(0); assist = true; return out;
+    };
+    const pop = (age) => {
+      const w = player.webs[0]; player.p.set(-46, 80, -230); player.grounded = false; flipT = 1e9;
+      w.on = true; w.pl = null; w.age = age; player.v.set(8, 5, 10); releaseWeb(0);
+      return player.v.y - 5;
+    };
+    return { hold: swing(0), tap4: swing(15), tap10: swing(6), popTap: pop(0.1), popSwing: pop(2.0) };
+  });
+  check('a held swing only loses energy to drag', pend.hold.gain < 0 && pend.hold.rise < 0.5,
+    'energy ' + pend.hold.gain.toFixed(1) + ' m of height over 15 s');
+  check('tapping the web 10x a second gains nothing', pend.tap10.gain <= pend.hold.gain + 1 && pend.tap10.rise < 0.5,
+    'energy ' + pend.tap10.gain.toFixed(1) + ' m, rise ' + pend.tap10.rise.toFixed(1) + ' m');
+  check('tapping the web 4x a second gains nothing', pend.tap4.gain <= pend.hold.gain + 1 && pend.tap4.rise < 0.5,
+    'energy ' + pend.tap4.gain.toFixed(1) + ' m, rise ' + pend.tap4.rise.toFixed(1) + ' m');
+  check('a tap earns no release pop', Math.abs(pend.popTap) < 1e-6, pend.popTap.toFixed(2) + ' m/s');
+  check('a full swing still earns its release pop', Math.abs(pend.popSwing - 2.4) < 1e-6, pend.popSwing.toFixed(2) + ' m/s');
+}
+
+async function rigTiming(page, check) {
+  /* limbs settle on real time, not on frame count */
+  const settle = await page.evaluate(() => [30, 60, 144, 240].map(hz => {
+    player.riding = null;
+    player.p.set(-46, 200, -230); player.v.set(0, -5, 20); player.grounded = false; player.clinging = false; flipT = 1e9;
+    pRender.copy(player.p);
+    const rest = { fwd: inp.fwd, glide: false, tuck: false }, glide = { fwd: inp.fwd, glide: true, tuck: false };
+    for (let i = 0; i < 400; i++) poseRig(1 / 60, rest);
+    const n = Math.round(0.1 * hz); for (let i = 0; i < n; i++) poseRig(1 / hz, glide);
+    return spine.rotation.x;
+  }));
+  const sMin = Math.min(...settle), sMax = Math.max(...settle);
+  check('rig pose speed is independent of frame rate', (sMax - sMin) / sMax < 0.05,
+    'spine 0.1 s into a glide at 30/60/144/240 Hz: ' + settle.map(v => v.toFixed(3)).join(' '));
+}
+
+async function openGround(page, check) {
+  /* the maidan and the tank are open ground: nothing built on them, nothing
+     driving across them, and the tank's steps are walkable */
+  const open = await page.evaluate(() => {
+    const touching = buildings.filter(b => onOpenGround(b.x, b.z, b.w / 2, b.d / 2)).length;
+    const lanes = segs.filter(s => {
+      for (let t = s.a; t <= s.b; t += 2) if (onOpenGround(s.axis === 'x' ? t : s.k, s.axis === 'x' ? s.k : t, 0, 0)) return true;
+      return false;
+    }).length;
+    const mt = THERMALS[THERMALS.length - 1];
+    const inThermal = buildings.filter(b => Math.hypot(b.x - mt.x, b.z - mt.z) < mt.r).length;
+    /* walk in from the street, over the ghats, to the water */
+    player.p.set(TANK.x - TANK.half - 18, 0.85, TANK.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0; __run(30);
+    let top = 0; keys['KeyW'] = true;
+    for (let f = 0; f < 60 * 9; f++) { __run(1); top = Math.max(top, player.p.y); }
+    keys['KeyW'] = false;
+    return { n: buildings.length, touching, lanes, inThermal, top, reach: player.p.x - TANK.x, endY: player.p.y };
+  });
+  check('nothing is built on the maidan or the tank', open.touching === 0 && open.n > 250, open.touching + ' of ' + open.n + ' buildings');
+  check('no traffic lane crosses the maidan or the tank', open.lanes === 0, open.lanes + ' lanes');
+  check('the maidan thermal is clear of buildings', open.inThermal === 0, open.inThermal + ' buildings');
+  check('tank ghats are climbed on foot, down to the pool', open.top > 1.6 && open.top < 2.2 && Math.abs(open.reach) < 40 && open.endY < 0.9,
+    'crest ' + open.top.toFixed(2) + ' m, ended ' + open.reach.toFixed(0) + ' m from centre at y ' + open.endY.toFixed(2));
+}
+
+async function vegetation(page, check) {
+  /* vegetation is batched by ground cell so the camera and the shadow
+     frustum can each skip what they cannot see. Polarity: before batching
+     this was 866k triangles in both passes from every viewpoint. */
+  const veg = await page.evaluate(() => {
+    const tris = (b) => b.geometry.attributes.position.count / 3 * b.count;
+    const all = vegBatches.reduce((s, b) => s + tris(b), 0);
+    const plants = vegBatches.reduce((s, b) => s + b.count, 0);
+    /* every plant must sit inside the sphere its batch is culled by */
+    let outside = 0; const m = new THREE.Matrix4(), s = new THREE.Sphere(), c = new THREE.Sphere();
+    for (const b of vegBatches) {
+      b.updateMatrixWorld();
+      c.copy(b.geometry.boundingSphere).applyMatrix4(b.matrixWorld);
+      const g = b.geometry.clone(); g.computeBoundingSphere();
+      for (let i = 0; i < b.count; i++) {
+        b.getMatrixAt(i, m); m.premultiply(b.matrixWorld);
+        s.copy(g.boundingSphere).applyMatrix4(m);
+        if (s.center.distanceTo(c.center) + s.radius > c.radius + 1e-3) outside++;
+      }
+      g.dispose();
+    }
+    const drawn = (x, y, z, yw, pt) => {
+      __reset(); yaw = yw; pitch = pt;
+      for (let i = 0; i < 40; i++) { player.p.set(x, y, z); player.v.set(0, 0, 0); __run(1); }
+      scene.updateMatrixWorld(); camera.updateMatrixWorld();
+      const cam = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      sun.shadow.updateMatrices(sun);
+      const sh = sun.shadow.getFrustum();
+      let n = 0;
+      for (const b of vegBatches) n += (cam.intersectsObject(b) ? tris(b) : 0) + (sh.intersectsObject(b) ? tris(b) : 0);
+      return n;
+    };
+    const views = [drawn(0, 0.85, 42, 0, 0.1), drawn(0, 0.85, 42, Math.PI, 0.1), drawn(0, 220, 0, 0.6, -0.5),
+                   drawn(-640, 30, -300, Math.PI / 2, 0), drawn(-640, 30, -300, -Math.PI / 2, 0)];
+    return { all, plants, outside, batches: vegBatches.length, culled: vegBatches.every(b => b.frustumCulled), worst: Math.max(...views) };
+  });
+  check('vegetation: every plant is inside its batch\'s culling sphere', veg.outside === 0 && veg.culled && veg.plants > 1200,
+    veg.outside + ' of ' + veg.plants + ' outside, ' + veg.batches + ' batches');
+  check('vegetation: a frame draws well under the old 1.73M triangles', veg.all < 420000 && veg.worst < 330000,
+    (veg.all / 1000).toFixed(0) + 'k in the world, worst view draws ' + (veg.worst / 1000).toFixed(0) + 'k across both passes');
+}
+
+async function hullPinning(page, check) {
+  /* whatever is fixed to an aircraft is drawn on the aircraft, on every
+     frame. Polarity: 60 Hz always read 0; 144 Hz used to read 0.14 m. */
+  const pin = await page.evaluate(() => {
+    const out = {}, o = new THREE.Vector3(), pl = planes[0];
+    for (const hz of [60, 144, 240]) {
+      __reset(hz);
+      player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(3); mountEdge = true; __run(6);
+      let rider = player.riding ? 0 : 99, anchor = 99;
+      for (let i = 0; i < 200; i++) { __run(1); planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, o); rider = Math.max(rider, o.distanceTo(pRender)); }
+      player.riding = null; player.p.set(pl.p.x, pl.p.y - 30, pl.p.z); player.v.copy(pl.v);
+      const w = player.webs[0];
+      if (fireWebAt(0, { x: pl.p.x, y: pl.p.y - 2, z: pl.p.z, pl })) {
+        anchor = 0;
+        for (let i = 0; i < 200 && w.on; i++) { __run(1); planePoint(pl, w.lo.x, w.lo.y, w.lo.z, o); anchor = Math.max(anchor, o.distanceTo(w.a)); }
+      }
+      releaseWeb(0); out[hz] = Math.max(rider, anchor);
+    }
+    return out;
+  });
+  check('rider and tow anchor stay pinned to the hull at 60/144/240 Hz', pin[60] < 1e-3 && pin[144] < 1e-3 && pin[240] < 1e-3,
+    'worst slip ' + [60, 144, 240].map(h => pin[h].toFixed(3) + ' m').join(' / '));
+}
+
+async function coyoteTime(page, check) {
+  /* coyote time: the jump still counts just after the edge, not long after,
+     and never a second time on the way up */
+  const coy = await page.evaluate(() => {
+    const b = buildings.find(b => b.h > 30 && b.w > 14 && freeAt(b.x + b.w / 2 + 8, b.z, 6));
+    const offEdge = (delay) => {
+      player.p.set(b.x + b.w / 2 - 3, b.h + 2.5, b.z); player.v.set(0, 0, 0); yaw = -Math.PI / 2; pitch = 0;
+      __run(50); const roofY = player.p.y, stood = player.grounded;
+      keys['KeyW'] = true;
+      let f = 0; while (player.grounded && f++ < 300) __run(1);
+      __run(delay); jumpEdge = true; __run(3);
+      keys['KeyW'] = false;
+      return { stood, left: f < 300, vy: player.v.y, drop: roofY - player.p.y };
+    };
+    const hop = (again) => {
+      player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(30);
+      jumpEdge = true; __run(6); if (again) jumpEdge = true; __run(6);
+      return player.v.y;
+    };
+    return { found: !!b, soon: offEdge(6), late: offEdge(18), once: hop(false), twice: hop(true) };
+  });
+  check('a jump 0.1 s after running off a roof still jumps', coy.found && coy.soon.stood && coy.soon.left && coy.soon.vy > 8,
+    'vy ' + coy.soon.vy.toFixed(1) + ' m/s');
+  check('a jump 0.3 s after the edge does not', coy.late.left && coy.late.vy < 0, 'vy ' + coy.late.vy.toFixed(1) + ' m/s');
+  /* a second jump would read about 17 m/s; the wind alone moves it by millimetres */
+  check('coyote time gives no second jump on the way up', Math.abs(coy.once - coy.twice) < 0.5,
+    'vy ' + coy.once.toFixed(2) + ' with one press, ' + coy.twice.toFixed(2) + ' m/s with two');
+}
+
+async function pausing(page, check) {
+  /* a paused game draws one frame and then leaves the GPU alone */
+  const idle = await page.evaluate(() => {
+    let draws = 0; renderer.render = () => { draws++; };
+    __dt = 1 / 60; __run(5); const playing = draws;
+    draws = 0; setPaused(true); __run(120); const paused1 = draws;   // the one frame is drawn by pausing itself
+    dispatchEvent(new Event('resize')); __run(60); const resized = draws - paused1;
+    const t0 = T; __run(10); const frozen = T === t0;
+    setPaused(false); draws = 0; __run(5); const resumed = draws;
+    renderer.render = () => {};
+    return { playing, paused1, resized, frozen, resumed };
+  });
+  check('paused: one frame drawn, then none', idle.playing === 5 && idle.paused1 === 1 && idle.frozen, JSON.stringify(idle));
+  check('paused: a resize redraws once, resuming draws every frame', idle.resized === 1 && idle.resumed === 5);
+}
+
+async function trafficMatrices(page, check) {
+  /* vehicles are written straight into the instance buffer; check that
+     against a matrix composed the long way */
+  const traf = await page.evaluate(() => {
+    __dt = 1 / 60; __run(30);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+    let worst = 0;
+    for (const v of vehicles) {
+      const onX = v.seg.axis === 'x';
+      p.set(onX ? v.t : v.seg.k + v.dir * 3.7, 0, onX ? v.seg.k - v.dir * 3.7 : v.t);
+      e.set(0, onX ? (v.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (v.dir > 0 ? 0 : Math.PI), 0);
+      m.compose(p, q.setFromEuler(e), one);
+      const a = vMeshes[v.mesh].instanceMatrix.array, o = v.idx * 16;
+      for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(a[o + k] - m.elements[k]));
+    }
+    return { worst, n: vehicles.length };
+  });
+  check('traffic instance matrices match a composed transform', traf.worst < 1e-4 && traf.n > 300, 'worst entry off by ' + traf.worst.toExponential(1) + ' over ' + traf.n + ' vehicles');
+}
+
+async function ringRuns(page, check) {
+  /* ring runs. A course is a pure function of its seed, so every date must
+     yield one; then fly one on rails and check the clock, the saved best
+     and the ghost. On rails at a known speed the time is length / speed
+     whatever the frame rate, which is what the sub-frame crossing buys. */
+  const crs = await page.evaluate(() => {
+    let failed = 0, bad = 0, steep = 0; const t = new Date();
+    for (let d = 0; d < 366; d++) {
+      const day = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() + d));
+      const g = buildCourse(day.getUTCFullYear() * 10000 + (day.getUTCMonth() + 1) * 100 + day.getUTCDate());
+      if (!g || g.length !== COURSE_RINGS) { failed++; continue; }
+      for (let i = 0; i < g.length; i++) {
+        if (!clearAt(g[i].x, g[i].y, g[i].z, RING_R) || roofNear(g[i].x, g[i].z, 70) < g[i].y) bad++;
+        if (i && g[i].y - g[i - 1].y > 30.01) steep++;
+      }
+    }
+    return { failed, bad, steep, same: JSON.stringify(buildCourse(77)) === JSON.stringify(buildCourse(77)) };
+  });
+  check('runs: every day of the coming year has a course', crs.failed === 0 && crs.same, crs.failed + ' dates without one');
+  check('runs: every ring is in open air, below a roof to swing from, and never a steep climb', crs.bad === 0 && crs.steep === 0,
+    crs.bad + ' badly placed, ' + crs.steep + ' too steep');
+
+  const fly = await page.evaluate(() => {
+    const rail = (hz, speed) => {
+      __dt = 1 / hz; armRun();
+      const g = run.rings, pts = [{ x: g[0].x - g[0].ux * 40, y: g[0].y, z: g[0].z - g[0].uz * 40 }].concat(g);
+      pts.push({ x: g[11].x + g[11].ux * 30, y: g[11].y, z: g[11].z + g[11].uz * 30 });
+      let len = 0; for (let i = 1; i < g.length; i++) len += Math.hypot(g[i].x - g[i - 1].x, g[i].y - g[i - 1].y, g[i].z - g[i - 1].z);
+      const states = [run.state]; let ghostSeen = 0, ghostOff = 0, f = 0;
+      /* constant speed along the whole polyline: the step carries over each corner */
+      let s = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i], L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+        for (; s < L; s += speed / hz) {
+          player.p.set(a.x + (b.x - a.x) * s / L, a.y + (b.y - a.y) * s / L, a.z + (b.z - a.z) * s / L); player.v.set(0, 0, 0);
+          __run(1); f++;
+          if (states[states.length - 1] !== run.state) states.push(run.state);
+          if (ghostMesh.visible) { ghostSeen++; ghostOff = Math.max(ghostOff, ghostMesh.position.distanceTo(player.p)); }
+        }
+        s -= L;
+      }
+      return { t: run.t, want: len / speed, states: states.join('>'), splits: run.splits.slice(), ghostSeen, ghostOff,
+        hud: runEl.textContent, shown: runEl.classList.contains('on'), rings: ringNow.visible };
+    };
+    run.ci = 1;
+    const first = rail(60, 50), saved1 = runSaves.c1 && runSaves.c1.time;
+    const slower = rail(144, 40), saved2 = runSaves.c1.time;
+    const faster = rail(60, 60), saved3 = runSaves.c1.time;
+    const stored = JSON.parse(localStorage.getItem(RUN_KEY)).c1;
+    quitRun();
+    return { first, slower, faster, saved1, saved2, saved3, storedT: stored.time, ghostBytes: stored.ghost.length, off: run.state, hidden: !runEl.classList.contains('on') && !ringNow.visible };
+  });
+  check('runs: armed, live from the first ring, done at the last', fly.first.states === 'armed>live>done' && fly.first.shown && !fly.first.rings,
+    fly.first.states + ' · "' + fly.first.hud + '"');
+  check('runs: the clock is exact at 60 and 144 Hz', Math.abs(fly.first.t - fly.first.want) < 0.01 && Math.abs(fly.slower.t - fly.slower.want) < 0.01,
+    fly.first.t.toFixed(3) + ' vs ' + fly.first.want.toFixed(3) + ' s, ' + fly.slower.t.toFixed(3) + ' vs ' + fly.slower.want.toFixed(3) + ' s');
+  check('runs: splits rise ring by ring', fly.first.splits.length === 12 && fly.first.splits.every((v, i, a) => i === 0 ? v === 0 : v > a[i - 1]));
+  check('runs: only a faster time replaces the best, and it is stored', fly.saved1 === fly.first.t && fly.saved2 === fly.saved1 && fly.saved3 === fly.faster.t && fly.saved3 < fly.saved1 && fly.storedT === fly.saved3,
+    [fly.saved1, fly.saved2, fly.saved3].map(v => v.toFixed(2)).join(' → ') + ' s, ghost ' + fly.ghostBytes + ' bytes');
+  check('runs: the ghost replays the best flight', fly.first.ghostSeen === 0 && fly.slower.ghostSeen > 100 && fly.faster.ghostSeen > 100,
+    'seen on ' + fly.slower.ghostSeen + ' frames of the second run');
+  check('runs: leaving clears the rings and the readout', fly.off === 'off' && fly.hidden);
+
+  /* a saved time is a record only on the course it was flown on, and only if
+     it is whole. Polarity: the untouched save is accepted first. */
+  const trust = await page.evaluate(() => {
+    const c = COURSES[1], good = JSON.stringify(runSaves.c1);
+    const bestWith = (edit) => { runSaves.c1 = JSON.parse(good); edit(runSaves.c1); armRun(); const b = run.best; quitRun(); return b; };
+    const intact = bestWith(() => {});
+    const out = {
+      intact: !!intact && intact.time === JSON.parse(good).time && intact.ghost.length > 30,
+      movedCourse: bestWith(s => { s.sig = 'elsewhere'; }) === null,
+      badTime: bestWith(s => { s.time = '12'; }) === null,
+      shortSplits: bestWith(s => { s.splits.pop(); }) === null,
+      noGhost: (b => !!b && b.ghost.length === 0)(bestWith(s => { delete s.ghost; })),
+      sig: c.sig
+    };
+    runSaves.c1 = JSON.parse(good);
+    return out;
+  });
+  check('runs: a save from a different course, or a damaged one, is no best at all',
+    trust.intact && trust.movedCourse && trust.badTime && trust.shortSplits && trust.noGhost, JSON.stringify(trust));
+
+  /* the page that stayed open past midnight: its daily course is yesterday's
+     by the calendar, and the time set on it must still be kept */
+  const late = await page.evaluate(() => {
+    const ci = COURSES.findIndex(c => c.id.startsWith('day-')), id = COURSES[ci].id;
+    const real = Date.prototype.getUTCDate; Date.prototype.getUTCDate = function () { return real.call(this) + 1; };
+    run.ci = ci; armRun(); __dt = 1 / 60;
+    for (const r of run.rings) { player.p.set(r.x, r.y, r.z); player.v.set(0, 0, 0); __run(1); }
+    Date.prototype.getUTCDate = real;
+    const kept = JSON.parse(localStorage.getItem(RUN_KEY))[id];
+    const state = run.state; quitRun();
+    return { state, kept: !!kept && kept.time > 0 };
+  });
+  check('runs: a daily time set after midnight is kept', late.state === 'done' && late.kept, JSON.stringify(late));
+}
+
+async function lineBite(page, check) {
+  /* the sound of a line biting belongs to whoever listens for it, once */
+  const bite = await page.evaluate(() => {
+    let n = 0; listen('attach', () => n++);
+    fireWebAt(0, null); const onMiss = n;
+    fireWebAt(0, { x: player.p.x, y: player.p.y + 30, z: player.p.z }); const onHit = n;
+    releaseWeb(0);
+    return { onMiss, onHit };
+  });
+  check('a line that bites announces it once; a miss does not', bite.onMiss === 0 && bite.onHit === 1, JSON.stringify(bite));
+}
+
+const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite];
+
+module.exports = async function fixedStep({ newPage, BASE, check }) {
+  const { ctx, page } = await newPage({});
+  await page.goto(BASE, { waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('load').classList.contains('gone'));
+  await page.evaluate(() => {
+    window.requestAnimationFrame = () => 0;
+    renderer.render = () => {};
+    window.__dt = 1 / 60; clock.getDelta = () => window.__dt;
+    window.__run = (n) => { for (let i = 0; i < n; i++) frame(); };
+    window.__reset = (hz) => {
+      window.__dt = 1 / (hz || 60);
+      player.riding = null;
+      held[0] = held[1] = false; releaseWeb(0); releaseWeb(1);
+      for (const k of Object.keys(keys)) keys[k] = false;
+    };
+  });
+  await page.waitForTimeout(150);   // let the one already-queued rAF callback drain
+  for (const section of SECTIONS) {
+    await page.evaluate(() => __reset());
+    await section(page, check);
+  }
+  check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
+  await ctx.close();
+};
