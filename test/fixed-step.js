@@ -537,7 +537,7 @@ async function strandPicture(page, check) {
      weight; and when it is longer than the gap it hangs by what a rope of that
      length would. Polarity: a line switched off draws nothing at all. */
   const r = await page.evaluate(() => {
-    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_SEG + k) * 16 + 5] !== 0 || a[(i * STRAND_SEG + k) * 16 + 4] !== 0) n++; return n; };
+    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_ALL + k) * 16 + 5] !== 0 || a[(i * STRAND_ALL + k) * 16 + 4] !== 0) n++; return n; };
     const A = { x: -46, y: 260, z: -230, pl: null };
     const arrive = (hz) => {
       __reset(hz); assist = false; player.p.set(-46, 180, -230); player.v.set(0, 0, 0); player.grounded = false; __run(2);
@@ -749,8 +749,382 @@ async function quietHud(page, check) {
     JSON.stringify({ afterRoll: r.afterRoll, afterH: r.afterH, again: r.again, stopped: r.stopped, aboard: r.aboard }));
 }
 
+async function ropeWrap(page, check) {
+  /* The trial (B): a line that meets a building bends round its edge instead
+     of passing through. Everything is measured against the same run with it
+     off, so a check here cannot pass by the trial simply doing nothing. */
+  const r = await page.evaluate(() => {
+    const pa = new THREE.Vector3(), pb = new THREE.Vector3();
+    /* is the straight line s -> e blocked? cast toward s: an anchor is ON a wall */
+    const blocked = (s, e) => { const dx = s.x - e.x, dy = s.y - e.y, dz = s.z - e.z, d = Math.hypot(dx, dy, dz); return d > 0.4 && !!rayHit(e.x, e.y, e.z, dx / d, dy / d, dz / d, d - 0.15); };
+    const ropeBlocked = (w) => {
+      if (blocked(webEnd(w), player.p)) return true;
+      for (let k = 0; k < w.nb; k++) {
+        const s = k ? pa.set(w.bp[k * 3 - 3], w.bp[k * 3 - 2], w.bp[k * 3 - 1]) : w.a;
+        if (blocked(s, pb.set(w.bp[k * 3], w.bp[k * 3 + 1], w.bp[k * 3 + 2]))) return true;
+      }
+      return false;
+    };
+    /* the tallest tower; anchor on its -x face 4 m short of the +z corner, and
+       a start that carries you round that corner */
+    const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+    const cx = b.x - b.w / 2, cz = b.z + b.d / 2;
+    const A = { x: cx, y: b.h - 5, z: cz - 4, pl: null };
+    const corner = (wrap, hz, winch) => {
+      __reset(hz); assist = false; ropeWrap = wrap;
+      player.p.set(cx - 18, A.y - 12, cz + 2); player.v.set(7, 0, 21); player.grounded = false;
+      fireWebAt(0, A);
+      const w = player.webs[0], E = () => (0.5 * player.v.lengthSq() + G * player.p.y) / G, e0 = E();
+      const out = { clip: 0, maxNb: 0, rise: 0, jump: 0, kick: 0, bent: null, freed: null, short: 0, piece: 0 };
+      let nb = 0, path = w.len, dPrev = 0; const bt0 = w.len;
+      for (let f = 0; f < hz * 6; f++) {
+        const eB = E();
+        __run(1);
+        const now = w.used + webEnd(w).distanceTo(player.p), dE = E() - eB;
+        if (ropeBlocked(w)) out.clip++;
+        if (w.nb !== nb) {
+          out.jump = Math.max(out.jump, Math.abs(now - path));
+          out.kick = Math.max(out.kick, Math.abs(dE - dPrev));
+          if (w.nb > nb && !out.bent) {
+            out.bent = { f: f / hz, dx: w.e.x - cx, dz: w.e.z - cz, y: w.e.y, free: webFree(w), len: w.len, used: w.used, spd: player.v.length() };
+            const m = strandMesh.instanceMatrix.array, o = STRAND_SEG * 16;
+            out.piece = Math.hypot(m[o + 4], m[o + 5], m[o + 6]);      // length of the piece drawn anchor -> bend
+            if (winch) { out.short = 1e9; for (let g = 0; g < hz && w.nb; g++) { w.tgt = WEB_MIN; __run(1); if (w.nb) { out.short = Math.min(out.short, w.len - w.used); out.reeled = g + 1; } } out.lenWas = bt0; break; }
+          }
+          if (w.nb < nb && !out.freed) out.freed = { f: f / hz, nb: w.nb };
+          nb = w.nb;
+        }
+        path = w.used + webEnd(w).distanceTo(player.p); dPrev = dE;
+        out.maxNb = Math.max(out.maxNb, w.nb);
+        if (!player.touch) out.rise = Math.max(out.rise, E() - e0);
+      }
+      releaseWeb(0); assist = true; ropeWrap = false;
+      return out;
+    };
+    /* a crude flyer let loose in the city: alternate hands, random headings */
+    const fuzz = (wrap, seed, secs) => {
+      __reset(60); ropeWrap = wrap; respawn();
+      let st = seed; const rnd = () => (st = (st * 1664525 + 1013904223) >>> 0) / 4294967296;
+      const out = { on: 0, clip: 0, bends: 0, maxNb: 0, bad: false };
+      let hand = 0, t = 0, hold = 1.2; const last = [0, 0];
+      for (let f = 0; f < 60 * secs; f++) {
+        t += 1 / 60;
+        if (t > hold) { held[hand] = false; releaseWeb(hand); hand = 1 - hand; t = 0; hold = 0.7 + rnd() * 1.6; yaw += (rnd() - 0.5) * 1.2; pitch = 0.25 + rnd() * 0.5; }
+        else if (t > 0.15) held[hand] = true;
+        keys['KeyW'] = true;
+        __run(1);
+        for (let i = 0; i < 2; i++) {
+          const w = player.webs[i]; if (!w.on) { last[i] = 0; continue; }
+          if (w.pl) continue;
+          out.on++;
+          if (ropeBlocked(w)) out.clip++;
+          if (w.nb > last[i]) out.bends++;
+          last[i] = w.nb; out.maxNb = Math.max(out.maxNb, w.nb);
+          if (w.len < w.used || !isFinite(w.used + w.e.x)) out.bad = true;
+        }
+        if (!isFinite(player.p.x + player.p.y + player.p.z + player.v.x)) { out.bad = true; break; }
+      }
+      held[0] = held[1] = false; keys['KeyW'] = false; ropeWrap = false;
+      return out;
+    };
+    const res = { off: corner(false, 120), on: corner(true, 120), on60: corner(true, 60), on144: corner(true, 144), winch: corner(true, 120, true), max: WRAP_MAX,
+      fz: { on: { on: 0, clip: 0, bends: 0, maxNb: 0, bad: false }, off: { on: 0, clip: 0 } } };
+    for (const seed of [1, 2, 3]) {
+      const a = fuzz(true, seed, 60), o = fuzz(false, seed, 60);
+      for (const k of ['on', 'clip', 'bends']) res.fz.on[k] += a[k];
+      res.fz.on.maxNb = Math.max(res.fz.on.maxNb, a.maxNb); res.fz.on.bad = res.fz.on.bad || a.bad;
+      res.fz.off.on += o.on; res.fz.off.clip += o.clip;
+    }
+    respawn();
+    return res;
+  });
+  const { on, off } = r, bt = on.bent || {};
+  check('without the trial a line still passes through the tower', off.clip > 30 && off.maxNb === 0, off.clip + ' steps with the tower between you and the anchor');
+  check('with it the line bends at the corner it meets', !!on.bent && Math.abs(bt.dx) < 0.1 && Math.abs(bt.dz) < 0.1,
+    on.bent ? 'bend ' + bt.dx.toFixed(2) + ', ' + bt.dz.toFixed(2) + ' m off the edge, after ' + bt.f.toFixed(2) + ' s' : 'no bend');
+  check('a bent line never passes through anything', on.clip === 0, on.clip + ' steps blocked (off: ' + off.clip + ')');
+  check('you swing about the corner on the rope that is left', on.bent && Math.abs(bt.free - (bt.len - bt.used)) < 1e-6 && bt.used > 3.9 && bt.used < 6,
+    on.bent ? bt.len.toFixed(1) + ' m line, ' + bt.used.toFixed(1) + ' m lying on the tower, ' + bt.free.toFixed(1) + ' m of swing' : '');
+  check('the rope is the same length the moment before and after', on.jump < 0.02, 'largest jump ' + (on.jump * 1000).toFixed(2) + ' mm');
+  check('a bend neither gives energy nor takes it', on.kick < 0.05 && on.rise < 0.01 && off.rise < 0.01,
+    'step change ' + (on.kick * 100).toFixed(1) + ' cm of height; most gained in free swing ' + (on.rise * 100).toFixed(1) + ' cm');
+  check('swinging back across the corner lets it go', !!on.freed && on.freed.nb === 0, on.freed ? 'released after ' + on.freed.f.toFixed(2) + ' s' : 'never released');
+  check('the stretch on the building is drawn', Math.abs(on.piece - bt.used) < 0.3, 'piece ' + on.piece.toFixed(2) + ' m for ' + (bt.used || 0).toFixed(2) + ' m of rope');
+  check('the winch cannot reel in rope that lies on a building', r.winch.reeled > 10 && r.winch.short >= 1 - 1e-6 && r.winch.short < 1.5,
+    'reeled hard for ' + r.winch.reeled + ' steps while bent: never less than ' + r.winch.short.toFixed(2) + ' m left to swing on');
+  for (const k of ['on60', 'on144']) {
+    const o = r[k], x = o.bent || {};
+    check('the same bend at ' + k.slice(2) + ' Hz', !!o.bent && Math.abs(x.f - bt.f) < 0.04 && Math.abs(x.y - bt.y) < 0.3 && o.clip === 0,
+      o.bent ? 'after ' + x.f.toFixed(2) + ' s at height ' + x.y.toFixed(1) + ' (120 Hz: ' + bt.f.toFixed(2) + ' s, ' + bt.y.toFixed(1) + ')' : 'no bend');
+  }
+  const fz = r.fz;
+  check('three minutes of random swinging: no line through a wall', !fz.on.bad && fz.on.bends > 5 && fz.on.clip <= fz.on.on * 0.002 && fz.off.clip > 20 * Math.max(1, fz.on.clip),
+    fz.on.clip + ' of ' + fz.on.on + ' line-steps blocked with it on, ' + fz.off.clip + ' of ' + fz.off.on + ' with it off; ' + fz.on.bends + ' bends');
+  check('a line never holds more bends than it has room for', fz.on.maxNb <= r.max, 'most at once ' + fz.on.maxNb + ' of ' + r.max);
+}
+
+async function perching(page, check) {
+  /* Stand still somewhere high and the game steps back: readouts gone, camera
+     out and turning slowly, the street audible. Anything you do ends it. */
+  const r = await page.evaluate(() => {
+    const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+    const stand = (hz, y) => {
+      __reset(hz); yaw = 0.4; pitch = -0.1;
+      if (y === undefined) player.p.set(b.x, b.h + 0.85, b.z); else player.p.set(-350, y, -182);
+      player.v.set(0, 0, 0); __run(hz);                      // settle on the surface
+    };
+    const camOut = () => camera.position.distanceTo(player.p);
+    const out = {};
+    for (const hz of [60, 144]) {
+      stand(hz);
+      const d0 = camOut(), y0 = yaw; __run(hz * 2);
+      const early = { perch, cls: document.body.classList.contains('perch'), turned: yaw - y0 };   // 3 s in: not yet
+      __run(hz * 7); const y1 = yaw; __run(hz * 5);
+      out['hz' + hz] = { grounded: player.grounded, early, perch, k: perchK, cls: document.body.classList.contains('perch'),
+        out: camOut() - d0, rate: (yaw - y1) / 5, hear: ambAlt(player.p.y) };
+    }
+    /* the aim ring, from a lower roof beside the tower so there is something to aim at */
+    {
+      const m = buildings.filter(c => c !== b && c.h > 25 && c.h < b.h - 40).reduce((a, c) => Math.hypot(c.x - b.x, c.z - b.z) < Math.hypot(a.x - b.x, a.z - b.z) ? c : a);
+      __reset(60); player.p.set(m.x, m.h + 0.85, m.z); player.v.set(0, 0, 0);
+      const dx = b.x - m.x, dz = b.z - m.z, dy = (b.h + m.h) / 2 - m.h;
+      yaw = Math.atan2(-dx, dz); pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      __run(120); const before = aimMark.visible ? aimMat.opacity : 0;
+      let f = 0; while (perchK < 0.95 && f++ < 900) __run(1);
+      out.ring = { before, seen: aimMark.visible, after: aimMat.opacity, k: perchK };
+    }
+    /* perch on the tower again at 144 Hz: look by hand, then move */
+    stand(144); __run(144 * 14);
+    yaw += 0.3; __run(144); const yl = yaw; __run(144);
+    out.look = { perch, drift: yaw - yl };
+    __run(144 * 4); const yr = yaw; __run(144 * 2);
+    out.resumed = (yaw - yr) / 2;
+    keys['KeyW'] = true; __run(6); out.move = { perch, cls: document.body.classList.contains('perch'), frames: 6 };
+    __run(138); out.move.k = perchK; keys['KeyW'] = false;
+    out.deaf = ambAlt(player.p.y);
+    /* each thing that must end it or prevent it */
+    const ends = {};
+    for (const [name, fn] of [['jump', () => { jumpEdge = true; }], ['web', () => { held[0] = true; }], ['dive', () => { keys['ShiftLeft'] = true; }]]) {
+      stand(60); __run(60 * 6); const was = perch; fn(); __run(4); ends[name] = was && !perch; held[0] = false; keys['ShiftLeft'] = false; releaseWeb(0);
+    }
+    out.ends = ends;
+    stand(60, 0.85); __run(60 * 8); out.street = { perch, y: player.p.y, grounded: player.grounded };
+    stand(60); setPhoto(true); __run(60 * 8); out.photo = perch; setPhoto(false);
+    stand(60); armRun(); player.p.set(b.x, b.h + 0.85, b.z); player.v.set(0, 0, 0); __run(60 * 8); out.run = { perch, flying: flying() }; quitRun();
+    __reset(); respawn();
+    return out;
+  });
+  for (const hz of [60, 144]) {
+    const o = r['hz' + hz];
+    check('three seconds of standing still is not yet a perch at ' + hz + ' Hz', o.grounded && !o.early.perch && !o.early.cls && o.early.turned === 0, 'perched ' + o.early.perch);
+    check('standing on a roof becomes a perch at ' + hz + ' Hz', o.perch && o.cls && o.k > 0.97, 'in by ' + (o.k * 100).toFixed(0) + '%');
+    check('the camera pulls out at ' + hz + ' Hz', o.out > 6 && o.out < 11, (o.out).toFixed(1) + ' m further back');
+    check('and turns slowly about you at ' + hz + ' Hz', Math.abs(o.rate - 0.06) < 0.004, o.rate.toFixed(3) + ' rad/s');
+  }
+  check('the aim ring fades with the readouts', r.ring.before > 0.4 && r.ring.seen && r.ring.after < 0.06, 'opacity ' + r.ring.before.toFixed(2) + ' before, ' + r.ring.after.toFixed(3) + ' perched');
+  check('perched, the street reaches you on the tallest roof', r.hz60.hear > r.deaf + 0.4, 'heard ' + r.hz60.hear.toFixed(2) + ' against ' + r.deaf.toFixed(2) + ' in passing');
+  check('looking for yourself keeps the perch and stops the turn', r.look.perch && r.look.drift === 0, 'drift ' + r.look.drift.toFixed(4) + ' rad in the second after');
+  check('left alone again, the turn resumes', Math.abs(r.resumed - 0.06) < 0.004, r.resumed.toFixed(3) + ' rad/s');
+  check('a step ends it at once', !r.move.perch && !r.move.cls && r.move.k < 0.02, 'gone inside ' + r.move.frames + ' frames at 144 Hz; ' + (r.move.k * 100).toFixed(1) + '% left a second later');
+  check('so does a jump, a web or a dive', r.ends.jump && r.ends.web && r.ends.dive, JSON.stringify(r.ends));
+  check('the street is not a perch', r.street.grounded && !r.street.perch, 'standing at ' + r.street.y.toFixed(1) + ' m');
+  check('nor is photo mode, nor a ring run', !r.photo && r.run.flying && !r.run.perch, 'photo ' + r.photo + ', run ' + r.run.perch);
+}
+
+async function windSigns(page, check) {
+  /* The wind the glide flies through is the wind the city shows. The kites are
+     moved on the CPU and can be measured outright; the pennants and palms are
+     bent in a shader, so what is checked is that they are handed the same wind. */
+  const r = await page.evaluate(() => {
+    const realWind = updateWind;
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), tail = new THREE.Vector3();
+    const blow = (wx, wz) => {
+      __reset(); updateWind = () => { WIND.set(wx, 0, wz); windHead = Math.atan2(wz, wx); };
+      __run(30);
+      let ox = 0, oz = 0, tx = 0, tz = 0;
+      for (let i = 0; i < kites.length; i++) {
+        kites.mesh.getMatrixAt(i, m4); m4.decompose(pos, q, sc);
+        ox += pos.x - kites[i].x; oz += pos.z - kites[i].z;
+        tail.set(0, 0, -1).applyQuaternion(q); tx += tail.x; tz += tail.z;
+      }
+      const n = kites.length;
+      return { ox: ox / n, oz: oz / n, tx: tx / n, tz: tz / n, ux: windUni.uWind.value.x, uz: windUni.uWind.value.y };
+    };
+    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: kites.length };
+    for (const f of flags) {
+      /* nothing solid within a pennant's length of its hoist, at its height */
+      for (const b of buildings) if (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2 && f.y < b.h + 3) out.low++;
+    }
+    updateWind = realWind; __run(2);
+    out.back = Math.abs(windUni.uWind.value.x - WIND.x) + Math.abs(windUni.uWind.value.y - WIND.z);
+    return out;
+  });
+  check('kites fly down-wind of the hand that holds them', r.east.ox > 15 && Math.abs(r.east.oz) < 8 && r.north.oz < -15 && Math.abs(r.north.ox) < 8,
+    'mean offset ' + r.east.ox.toFixed(0) + ', ' + r.east.oz.toFixed(0) + ' m in an easterly 5 m/s; ' + r.north.ox.toFixed(0) + ', ' + r.north.oz.toFixed(0) + ' m in a northerly');
+  check('and their tails stream behind them', r.east.tx > 0.6 && r.north.tz < -0.6, 'mean tail direction ' + r.east.tx.toFixed(2) + ' along an easterly, ' + r.north.tz.toFixed(2) + ' along a northerly');
+  check('in a calm they only wander', Math.hypot(r.calm.ox, r.calm.oz) < 8, 'mean offset ' + Math.hypot(r.calm.ox, r.calm.oz).toFixed(1) + ' m over ' + r.kites + ' kites');
+  check('pennants and palms are handed the wind the glide uses', r.east.ux === 5 && r.east.uz === 0 && r.north.uz === -5 && r.back < 1e-9, 'shader wind ' + r.east.ux + ', ' + r.east.uz + ' for an easterly 5');
+  check('there are pennants to read, each clear of its roof', r.n >= 20 && r.low === 0, r.n + ' pennants, ' + r.low + ' with the hoist under 3 m above the roof');
+}
+
+async function birdsAndBell(page, check) {
+  /* Flocks roost where you land and go up when you arrive. A flight is a closed
+     curve in time, so the test is that it leaves, and that it comes back to
+     exactly where it was. */
+  const r = await page.evaluate(() => {
+    const m4 = new THREE.Matrix4(), v = new THREE.Vector3(), seen = [];
+    listen('flush', (gull, x, y, z) => seen.push({ gull, x, y, z }));
+    const spots = (fi) => { const o = []; for (let i = 0; i < FLOCK_BIRDS; i++) { birdMesh.getMatrixAt(fi * FLOCK_BIRDS + i, m4); v.setFromMatrixPosition(m4); o.push(v.x, v.y, v.z); } return o; };
+    const far = (a, b) => { let d = 0; for (let i = 0; i < a.length; i += 3) d = Math.max(d, Math.hypot(a[i] - b[i], a[i + 1] - b[i + 1], a[i + 2] - b[i + 2])); return d; };
+    const lift = (a, b) => { let d = 1e9; for (let i = 1; i < a.length; i += 3) d = Math.min(d, a[i] - b[i]); return d; };
+    const calm = () => { for (const f of flocks) { f.t = -1; f.cool = 0; } flocks.forEach((f, i) => setFlock(i, -1)); seen.length = 0; };
+    const out = { n: flocks.length, gulls: flocks.filter(f => f.gull).length, offRoof: 0 };
+    /* every pigeon roost is on a roof, inside its edges */
+    for (const f of flocks) {
+      if (f.gull) continue;
+      const b = buildings.find(c => c.x === f.x && c.z === f.z);
+      if (!b || Math.abs(b.h - f.y) > 1e-6 || f.birds.some(k => Math.abs(k.ox) > b.w / 2 - 0.5 || Math.abs(k.oz) > b.d / 2 - 0.5)) out.offRoof++;
+    }
+    const fi = flocks.findIndex(f => !f.gull), f = flocks[fi], other = flocks.findIndex((g, i) => i !== fi && Math.hypot(g.x - f.x, g.z - f.z) > 60);
+    const home = spots(fi), otherHome = spots(other);
+    /* nobody near: nothing happens */
+    __reset(); calm(); player.p.set(f.x + 80, f.y + 40, f.z); player.v.set(0, 0, 0); __run(120);
+    out.idle = { flushed: seen.length, moved: far(spots(fi), home) };
+    /* arrive at speed, eleven metres off */
+    const fly = (hz) => {
+      __reset(hz); calm();
+      player.p.set(f.x + 11, f.y + 3, f.z); player.v.set(-14, 0, 0); player.grounded = false; __run(2);
+      const o = { flushed: seen.length, gull: seen[0] && seen[0].gull, up: 0, wide: 0, other: 0 };
+      player.p.set(f.x + 300, f.y + 60, f.z); player.v.set(0, 0, 0);          // and gone again
+      let n = 2;
+      for (; n < hz * 20 && flocks[fi].t >= 0; n++) {
+        __run(1); player.p.set(f.x + 300, f.y + 60, f.z); player.v.set(0, 0, 0);
+        const s = spots(fi);
+        if (Math.abs(n / hz - 4) < 0.6 / hz) { o.up = lift(s, home); o.wide = far(s, home); }
+        o.other = Math.max(o.other, far(spots(other), otherHome));
+      }
+      o.secs = n / hz; o.back = far(spots(fi), home); o.again = seen.length;
+      return o;
+    };
+    out.f60 = fly(60); out.f144 = fly(144);
+    /* walking: not at ten metres, but at three */
+    const walk = (d) => { __reset(); calm(); player.p.set(f.x + d, f.y + 0.85, f.z); player.v.set(0, 0, 0); __run(30); return seen.length; };
+    out.walk10 = walk(10); out.walk3 = walk(3);
+    /* a web beside them */
+    __reset(); calm(); player.p.set(f.x + 40, f.y + 20, f.z); player.v.set(0, 0, 0); player.grounded = false;
+    fireWebAt(0, { x: f.x + 5, y: f.y, z: f.z, pl: null }); out.web = seen.length; releaseWeb(0);
+    calm(); fireWebAt(0, { x: f.x + 30, y: f.y, z: f.z, pl: null }); out.webFar = seen.length; releaseWeb(0);
+    /* the bell */
+    const rung = []; listen('bell', (g) => rung.push(g));
+    const g = GOPURAMS[0];
+    fireWebAt(0, { x: g.x, y: g.h * 0.7, z: g.z + g.bd / 2, pl: null }); releaseWeb(0);
+    out.bell = rung.length; out.bellIs = rung[0] === g;
+    fireWebAt(0, { x: g.x + 60, y: 20, z: g.z + 60, pl: null }); releaseWeb(0);
+    out.bellElsewhere = rung.length - out.bell;
+    calm(); __reset(); respawn();
+    return out;
+  });
+  check('flocks roost on the roofs and the sand', r.n >= 30 && r.gulls >= 5 && r.offRoof === 0, r.n + ' flocks, ' + r.gulls + ' of gulls, ' + r.offRoof + ' not on a roof');
+  check('a flock nobody is near stays down', r.idle.flushed === 0 && r.idle.moved === 0, r.idle.flushed + ' flushed');
+  for (const k of ['f60', 'f144']) {
+    const o = r[k], hz = k.slice(1);
+    check('arriving at speed puts the flock up at ' + hz + ' Hz', o.flushed === 1 && o.gull === false && o.up > 2 && o.wide > 6, 'after 4 s the lowest bird is ' + o.up.toFixed(1) + ' m up, the furthest ' + o.wide.toFixed(1) + ' m from its spot');
+    check('and it comes back to where it was at ' + hz + ' Hz', Math.abs(o.secs - 11) < 0.1 && o.back < 1e-4 && o.again === 1, 'down after ' + o.secs.toFixed(2) + ' s, ' + (o.back * 1000).toFixed(2) + ' mm from its spots');
+    check('the next roof over never stirs at ' + hz + ' Hz', o.other === 0, 'moved ' + o.other.toFixed(3) + ' m');
+  }
+  check('standing ten metres off does not disturb them, walking in does', r.walk10 === 0 && r.walk3 === 1, r.walk10 + ' flushed at 10 m, ' + r.walk3 + ' at 3 m');
+  check('a web beside them puts them up; one across the roof does not', r.web === 1 && r.webFar === 0, r.web + ' at 5 m, ' + r.webFar + ' at 30 m');
+  check('a web on a gopuram rings it, and only there', r.bell === 1 && r.bellIs && r.bellElsewhere === 0, r.bell + ' on the tower, ' + r.bellElsewhere + ' beside it');
+}
+
+async function metro(page, check) {
+  /* A viaduct you can land on and fly under, and a train that is a carrier in
+     exactly the way an aircraft is. */
+  const r = await page.evaluate(() => {
+    const out = {}, t = metroTrain;
+    /* the viaduct stands in nothing, and nothing grows through it */
+    let overlap = 0;
+    for (let b = METRO.box0; b < METRO.box1; b++) for (let c = 0; c < NBOX; c++) {
+      if (c >= METRO.box0 && c < METRO.box1) continue;
+      let hit = true;
+      for (let k = 0; k < 3; k++) if (BOXES[b * 6 + k] >= BOXES[c * 6 + 3 + k] || BOXES[b * 6 + 3 + k] <= BOXES[c * 6 + k]) hit = false;
+      if (hit) overlap++;
+    }
+    out.overlap = overlap; out.boxes = METRO.box1 - METRO.box0;
+    const m4 = new THREE.Matrix4(), v = new THREE.Vector3();
+    let plants = 0, under = 0;
+    for (const im of vegBatches) for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, m4); v.setFromMatrixPosition(m4).add(im.position); plants++;
+      if (Math.abs(v.x - METRO.x) < METRO.w / 2 + 2 && v.z > METRO.z0 && v.z < METRO.z1) under++;
+    }
+    out.plants = plants; out.under = under;
+    /* dropped onto the deck you stand on it; between the piers the street is open */
+    __reset(); player.p.set(METRO.x, METRO.top + 4, METRO.piers[3] + 21); player.v.set(0, 0, 0); player.grounded = false;
+    t.ph = Math.PI / 2; __run(90);
+    out.stand = { y: player.p.y - METRO.top, grounded: player.grounded };
+    const z = METRO.piers[3] + METRO.span / 2;
+    out.through = !rayHit(METRO.x - 12, 5, z, 1, 0, 0, 24);
+    out.pier = !!rayHit(METRO.x - 12, 5, METRO.piers[3], 1, 0, 0, 24);
+    out.deck = !!rayHit(METRO.x, 2, z, 0, 1, 0, 30);
+    /* a whole trip there and back, at two frame rates */
+    for (const hz of [60, 144]) {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0);
+      t.ph = 0; __run(1);
+      let lo = 1e9, hi = -1e9, vmax = 0, offLine = 0, low = 1e9, n = 0;
+      const z0 = t.p.z;
+      for (; n < hz * 200; n++) {
+        __run(1);
+        lo = Math.min(lo, t.p.z - t.hz); hi = Math.max(hi, t.p.z + t.hz);
+        vmax = Math.max(vmax, Math.abs(t.v.z)); offLine = Math.max(offLine, Math.abs(t.p.x - METRO.x) + Math.abs(t.v.x) + Math.abs(t.v.y));
+        low = Math.min(low, t.p.y - t.hy - METRO.top);
+        if (t.ph >= Math.PI * 2) break;
+      }
+      out['trip' + hz] = { secs: (n + 1) / hz, lo, hi, vmax, offLine, low, back: Math.abs(t.p.z - z0) };
+    }
+    /* a web finds it, and tows */
+    __reset(); t.ph = 0; __run(1);
+    const o = { x: METRO.x - 30, y: t.p.y + 6, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.98, -0.2, 0, 60);
+    out.aim = !!hit && hit.pl === t;
+    player.p.set(o.x, o.y, o.z); player.v.set(0, 0, 0); player.grounded = false;
+    fireWebAt(0, { x: hit.x, y: hit.y, z: hit.z, pl: t });
+    const zp = player.p.z, zt = t.p.z; __run(60 * 4);
+    out.tow = { player: player.p.z - zp, train: t.p.z - zt, on: player.webs[0].on, vz: player.v.z, tvz: t.v.z };
+    /* E boards its roof, the roof carries you, and a jump keeps its speed */
+    mountEdge = true; __run(2);
+    out.board = { riding: player.riding === t, y: player.p.y - (t.p.y + t.hy), webs: player.webs[0].on };
+    const zr = player.p.z - t.p.z; __run(120);
+    out.ride = { slip: Math.abs(player.p.z - t.p.z - zr), v: player.v.z - t.v.z };
+    keys['KeyW'] = true; yaw = 0; __run(600); keys['KeyW'] = false;
+    out.walk = { z: player.p.z - t.p.z, x: Math.abs(player.p.x - METRO.x), riding: player.riding === t };
+    const tv = t.v.z; jumpEdge = true; __run(3);
+    out.off = { riding: !!player.riding, vz: player.v.z, tv };
+    /* the aircraft are what they were */
+    out.top = TRAIN_A * TRAIN_W; out.period = 2 * Math.PI / TRAIN_W;
+    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => !p.train).length };
+    __reset(); respawn();
+    return out;
+  });
+  check('the viaduct stands in nothing and nothing grows through it', r.overlap === 0 && r.under === 0 && r.boxes > 20, r.boxes + ' boxes, ' + r.overlap + ' overlapping the city; ' + r.under + ' of ' + r.plants + ' plants under the deck');
+  check('the deck is somewhere to stand', r.stand.grounded && Math.abs(r.stand.y - 0.85) < 0.05, 'standing ' + r.stand.y.toFixed(2) + ' m above it');
+  check('the street runs under it between the piers', r.through && r.pier && r.deck, 'across at 5 m: clear ' + r.through + ', pier ' + r.pier + ', deck overhead ' + r.deck);
+  for (const hz of [60, 144]) {
+    const o = r['trip' + hz];
+    check('the train keeps to the line for a whole trip at ' + hz + ' Hz', o.offLine === 0 && o.lo > -470 && o.hi < 470 && o.low > 0.3,
+      'ran from ' + o.lo.toFixed(0) + ' to ' + o.hi.toFixed(0) + ', ' + o.low.toFixed(2) + ' m clear of the deck');
+    check('there and back in the same time at ' + hz + ' Hz', Math.abs(o.secs - r.period) < 0.05 && o.back < 0.5 && Math.abs(o.vmax - r.top) < 0.05,
+      o.secs.toFixed(2) + ' s, top speed ' + o.vmax.toFixed(1) + ' m/s');
+  }
+  check('a web finds the train and is towed by it', r.aim && r.tow.on && r.tow.train > 60 && r.tow.player > r.tow.train * 0.6 && r.tow.vz > r.tow.tvz * 0.5,
+    'in 4 s the train ran ' + r.tow.train.toFixed(0) + ' m and took the player ' + r.tow.player.toFixed(0) + ' m, by then at ' + r.tow.vz.toFixed(0) + ' m/s behind its ' + r.tow.tvz.toFixed(0));
+  check('E boards its roof', r.board.riding && Math.abs(r.board.y - 0.3) < 0.01 && !r.board.webs, 'riding ' + r.board.riding + ', ' + r.board.y.toFixed(2) + ' m above the roof');
+  check('the roof carries you', r.ride.slip < 1e-6 && Math.abs(r.ride.v) < 1e-6, 'slip ' + (r.ride.slip * 1000).toFixed(3) + ' mm in 2 s');
+  check('you can walk its length and not off the end', r.walk.riding && Math.abs(r.walk.z) > 20 && Math.abs(r.walk.z) < 26.5 && r.walk.x <= 1.0001, 'walked to ' + r.walk.z.toFixed(1) + ' m from the middle');
+  check('a jump steps off with its speed', !r.off.riding && Math.abs(r.off.vz - r.off.tv * 0.9) < 2, 'left at ' + r.off.vz.toFixed(1) + ' m/s from a train doing ' + r.off.tv.toFixed(1));
+  check('the aircraft are the carriers they were', r.plane.hx === 13 && r.plane.hz === 12 && r.plane.deck === 1.45 && r.plane.n === 5, r.plane.n + ' aircraft, hull ' + r.plane.hx + ' x ' + r.plane.hz);
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
@@ -763,7 +1137,7 @@ module.exports = async function fixedStep({ newPage, BASE, check }) {
     window.__run = (n) => { for (let i = 0; i < n; i++) frame(); };
     window.__reset = (hz) => {
       window.__dt = 1 / (hz || 60);
-      player.riding = null;
+      player.riding = null; ropeWrap = false; perchStill = 0; perchK = 0;
       held[0] = held[1] = false; releaseWeb(0); releaseWeb(1);
       for (const k of Object.keys(keys)) keys[k] = false;
     };

@@ -150,12 +150,16 @@ const planes = [];
       cx: rnd(-120, 120), cz: rnd(-160, 120),
       ph: (i / 5) * TAU + rnd(0, 1),
       w: (i % 2 ? -1 : 1) * rnd(0.055, 0.10),   // angular speed, both directions
-      p: V3(), v: V3(), yaw: 0
+      p: V3(), v: V3(), yaw: 0,
+      /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
+         its box, how generously a web may find it, and where a rider walks */
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
     });
   }
 }
 function updatePlanes(dt) {
   for (const pl of planes) {
+    if (pl.train) { updateTrain(pl, dt); continue; }
     pl.ph += pl.w * dt;
     const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
     const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
@@ -187,7 +191,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
     for (let a = 0; a < 3 && ok; a++) {
       const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
       const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? PLANE_HX + 2 : a === 1 ? PLANE_HY + 1 : PLANE_HZ + 2;
+      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
       const lo = c - h, hi = c + h;
       if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
       const inv = 1 / d;
@@ -206,6 +210,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
 }
 
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
@@ -216,11 +221,18 @@ function updateProps(t) {
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
+  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
+     tail streaming behind: look up and you can read which way the air is
+     going and how hard. In a calm it wanders in wide lazy circles; as the
+     wind rises it is carried out along it and held there. (k.x, k.z) is the
+     hand on the ground. */
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
   for (let i = 0; i < kites.length; i++) {
     const k = kites[i];
-    const a = t * 0.22 + k.ph;
-    e.set(Math.sin(a * 1.7) * 0.5, a, Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), KITE_SCALE);
+    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;

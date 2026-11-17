@@ -106,25 +106,31 @@ const webMat = new THREE.MeshBasicMaterial({ color: 0xf2f4ef, transparent: true,
    picture: the solver's line is a length, and stays one.
    One instanced mesh for both lines; a segment not in use is scaled to nothing. */
 const STRAND_SEG = 12, SHOOT_V = 600;      // segments per line · m/s the strand travels at
+/* and after those, one straight piece for each stretch of rope lying against
+   the city between the anchor and the last corner it bends round (81-wrap.js) */
+const STRAND_ALL = STRAND_SEG + WRAP_MAX;
 const strandMesh = new THREE.InstancedMesh(
-  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_SEG * 2);
+  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_ALL * 2);
 strandMesh.frustumCulled = false; scene.add(strandMesh);
 const strandTip = [V3(), V3()];           // where each strand has got to
 const strandSag = [0, 0];                 // metres its middle hangs below the straight line
 const strandPts = new Float32Array((STRAND_SEG + 1) * 3);
 const ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
-for (let k = 0; k < STRAND_SEG * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
+for (let k = 0; k < STRAND_ALL * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
 /* seconds for a strand to cross d metres: quick enough to be on the anchor
    before the line takes weight, slow enough to be seen leaving */
 const shootTime = (d) => clamp(d / SHOOT_V, 0.05, 0.2);
 function drawStrand(i, w, dt) {
-  const { m, q, p, s } = scratch, base = i * STRAND_SEG;
+  const { m, q, p, s } = scratch, base = i * STRAND_ALL;
   if (!w.on) {
-    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_SEG; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
+    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_ALL; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
     return false;
   }
   if (strandSag[i] < 0) strandSag[i] = 0;
-  _d.copy(w.a).sub(w.hand);
+  /* the part that swings runs from the hand to the last bend; with no bends
+     that is the anchor, and all of this is as it was */
+  const end = webEnd(w);
+  _d.copy(end).sub(w.hand);
   const d = _d.length(), f = clamp(w.age / shootTime(d), 0, 1);
   _d.multiplyScalar(1 / d);
   strandTip[i].copy(w.hand).addScaledVector(_d, d * f);
@@ -134,7 +140,7 @@ function drawStrand(i, w, dt) {
   /* Slack is the solver's: its length less the gap from the BODY to the
      anchor. Measured from the hand, an arm's reach up the line always looked
      like a metre and a half of slack, and a taut line hung in a bow. */
-  const slack = f < 1 ? 0 : Math.max(0, w.len - player.p.distanceTo(w.a));
+  const slack = f < 1 ? 0 : Math.max(0, webFree(w) - player.p.distanceTo(end));
   strandSag[i] = damp(strandSag[i], Math.min(Math.sqrt(0.375 * d * slack), 0.3 * d), 16, dt);
   const sag = strandSag[i], gx = _d.y * _d.x, gy = _d.y * _d.y - 1, gz = _d.y * _d.z;
   for (let k = 0; k <= STRAND_SEG; k++) {
@@ -152,6 +158,16 @@ function drawStrand(i, w, dt) {
     if (L < 1e-5) { strandMesh.setMatrixAt(base + k, ZERO4); continue; }
     q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
     strandMesh.setMatrixAt(base + k, m.compose(p, q, s.set(th, L, th)));
+  }
+  /* the rope lying on the buildings: anchor, bend, bend ... taut and straight */
+  for (let k = 0; k < WRAP_MAX; k++) {
+    if (k >= w.nb) { strandMesh.setMatrixAt(base + STRAND_SEG + k, ZERO4); continue; }
+    if (k) p.set(w.bp[k * 3 - 3], w.bp[k * 3 - 2], w.bp[k * 3 - 1]); else p.copy(w.a);
+    _d.set(w.bp[k * 3], w.bp[k * 3 + 1], w.bp[k * 3 + 2]).sub(p);
+    const L = _d.length();
+    if (L < 1e-5) { strandMesh.setMatrixAt(base + STRAND_SEG + k, ZERO4); continue; }
+    q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
+    strandMesh.setMatrixAt(base + STRAND_SEG + k, m.compose(p, q, s.set(th, L, th)));
   }
   return f >= 1;     // the splat belongs to a strand that has arrived
 }
@@ -323,12 +339,13 @@ function poseRig(dt, inp) {
   if (wA.on || wB.on) {
     sh[0].getWorldPosition(_sa); sh[1].getWorldPosition(_sb);
     if (wA.on && wB.on) {
-      const direct = _sa.distanceToSquared(wA.a) + _sb.distanceToSquared(wB.a);
-      const swap = _sa.distanceToSquared(wB.a) + _sb.distanceToSquared(wA.a);
+      const eA = webEnd(wA), eB = webEnd(wB);
+      const direct = _sa.distanceToSquared(eA) + _sb.distanceToSquared(eB);
+      const swap = _sa.distanceToSquared(eB) + _sb.distanceToSquared(eA);
       if (swap < direct) { armFor[0] = 1; armFor[1] = 0; } else { armFor[0] = 0; armFor[1] = 1; }
     } else {
       const wi = wA.on ? 0 : 1, w = player.webs[wi];
-      armFor[_sa.distanceToSquared(w.a) <= _sb.distanceToSquared(w.a) ? 0 : 1] = wi;
+      armFor[_sa.distanceToSquared(webEnd(w)) <= _sb.distanceToSquared(webEnd(w)) ? 0 : 1] = wi;
     }
   }
   for (let a = 0; a < 2; a++) {
@@ -337,7 +354,7 @@ function poseRig(dt, inp) {
     /* not into _d itself: copy() would overwrite the shoulder before it was
        subtracted, the direction came out zero, and the arm holding the line
        simply hung at the body's side */
-    _d.copy(w.a).sub(sh[a].getWorldPosition(_sa)).normalize();
+    _d.copy(webEnd(w)).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
     aimAt(sh[a], _d, _pq);
     el[a].rotation.set(-0.12, 0, 0);

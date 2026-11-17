@@ -73,10 +73,12 @@ function thermalAt(x, y, z) {
 }
 
 const WIND = V3();
+let windHead = 0;          // where it is blowing TO, radians; still meaningful in a dead calm
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
   const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)   // strength swells
                         + 1.1 * Math.sin(t * 0.0053));          // and dies away
+  windHead = a;
   WIND.set(Math.cos(a) * s, 0, Math.sin(a) * s);
 }
 
@@ -191,9 +193,9 @@ function boardablePlane(P) {
   for (const w of player.webs) if (w.on && w.pl) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - PLANE_HX, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - PLANE_HY, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - PLANE_HZ, 0);
+    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
@@ -223,9 +225,9 @@ function stepPhysics(h, inp) {
     if (near) {
       worldToPlane(near, P.x, P.y, P.z, player.rideLo);
       /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -1.1, 1.1);
-      player.rideLo.z = clamp(player.rideLo.z, -9, 9);
-      player.rideLo.y = DECK_Y;
+      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
+      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
+      player.rideLo.y = near.deck;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
       emit('board', near);
@@ -237,8 +239,8 @@ function stepPhysics(h, inp) {
        before walking, or the controls flip as the aircraft turns */
     const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
-    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -9.5, 9.5);
-    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -1.2, 1.2);
+    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
+    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
@@ -372,7 +374,7 @@ function stepPhysics(h, inp) {
   }
   /* zip line pull */
   if (inp.zip) for (const w of player.webs) if (w.on) {
-    _tmp.copy(w.a).sub(P); const dl = _tmp.length();
+    _tmp.copy(webEnd(w)).sub(P); const dl = _tmp.length();
     if (dl > 2) { _tmp.multiplyScalar(1 / dl); ax += _tmp.x * 78; ay += _tmp.y * 78; az += _tmp.z * 78; }
     w.tgt = Math.max(WEB_MIN, w.tgt - 34 * h);
   }
@@ -409,16 +411,20 @@ function stepPhysics(h, inp) {
   /* a latched aircraft carries its anchor with it, so the constraint target
      has to be re-evaluated every substep — that is what tows the player */
   pinAnchors();
+  /* where the line has met a corner you hang from the corner, on what rope is
+     left (81-wrap.js). With no bends that is the anchor and the whole line. */
+  for (const w of player.webs) if (w.on) updateWrap(w, P);
 
   for (let it = 0; it < 5; it++) {
     for (const w of player.webs) {
       if (!w.on) continue;
-      const dx = P.x - w.a.x, dy = P.y - w.a.y, dz = P.z - w.a.z;
+      const e = webEnd(w), L = webFree(w);
+      const dx = P.x - e.x, dy = P.y - e.y, dz = P.z - e.z;
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d <= w.len || d < 1e-5) continue;
-      const c = ((d - w.len) / d) * K;
+      if (d <= L || d < 1e-5) continue;
+      const c = ((d - L) / d) * K;
       P.x -= dx * c; P.y -= dy * c; P.z -= dz * c;
-      w.corr += (d - w.len) * K;
+      w.corr += (d - L) * K;
     }
     solveContacts(P);
   }
@@ -428,7 +434,7 @@ function stepPhysics(h, inp) {
   for (const w of player.webs) {
     if (!w.on) { w.tension = damp(w.tension, 0, 12, h); continue; }
     w.tension = damp(w.tension, MASS * w.corr / (h * h), 14, h);
-    if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
+    if (w.used + webEnd(w).distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
   /* A landing is the first touch after time in the air, and how hard is the
@@ -532,7 +538,7 @@ function fireWebAt(i, a) {
   if (!a) { emit('miss'); return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
-  w.on = true; w.a.set(a.x, a.y, a.z);
+  w.on = true; w.a.set(a.x, a.y, a.z); clearWrap(w);
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);

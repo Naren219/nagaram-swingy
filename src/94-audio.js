@@ -38,6 +38,7 @@ function initAmbience() {
   beds.bazaar  = makeBed('bandpass', 720, 0.6, noiseBuf);   // crowd murmur
   beds.night   = makeBed('bandpass', 5200, 9, noiseBuf);    // insects
   beds.engine  = makeBed('lowpass',  240, 1.2, noiseBuf);   // turbofan hiss
+  beds.rail    = makeBed('lowpass',  150, 2.2, noiseBuf);   // steel on steel, heard through a viaduct
   /* the engine also needs a pitched core, not just filtered noise */
   const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 58;
   const of = AC.createBiquadFilter(); of.type = 'lowpass'; of.frequency.value = 320;
@@ -100,12 +101,18 @@ function honk(vol) {
   o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
 }
 
+/* How much of the street reaches you, 0..1 and a little over. Everything on
+   the ground thins out as you climb, unless you have stopped to listen
+   (91-perch.js): then most of it comes back up to you. */
+function ambAlt(y) {
+  const alt = clamp(1 - (y - 22) / 230, 0, 1);
+  return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
+}
 let tBell = 6, tGull = 3, tHonk = 2;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
-  /* everything on the ground thins out as you climb */
-  const alt = clamp(1 - (p.y - 22) / 230, 0, 1);
+  const alt = ambAlt(p.y);
   const dSea = p.x - SAND_X;                       // positive once over sand
   const surfN = clamp(1 - Math.abs(dSea) / 300, 0, 1);
   const dCore = Math.hypot(p.x, p.z);
@@ -119,11 +126,13 @@ function updateAudio(dt) {
 
   /* nearest aircraft, for engine noise and for riding */
   let eng = 0;
+  let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
-    eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
+    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) eng = 1;
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -132,6 +141,7 @@ function updateAudio(dt) {
     bazaar: bazaarN * alt * 0.085 * (1 - night * 0.75),
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
     engine: eng * 0.16,
+    rail: rail * rail * 0.26,
     engineTone: eng * eng * 0.055
   };
   const k = 1 - Math.exp(-2.2 * dt);
@@ -308,4 +318,39 @@ listen('release', (spd, age) => {
   if (!AC || spd < 14 || age < 0.3) return;
   const vol = clamp((spd - 14) / 38, 0.12, 1);
   noiseHit('bandpass', 620, 2100, 0.2, 1.3, 0.17 * vol, 0.03, 0.34);
+});
+/* the line taking a corner (81-wrap.js): a short dry knock as it comes to
+   bear on the edge, a lighter one as it comes off */
+listen('bend', (n, on) => {
+  if (!AC) return;
+  const f = on ? 1500 : 2300;
+  noiseHit('bandpass', f, f * 0.55, 0.05, 5, on ? 0.13 : 0.06, 0.003, 0.08);
+});
+/* a flock going up: a second of wingbeats, which is noise chopped at the rate
+   wings beat; gulls complain as well */
+listen('flush', (sea) => {
+  if (!AC) return;
+  const t = AC.currentTime, dur = 1.5;
+  const src = AC.createBufferSource(); src.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.9;
+  f.frequency.setValueAtTime(sea ? 1500 : 2300, t); f.frequency.exponentialRampToValueAtTime(sea ? 900 : 1300, t + dur);
+  const chop = AC.createGain(); chop.gain.value = 0.5;
+  const lfo = AC.createOscillator(); lfo.type = 'sine';
+  lfo.frequency.setValueAtTime(sea ? 9 : 15, t); lfo.frequency.linearRampToValueAtTime(sea ? 6 : 9, t + dur);
+  const lg = AC.createGain(); lg.gain.value = 0.5; lfo.connect(lg); lg.connect(chop.gain);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.2, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(chop); chop.connect(g); g.connect(master);
+  src.start(t, Math.random() * 0.4); src.stop(t + dur + 0.05); lfo.start(t); lfo.stop(t + dur + 0.05);
+  if (sea) gull(0.8);
+});
+/* a web on a gopuram rings it. Not twice in a breath: two hands landing
+   together are one strike. */
+let bellQuiet = 0;
+listen('bell', () => {
+  if (!AC || AC.currentTime < bellQuiet) return;
+  bellQuiet = AC.currentTime + 0.35;
+  bell(0.26);
 });

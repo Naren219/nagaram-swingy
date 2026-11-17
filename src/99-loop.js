@@ -53,6 +53,7 @@ function frame() {
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
   inp.mount = mountEdge;
+  updatePerch(dt, fb !== 0 || rl !== 0 || jumpEdge || !!keys['Space'] || inp.tuck || inp.zip || held[0] || held[1]);
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -100,14 +101,15 @@ function frame() {
     else aimMark.position.lerp(_d, 1 - Math.exp(-26 * dt));
     aimMark.scale.setScalar(clamp(aimPt.t * 0.021, 0.34, 2.6));
     /* dimmer when the assist picked it rather than your crosshair */
-    aimMat.opacity = aimPt.off < 0.01 ? 0.95 : 0.52;
-    aimBack.opacity = aimPt.off < 0.01 ? 0.55 : 0.30;
+    const show = 1 - perchK;        // perched, the ring is not what you are looking at
+    aimMat.opacity = (aimPt.off < 0.01 ? 0.95 : 0.52) * show;
+    aimBack.opacity = (aimPt.off < 0.01 ? 0.55 : 0.30) * show;
     const gp = guideGeo.attributes.position;
     gp.setXYZ(0, pRender.x, pRender.y + 0.9, pRender.z);
     gp.setXYZ(1, aimMark.position.x, aimMark.position.y, aimMark.position.z);
     gp.needsUpdate = true;
     guide.visible = true;
-    guide.material.opacity = aimPt.off < 0.01 ? 0.26 : 0.14;
+    guide.material.opacity = (aimPt.off < 0.01 ? 0.26 : 0.14) * show;
   } else { aimMark.visible = false; guide.visible = false; }
   if (missFlash > 0) missFlash -= dt;
 
@@ -115,6 +117,8 @@ function frame() {
   updateTraffic(dt);
   updateProps(T);
   updateMotes(T);
+  updateWindSigns(T);
+  if (!photoMode) updateBirds(dt);
   updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);

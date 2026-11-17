@@ -158,6 +158,11 @@
   body.quiet #band,body.quiet #tbar,body.quiet #help{opacity:0}
   body.quiet #mapwrap{opacity:.4}
   body.quiet.run #mapwrap{opacity:1}
+  /* ---- perched: the readouts leave slowly and are back the moment you move ---- */
+  #hud{transition:opacity .3s}
+  body.perch #hud{opacity:0;transition:opacity 2.4s}
+  #pbtn{transition:opacity .3s,border-color .15s}
+  body.perch #pbtn{opacity:.25;transition:opacity 2.4s}
   /* ---- photo mode: nothing between the eye and the city ---- */
   body.photo #hud,body.photo #pbtn{display:none}
 
@@ -237,6 +242,7 @@
       <tr><td>E</td><td>cling to wall &middot; board an aircraft</td></tr>
       <tr><td>T / F / M</td><td>time of day · assist · mute</td></tr>
       <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
+      <tr><td>B</td><td>trial: the line bends round corners</td></tr>
       <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
       <tr><td>gamepad</td><td>triggers fire the webs</td></tr>
@@ -618,6 +624,21 @@ for (const bx of BRIDGES) {
   landmarks.push({ type: 'bridge', x: bx, z: bz, len: (RIVER_HW + 26) * 2 });
   addBox(bx, 7.4, bz, 20, 1.6, (RIVER_HW + 26) * 2);
 }
+/* --- the metro: an elevated line up the gap between the blocks at x = 238,
+   from south of the river to the north blocks. A deck on piers: solid, so it
+   can be landed on, swung from and flown under. Declared here so its boxes
+   are in the solver; built and run in 76-metro.js. --- */
+const METRO = { x: 238, z0: -470, z1: 470, top: 13.4, thick: 1.3, w: 6.4, span: 42, pierW: 2.2, pierD: 2.8 };
+METRO.box0 = boxesArr.length / 6;
+addBox(METRO.x, METRO.top - METRO.thick, (METRO.z0 + METRO.z1) / 2, METRO.w, METRO.thick, METRO.z1 - METRO.z0);
+METRO.piers = [];
+for (let z = METRO.z0 + 8; z <= METRO.z1 - 8 + 0.01; z += METRO.span) {
+  METRO.piers.push(z);
+  addBox(METRO.x, 0, z, METRO.pierW, METRO.top - METRO.thick, METRO.pierD);
+}
+METRO.box1 = boxesArr.length / 6;
+/* nothing may be planted under the deck */
+const underMetro = (x, z) => Math.abs(x - METRO.x) < METRO.w / 2 + 2.5 && z > METRO.z0 - 3 && z < METRO.z1 + 3;
 /* a couple of comms masts for high anchors */
 for (const [mx, mz, mh] of [[-410, -430, 96], [300, -450, 88], [-300, 380, 82], [420, 250, 92]]) {
   landmarks.push({ type: 'mast', x: mx, z: mz, h: mh });
@@ -1333,13 +1354,19 @@ const NBOX = (BOXES.length / 6) | 0;
 const CELL = 44;
 const hash = new Map();
 const hkey = (i, j) => (i + 2048) * 4096 + (j + 2048);
-for (let b = 0; b < NBOX; b++) {
+function hashBox(b) {
   const o = b * 6;
   for (let i = Math.floor(BOXES[o] / CELL); i <= Math.floor(BOXES[o + 3] / CELL); i++)
     for (let j = Math.floor(BOXES[o + 2] / CELL); j <= Math.floor(BOXES[o + 5] / CELL); j++) {
       const k = hkey(i, j); let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(b);
     }
 }
+/* The metro's boxes are held back until the plants, traffic and boats have
+   been placed (76-metro.js puts them in). Placement asks freeAt() and draws
+   from the world's random stream until it has enough: one more box in the way
+   is one more draw, and every palm, aircraft and kite after it would land
+   somewhere else. This way the city is the same city, plus a metro. */
+for (let b = 0; b < NBOX; b++) if (b < METRO.box0 || b >= METRO.box1) hashBox(b);
 function freeAt(x, z, r) {
   const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
   for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
@@ -1398,6 +1425,29 @@ function treeGeo(seed) {
   return mergeGeos(p);
 }
 const vegMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+/* Plants lean with the wind (83-wind-signs.js): pushed over along it by the
+   square of their height, so a trunk bends and its foot stays planted, with
+   a slow gust travelling through the grove and a quick shiver in the crown.
+   Applied after the instance transform, where +x and +z are the world's. The
+   depth material carries the same bend, or the shadow would stand still
+   under a moving tree. */
+const PLANT_BEND = 0.0026;      // metres of lean per (m/s of wind) per (metre of height) squared
+function plantSway(sh) {
+  sh.uniforms.uWind = windUni.uWind; sh.uniforms.uTime = windUni.uTime;
+  sh.vertexShader = 'uniform vec2 uWind;\nuniform float uTime;\n' + sh.vertexShader.replace('#include <project_vertex>', `
+    vec4 mvPosition = instanceMatrix * vec4(transformed, 1.0);
+    {
+      vec4 wp = modelMatrix * mvPosition;
+      float gust = 1.0 + 0.45 * sin(uTime * 1.3 + wp.x * 0.07 + wp.z * 0.05);
+      float h = max(mvPosition.y, 0.0);
+      mvPosition.xz += uWind * (h * h * ${PLANT_BEND} * gust)
+        + vec2(sin(uTime * 4.7 + wp.x * 1.3), cos(uTime * 4.1 + wp.z * 1.1)) * (length(uWind) * 0.012 * smoothstep(5.0, 10.0, h));
+    }
+    mvPosition = modelViewMatrix * mvPosition;
+    gl_Position = projectionMatrix * mvPosition;`);
+}
+const plantMat = vegMat.clone(); plantMat.onBeforeCompile = plantSway;
+const plantDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); plantDepth.onBeforeCompile = plantSway;
 const VEG_CELL = 220;
 function scatter(geoFn, count, test, scaleLo, scaleHi) {
   const geos = [geoFn(0.3), geoFn(1.4), geoFn(2.7)];
@@ -1422,6 +1472,7 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
   for (const list of picks) {
     for (const [x, z] of list) {
       const s = rnd(scaleLo, scaleHi), ry = rnd(0, TAU), sy = s * rnd(0.9, 1.15);
+      if (underMetro(x, z)) continue;     // after the draws: dropped, not replaced, so nothing else moves
       const ci = Math.floor(x / VEG_CELL), cj = Math.floor(z / VEG_CELL), key = ci + ':' + cj;
       let c = cells.get(key);
       if (!c) cells.set(key, c = { g: ((ci + 2 * cj) % 3 + 3) % 3, cx: (ci + 0.5) * VEG_CELL, cz: (cj + 0.5) * VEG_CELL, list: [] });
@@ -1430,11 +1481,12 @@ function scatter(geoFn, count, test, scaleLo, scaleHi) {
       reach = Math.max(reach, Math.hypot(x - c.cx, z - c.cz) + (bs.center.length() + bs.radius) * Math.max(s, sy));
     }
   }
-  for (const g of geos) g.boundingSphere.set(V3(0, 0, 0), reach);
+  for (const g of geos) g.boundingSphere.set(V3(0, 0, 0), reach + 4);   // and room to lean
   const m = new THREE.Matrix4();
   for (const c of cells.values()) {
     const n = c.list.length / 5;
-    const im = new THREE.InstancedMesh(geos[c.g], vegMat, n);
+    const im = new THREE.InstancedMesh(geos[c.g], plantMat, n);
+    im.customDepthMaterial = plantDepth;
     for (let i = 0; i < n; i++) {
       const [dx, dz, s, sy, ry] = c.list.slice(i * 5, i * 5 + 5);
       m.compose(pos.set(dx, 0, dz), q.setFromEuler(e.set(0, ry, 0)), scl.set(s, sy, s));
@@ -1616,12 +1668,16 @@ const planes = [];
       cx: rnd(-120, 120), cz: rnd(-160, 120),
       ph: (i / 5) * TAU + rnd(0, 1),
       w: (i % 2 ? -1 : 1) * rnd(0.055, 0.10),   // angular speed, both directions
-      p: V3(), v: V3(), yaw: 0
+      p: V3(), v: V3(), yaw: 0,
+      /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
+         its box, how generously a web may find it, and where a rider walks */
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
     });
   }
 }
 function updatePlanes(dt) {
   for (const pl of planes) {
+    if (pl.train) { updateTrain(pl, dt); continue; }
     pl.ph += pl.w * dt;
     const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
     const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
@@ -1653,7 +1709,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
     for (let a = 0; a < 3 && ok; a++) {
       const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
       const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? PLANE_HX + 2 : a === 1 ? PLANE_HY + 1 : PLANE_HZ + 2;
+      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
       const lo = c - h, hi = c + h;
       if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
       const inv = 1 / d;
@@ -1672,6 +1728,7 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
 }
 
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
@@ -1682,16 +1739,90 @@ function updateProps(t) {
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
+  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
+     tail streaming behind: look up and you can read which way the air is
+     going and how hard. In a calm it wanders in wide lazy circles; as the
+     wind rises it is carried out along it and held there. (k.x, k.z) is the
+     hand on the ground. */
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
   for (let i = 0; i < kites.length; i++) {
     const k = kites[i];
-    const a = t * 0.22 + k.ph;
-    e.set(Math.sin(a * 1.7) * 0.5, a, Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + Math.cos(a) * k.r, k.y + Math.sin(a * 1.6) * 5, k.z + Math.sin(a) * k.r), q.setFromEuler(e), KITE_SCALE);
+    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;
 }
 
+/* =====================================================================
+   THE METRO
+   ---------------------------------------------------------------------
+   The only things in the city that moved and could be used were the
+   aircraft, all of them high. The metro is the low one: an elevated line up
+   the gap between the blocks (METRO, 10-world.js), and a train that shuttles
+   along it, slowing into each end and out again.
+
+   The viaduct is ordinary solid boxes: land on the deck, hang a web from its
+   underside, fly between its piers. The train is a CARRIER, exactly as an
+   aircraft is (it lives in `planes`): a web can latch it and be towed, and E
+   boards its roof. The line runs due north-south, so the train's box is
+   axis-aligned and exact, not the loose box a turning aircraft gets.
+   ===================================================================== */
+for (let b = METRO.box0; b < METRO.box1; b++) hashBox(b);    // see 65-broadphase.js for why only now
+
+const TRAIN_CARS = 3, CAR_LEN = 17, CAR_GAP = 1.2, CAR_W = 3.1, CAR_H = 3.3;
+const TRAIN_HZ = (TRAIN_CARS * CAR_LEN + (TRAIN_CARS - 1) * CAR_GAP) / 2;
+const TRAIN_Y = METRO.top + 0.55 + CAR_H / 2;              // centre of the cars, riding on bogies above the deck
+const TRAIN_W = 0.066;                                     // rad/s of the shuttle: a little over 28 m/s at mid-line
+const TRAIN_A = (METRO.z1 - METRO.z0) / 2 - TRAIN_HZ - 5;  // how far either side of the middle it runs
+{
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /* the viaduct: deck, parapets, rails, piers with a cap each */
+  const zc = (METRO.z0 + METRO.z1) / 2, len = METRO.z1 - METRO.z0, parts = [
+    { geo: BOXB, matrix: M4(METRO.x, METRO.top - METRO.thick, zc, METRO.w, METRO.thick, len), color: 0xb9b4a8 },
+    { geo: BOXB, matrix: M4(METRO.x - METRO.w / 2 + 0.2, METRO.top, zc, 0.4, 0.75, len), color: 0xa9a498 },
+    { geo: BOXB, matrix: M4(METRO.x + METRO.w / 2 - 0.2, METRO.top, zc, 0.4, 0.75, len), color: 0xa9a498 },
+    { geo: BOXB, matrix: M4(METRO.x - 0.72, METRO.top, zc, 0.12, 0.16, len), color: 0x4a4d52 },
+    { geo: BOXB, matrix: M4(METRO.x + 0.72, METRO.top, zc, 0.12, 0.16, len), color: 0x4a4d52 }];
+  for (const z of METRO.piers) {
+    parts.push({ geo: BOXB, matrix: M4(METRO.x, 0, z, METRO.pierW, METRO.top - METRO.thick, METRO.pierD), color: 0xa7a296 });
+    parts.push({ geo: BOXB, matrix: M4(METRO.x, METRO.top - METRO.thick - 1.0, z, METRO.w * 0.8, 1.0, METRO.pierD + 0.5), color: 0x9c978b });
+  }
+  const via = new THREE.Mesh(mergeGeos(parts), mat);
+  via.castShadow = true; via.receiveShadow = true; via.matrixAutoUpdate = false; scene.add(via);
+
+  /* the train, built about its own centre with +z along the line */
+  const cars = [];
+  for (let k = 0; k < TRAIN_CARS; k++) {
+    const z = (k - (TRAIN_CARS - 1) / 2) * (CAR_LEN + CAR_GAP), y0 = -CAR_H / 2;
+    cars.push(
+      { geo: BOXB, matrix: M4(0, y0, z, CAR_W, CAR_H, CAR_LEN), color: 0xeee9dc },
+      { geo: BOXB, matrix: M4(0, y0 + 1.55, z, CAR_W + 0.06, 0.95, CAR_LEN - 1.6), color: 0x1f2c35 },      // windows
+      { geo: BOXB, matrix: M4(0, y0 + 0.95, z, CAR_W + 0.06, 0.34, CAR_LEN - 0.3), color: 0xd9a83a },      // turmeric stripe
+      { geo: BOXB, matrix: M4(0, y0 + 0.3, z, CAR_W + 0.06, 0.2, CAR_LEN - 0.3), color: 0x2f8f83 },
+      { geo: BOXB, matrix: M4(0, y0 + CAR_H, z, 1.5, 0.3, CAR_LEN * 0.5), color: 0x8d9093 },               // roof gear
+      { geo: BOXB, matrix: M4(0, y0 - 0.5, z - CAR_LEN * 0.32, 2.3, 0.5, 2.6), color: 0x2a2c30 },          // bogies
+      { geo: BOXB, matrix: M4(0, y0 - 0.5, z + CAR_LEN * 0.32, 2.3, 0.5, 2.6), color: 0x2a2c30 });
+  }
+  const mesh = new THREE.Mesh(mergeGeos(cars), mat);
+  mesh.castShadow = true; mesh.frustumCulled = false; scene.add(mesh);
+  planes.push({
+    train: true, mesh, ph: 0.6, w: TRAIN_W,
+    p: V3(METRO.x, TRAIN_Y, 0), v: V3(), yaw: 0,
+    hx: CAR_W / 2, hy: CAR_H / 2, hz: TRAIN_HZ, reach: 0.8, deck: CAR_H / 2 + 0.3, walkX: 1.0, walkZ: TRAIN_HZ - 1
+  });
+}
+const metroTrain = planes[planes.length - 1];
+function updateTrain(pl, dt) {
+  pl.ph += pl.w * dt;
+  const z = (METRO.z0 + METRO.z1) / 2 + TRAIN_A * Math.sin(pl.ph);
+  pl.v.set(0, 0, dt > 1e-5 ? (z - pl.p.z) / dt : 0);
+  pl.p.z = z;
+  pl.mesh.position.copy(pl.p);
+}
+metroTrain.p.z = (METRO.z0 + METRO.z1) / 2 + TRAIN_A * Math.sin(metroTrain.ph);
 /* =====================================================================
    PHYSICS
    XPBD: integrate -> solve distance constraints + contacts -> derive v
@@ -1767,10 +1898,12 @@ function thermalAt(x, y, z) {
 }
 
 const WIND = V3();
+let windHead = 0;          // where it is blowing TO, radians; still meaningful in a dead calm
 function updateWind(t) {
   const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
   const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)   // strength swells
                         + 1.1 * Math.sin(t * 0.0053));          // and dies away
+  windHead = a;
   WIND.set(Math.cos(a) * s, 0, Math.sin(a) * s);
 }
 
@@ -1885,9 +2018,9 @@ function boardablePlane(P) {
   for (const w of player.webs) if (w.on && w.pl) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - PLANE_HX, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - PLANE_HY, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - PLANE_HZ, 0);
+    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
@@ -1917,9 +2050,9 @@ function stepPhysics(h, inp) {
     if (near) {
       worldToPlane(near, P.x, P.y, P.z, player.rideLo);
       /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -1.1, 1.1);
-      player.rideLo.z = clamp(player.rideLo.z, -9, 9);
-      player.rideLo.y = DECK_Y;
+      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
+      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
+      player.rideLo.y = near.deck;
       player.riding = near;
       releaseWeb(0); releaseWeb(1);
       emit('board', near);
@@ -1931,8 +2064,8 @@ function stepPhysics(h, inp) {
        before walking, or the controls flip as the aircraft turns */
     const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
-    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -9.5, 9.5);
-    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -1.2, 1.2);
+    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
+    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
@@ -2066,7 +2199,7 @@ function stepPhysics(h, inp) {
   }
   /* zip line pull */
   if (inp.zip) for (const w of player.webs) if (w.on) {
-    _tmp.copy(w.a).sub(P); const dl = _tmp.length();
+    _tmp.copy(webEnd(w)).sub(P); const dl = _tmp.length();
     if (dl > 2) { _tmp.multiplyScalar(1 / dl); ax += _tmp.x * 78; ay += _tmp.y * 78; az += _tmp.z * 78; }
     w.tgt = Math.max(WEB_MIN, w.tgt - 34 * h);
   }
@@ -2103,16 +2236,20 @@ function stepPhysics(h, inp) {
   /* a latched aircraft carries its anchor with it, so the constraint target
      has to be re-evaluated every substep — that is what tows the player */
   pinAnchors();
+  /* where the line has met a corner you hang from the corner, on what rope is
+     left (81-wrap.js). With no bends that is the anchor and the whole line. */
+  for (const w of player.webs) if (w.on) updateWrap(w, P);
 
   for (let it = 0; it < 5; it++) {
     for (const w of player.webs) {
       if (!w.on) continue;
-      const dx = P.x - w.a.x, dy = P.y - w.a.y, dz = P.z - w.a.z;
+      const e = webEnd(w), L = webFree(w);
+      const dx = P.x - e.x, dy = P.y - e.y, dz = P.z - e.z;
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d <= w.len || d < 1e-5) continue;
-      const c = ((d - w.len) / d) * K;
+      if (d <= L || d < 1e-5) continue;
+      const c = ((d - L) / d) * K;
       P.x -= dx * c; P.y -= dy * c; P.z -= dz * c;
-      w.corr += (d - w.len) * K;
+      w.corr += (d - L) * K;
     }
     solveContacts(P);
   }
@@ -2122,7 +2259,7 @@ function stepPhysics(h, inp) {
   for (const w of player.webs) {
     if (!w.on) { w.tension = damp(w.tension, 0, 12, h); continue; }
     w.tension = damp(w.tension, MASS * w.corr / (h * h), 14, h);
-    if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
+    if (w.used + webEnd(w).distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
   /* A landing is the first touch after time in the air, and how hard is the
@@ -2226,7 +2363,7 @@ function fireWebAt(i, a) {
   if (!a) { emit('miss'); return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
-  w.on = true; w.a.set(a.x, a.y, a.z);
+  w.on = true; w.a.set(a.x, a.y, a.z); clearWrap(w);
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
@@ -2254,6 +2391,151 @@ function releaseWeb(i) {
   }
 }
 
+/* =====================================================================
+   THE LINE BENDS ROUND CORNERS   (prototype · B toggles it · off by default)
+   ---------------------------------------------------------------------
+   A web used to be a length between you and the anchor and nothing else: put
+   a building in between and the line went through it. With this on, the line
+   is a taut string that the city can touch. Where it meets the edge of a box
+   it gets a BEND there, and from then on you swing about the bend on what
+   rope is left: the radius shortens as you round the corner and the swing
+   whips, the way a tetherball does. Come back across and the bend lets go.
+
+   Every solid is an axis-aligned box, so a bend is always a point on one of a
+   box's twelve edges and all of this is a few slab tests.
+
+     bends    w.bp[0..nb)   in order from the anchor outward
+     w.e      the last bend: what the solver holds you to
+     w.used   rope lying between the anchor and w.e
+     webEnd(w), webFree(w)  what to aim at, and how much line is left to swing
+
+   The LAST bend slides along its edge to keep the string as short as it can
+   be (a string has no reason to stay where it first touched); the ones
+   behind it stay put. A line on an aircraft does not wrap: its anchor moves.
+   ===================================================================== */
+const WRAP_MAX = 8;        // bends a line can hold; past that it clips, as every line used to
+const WRAP_OFF = 0.04;     // metres a bend stands off its edge, so the next ray starts clear of the box
+const WRAP_FREE = 1.0;     // metres of swing a wound-up line always keeps
+let ropeWrap = false;
+for (const w of player.webs) {
+  w.nb = 0; w.used = 0; w.e = V3();
+  w.bp = new Float32Array(WRAP_MAX * 3);   // bend points
+  w.bl = new Float32Array(WRAP_MAX);       // rope from the anchor to each bend
+  w.bb = new Int32Array(WRAP_MAX);         // the box each bend is on
+  w.bk = new Int8Array(WRAP_MAX);          // the axis its edge runs along
+  w.bs = new Int8Array(WRAP_MAX);          // which way the line turns about that axis
+}
+const webEnd = (w) => (w.nb ? w.e : w.a);
+const webFree = (w) => (w.nb ? Math.max(WRAP_FREE, w.len - w.used) : w.len);
+function clearWrap(w) { w.nb = 0; w.used = 0; }
+
+const wrP = new Float64Array(3), wrQ = new Float64Array(3), wrB = new Float64Array(3), wrX = new Float64Array(3);
+/* does the segment pass through the inside of box b? */
+function segInBox(b, s, e) {
+  const o = b * 6; let t0 = 0, t1 = 1;
+  for (let k = 0; k < 3; k++) {
+    const d = e[k] - s[k], mn = BOXES[o + k] + 0.01, mx = BOXES[o + 3 + k] - 0.01;
+    if (Math.abs(d) < 1e-9) { if (s[k] <= mn || s[k] >= mx) return false; continue; }
+    let a = (mn - s[k]) / d, c = (mx - s[k]) / d;
+    if (a > c) { const t = a; a = c; c = t; }
+    if (a > t0) t0 = a;
+    if (c < t1) t1 = c;
+    if (t0 >= t1) return false;
+  }
+  return true;
+}
+const wrDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+/* the point before bend i on the line: the bend behind it, or the anchor */
+function wrapPrev(w, i, out) {
+  if (i > 0) { out[0] = w.bp[i * 3 - 3]; out[1] = w.bp[i * 3 - 2]; out[2] = w.bp[i * 3 - 1]; }
+  else { out[0] = w.a.x; out[1] = w.a.y; out[2] = w.a.z; }
+}
+/* is the straight line s -> e clear of everything? */
+function wrapClear(s, e) {
+  const dx = s[0] - e[0], dy = s[1] - e[1], dz = s[2] - e[2], d = Math.hypot(dx, dy, dz);
+  if (d < 0.2) return true;
+  return !rayHit(e[0], e[1], e[2], dx / d, dy / d, dz / d, d - 0.06);
+}
+function wrapSeal(w) {
+  const i = w.nb - 1;
+  if (i < 0) { w.used = 0; return; }
+  w.e.set(w.bp[i * 3], w.bp[i * 3 + 1], w.bp[i * 3 + 2]);
+  w.used = w.bl[i];
+  /* the winch cannot take in rope that is lying on a building */
+  const least = w.used + WRAP_FREE;
+  if (w.len < least) w.len = least;
+  if (w.tgt < least) w.tgt = least;
+}
+
+function updateWrap(w, P) {
+  if (!ropeWrap || w.pl) { if (w.nb) clearWrap(w); return; }
+  wrP[0] = P.x; wrP[1] = P.y; wrP[2] = P.z;
+
+  /* ---- let go of bends you have swung back across, then slide the last ---- */
+  while (w.nb) {
+    const i = w.nb - 1, k = w.bk[i], u = (k + 1) % 3, v = (k + 2) % 3, o = w.bb[i] * 6;
+    wrapPrev(w, i, wrQ);
+    wrB[0] = w.bp[i * 3]; wrB[1] = w.bp[i * 3 + 1]; wrB[2] = w.bp[i * 3 + 2];
+    const d1u = wrB[u] - wrQ[u], d1v = wrB[v] - wrQ[v], d2u = wrP[u] - wrB[u], d2v = wrP[v] - wrB[v];
+    /* seen along the edge, the line turns one way round the corner. Straight
+       again, or turning the other way, and nothing is holding it there. */
+    if ((d1u * d2v - d1v * d2u) * w.bs[i] < 0) { w.nb--; emit('bend', w.nb, false); continue; }
+    /* unfold the two faces flat and the shortest string is a straight line:
+       it crosses the edge in proportion to how far each end stands off it */
+    const r1 = Math.hypot(d1u, d1v), r2 = Math.hypot(d2u, d2v);
+    const z = clamp(wrQ[k] + (wrP[k] - wrQ[k]) * r1 / (r1 + r2 + 1e-9), BOXES[o + k] - WRAP_OFF, BOXES[o + 3 + k] + WRAP_OFF);
+    if (Math.abs(z - wrB[k]) > 0.004) {
+      const was = wrB[k]; wrB[k] = z;
+      /* ...unless something stands in the way of the rope behind it */
+      if (wrapClear(wrQ, wrB)) { w.bp[i * 3 + k] = z; w.bl[i] = (i ? w.bl[i - 1] : 0) + wrDist(wrQ, wrB); }
+      else wrB[k] = was;
+    }
+    break;
+  }
+  wrapSeal(w);
+  if (w.nb >= WRAP_MAX) return;
+
+  /* ---- is anything between you and what you hang from? ---- */
+  const E = webEnd(w);
+  wrQ[0] = E.x; wrQ[1] = E.y; wrQ[2] = E.z;
+  const dx = wrQ[0] - wrP[0], dy = wrQ[1] - wrP[1], dz = wrQ[2] - wrP[2], d = Math.hypot(dx, dy, dz);
+  if (d < 0.5) return;
+  /* from the body toward the anchor: the anchor sits ON a wall, and a ray
+     starting on a wall cannot tell that wall from open air */
+  const hit = rayHit(wrP[0], wrP[1], wrP[2], dx / d, dy / d, dz / d, d - 0.06);
+  if (!hit) return;
+  const b = hit.box, o = b * 6;
+  /* Of the box's twelve edges, the one the string is lying on is the one that
+     makes the shortest way round without going through the box. */
+  let best = 1e9, bk = -1, bsu = 0, bsv = 0, bz = 0;
+  for (let k = 0; k < 3; k++) {
+    const u = (k + 1) % 3, v = (k + 2) % 3;
+    for (let c = 0; c < 4; c++) {
+      const su = c & 1, sv = c >> 1;
+      wrX[u] = su ? BOXES[o + 3 + u] + WRAP_OFF : BOXES[o + u] - WRAP_OFF;
+      wrX[v] = sv ? BOXES[o + 3 + v] + WRAP_OFF : BOXES[o + v] - WRAP_OFF;
+      const r1 = Math.hypot(wrQ[u] - wrX[u], wrQ[v] - wrX[v]), r2 = Math.hypot(wrP[u] - wrX[u], wrP[v] - wrX[v]);
+      wrX[k] = clamp(wrQ[k] + (wrP[k] - wrQ[k]) * r1 / (r1 + r2 + 1e-9), BOXES[o + k] - WRAP_OFF, BOXES[o + 3 + k] + WRAP_OFF);
+      const len = wrDist(wrQ, wrX) + wrDist(wrX, wrP);
+      if (len >= best || segInBox(b, wrQ, wrX) || segInBox(b, wrX, wrP)) continue;
+      best = len; bk = k; bsu = su; bsv = sv; bz = wrX[k];
+    }
+  }
+  if (bk < 0) return;        // over a corner of the box, where one bend is not enough: clip until it is
+  const i = w.nb, k = bk, u = (k + 1) % 3, v = (k + 2) % 3;
+  wrX[u] = bsu ? BOXES[o + 3 + u] + WRAP_OFF : BOXES[o + u] - WRAP_OFF;
+  wrX[v] = bsv ? BOXES[o + 3 + v] + WRAP_OFF : BOXES[o + v] - WRAP_OFF;
+  wrX[k] = bz;
+  /* the line turns toward the box it is wrapped on */
+  const cu = (BOXES[o + u] + BOXES[o + 3 + u]) / 2 - wrX[u], cv = (BOXES[o + v] + BOXES[o + 3 + v]) / 2 - wrX[v];
+  const turn = (wrX[u] - wrQ[u]) * cv - (wrX[v] - wrQ[v]) * cu;
+  w.bp[i * 3] = wrX[0]; w.bp[i * 3 + 1] = wrX[1]; w.bp[i * 3 + 2] = wrX[2];
+  w.bb[i] = b; w.bk[i] = k; w.bs[i] = turn < 0 ? -1 : 1;
+  w.bl[i] = w.used + wrDist(wrQ, wrX);
+  w.nb++;
+  wrapSeal(w);
+  emit('bend', w.nb, true);
+}
 /* =====================================================================
    THERMAL MOTES
    A thermal you cannot see is a thermal nobody finds. Dust and chaff torn
@@ -2311,6 +2593,81 @@ function updateMotes(t) {
     moteMesh.setMatrixAt(i, m);
   }
   moteMesh.instanceMatrix.needsUpdate = true;
+}
+/* =====================================================================
+   WIND YOU CAN READ
+   ---------------------------------------------------------------------
+   The breeze has always steered the glide (the aero model runs on airspeed)
+   and nothing showed it but the thermals. Three things do now, and all three
+   read the same WIND the physics does, so what you see is what you will fly
+   through:
+
+     pennants  on the gopurams and the tallest roofs: they point down-wind,
+               stream flatter the harder it blows, and hang when it drops
+     kites     fly down-wind of whoever is holding them (75-traffic.js)
+     palms     and trees lean with it, more toward the crown (70-vegetation.js)
+
+   Decoration only: nothing here is read back by the physics.
+   ===================================================================== */
+const windUni = { uWind: { value: new THREE.Vector2() }, uTime: { value: 0 } };
+function updateWindSigns(t) {
+  windUni.uWind.value.set(WIND.x, WIND.z);
+  windUni.uTime.value = t;
+}
+
+/* ---- pennants ---- */
+const FLAG_COLORS = [0xe8732c, 0xd9a83a, 0xc43a2e, 0xf2efe6, 0x2f8f83];
+const flags = [];      // { x, y, z, len } : the hoist, and how long the pennant is
+for (const g of GOPURAMS) flags.push({ x: g.x, y: g.h + 2, z: g.z, len: 11, mast: 10, c: 0 });
+{
+  /* every tower tall enough to glide off gets one, on a corner of its roof */
+  const tall = buildings.filter(b => b.h > 52).sort((a, b) => b.h - a.h).slice(0, 60);
+  let k = 0;
+  for (const b of tall) {
+    const sx = k & 1 ? 1 : -1, sz = k & 2 ? 1 : -1;
+    flags.push({ x: b.x + sx * (b.w / 2 - 1.2), y: b.h, z: b.z + sz * (b.d / 2 - 1.2), len: 7.5, mast: 8, c: 1 + (k % 4) });
+    k++;
+  }
+}
+/* The pennant is a strip along +x, one unit long. The shader does the rest:
+   it lays the strip down-wind, lets it droop as the wind drops, tapers it to
+   a point and runs a ripple out along it. Each instance is a position and a
+   size only, so the strip's own axes are the world's. */
+const flagMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+flagMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uWind = windUni.uWind; sh.uniforms.uTime = windUni.uTime;
+  sh.vertexShader = 'uniform vec2 uWind;\nuniform float uTime;\n' + sh.vertexShader
+    /* lit as if it lay flat under the sky: bright by day, dark by night, and
+       no side of it ever goes black */
+    .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
+    .replace('#include <begin_vertex>', `
+      float ws = length(uWind);
+      vec2 wd = ws > 0.01 ? uWind / ws : vec2(1.0, 0.0);
+      float fly = smoothstep(0.3, 3.6, ws);
+      float along = position.x;
+      float ph = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.23;
+      float rip = sin(along * 7.0 - uTime * (3.0 + ws * 1.6) + ph) * along * (0.04 + 0.09 * fly);
+      float droop = mix(1.3, 0.10, fly) + 0.07 * sin(uTime * 0.9 + ph) * (1.0 - fly);
+      vec3 transformed = vec3(0.0);
+      transformed.xz = wd * (along * cos(droop)) + vec2(-wd.y, wd.x) * rip;
+      transformed.y = position.y * (1.0 - 0.82 * along) - along * sin(droop);`);
+};
+{
+  const strip = new THREE.PlaneGeometry(1, 0.34, 10, 1).translate(0.5, 0, 0);
+  const im = new THREE.InstancedMesh(strip, flagMat, flags.length);
+  const masts = new THREE.InstancedMesh(CYL, new THREE.MeshLambertMaterial({ color: SRGB(0x3a3a3c) }), flags.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
+  flags.forEach((f, i) => {
+    /* the hoist is a little below the top of the mast */
+    f.y += f.mast - f.len * 0.16;
+    m.compose(V3(f.x, f.y, f.z), q, V3(f.len, f.len, f.len)); im.setMatrixAt(i, m);
+    im.setColorAt(i, col.copy(SRGB(FLAG_COLORS[f.c])));
+    m.compose(V3(f.x, f.y - f.mast + f.len * 0.16, f.z), q, V3(0.16, f.mast, 0.16)); masts.setMatrixAt(i, m);
+  });
+  im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; masts.instanceMatrix.needsUpdate = true;
+  im.frustumCulled = false; masts.frustumCulled = false;
+  scene.add(im); scene.add(masts);
+  flags.mesh = im;
 }
 /* =====================================================================
    WATER CONTACT FX
@@ -2465,25 +2822,31 @@ const webMat = new THREE.MeshBasicMaterial({ color: 0xf2f4ef, transparent: true,
    picture: the solver's line is a length, and stays one.
    One instanced mesh for both lines; a segment not in use is scaled to nothing. */
 const STRAND_SEG = 12, SHOOT_V = 600;      // segments per line · m/s the strand travels at
+/* and after those, one straight piece for each stretch of rope lying against
+   the city between the anchor and the last corner it bends round (81-wrap.js) */
+const STRAND_ALL = STRAND_SEG + WRAP_MAX;
 const strandMesh = new THREE.InstancedMesh(
-  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_SEG * 2);
+  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_ALL * 2);
 strandMesh.frustumCulled = false; scene.add(strandMesh);
 const strandTip = [V3(), V3()];           // where each strand has got to
 const strandSag = [0, 0];                 // metres its middle hangs below the straight line
 const strandPts = new Float32Array((STRAND_SEG + 1) * 3);
 const ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
-for (let k = 0; k < STRAND_SEG * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
+for (let k = 0; k < STRAND_ALL * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
 /* seconds for a strand to cross d metres: quick enough to be on the anchor
    before the line takes weight, slow enough to be seen leaving */
 const shootTime = (d) => clamp(d / SHOOT_V, 0.05, 0.2);
 function drawStrand(i, w, dt) {
-  const { m, q, p, s } = scratch, base = i * STRAND_SEG;
+  const { m, q, p, s } = scratch, base = i * STRAND_ALL;
   if (!w.on) {
-    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_SEG; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
+    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_ALL; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
     return false;
   }
   if (strandSag[i] < 0) strandSag[i] = 0;
-  _d.copy(w.a).sub(w.hand);
+  /* the part that swings runs from the hand to the last bend; with no bends
+     that is the anchor, and all of this is as it was */
+  const end = webEnd(w);
+  _d.copy(end).sub(w.hand);
   const d = _d.length(), f = clamp(w.age / shootTime(d), 0, 1);
   _d.multiplyScalar(1 / d);
   strandTip[i].copy(w.hand).addScaledVector(_d, d * f);
@@ -2493,7 +2856,7 @@ function drawStrand(i, w, dt) {
   /* Slack is the solver's: its length less the gap from the BODY to the
      anchor. Measured from the hand, an arm's reach up the line always looked
      like a metre and a half of slack, and a taut line hung in a bow. */
-  const slack = f < 1 ? 0 : Math.max(0, w.len - player.p.distanceTo(w.a));
+  const slack = f < 1 ? 0 : Math.max(0, webFree(w) - player.p.distanceTo(end));
   strandSag[i] = damp(strandSag[i], Math.min(Math.sqrt(0.375 * d * slack), 0.3 * d), 16, dt);
   const sag = strandSag[i], gx = _d.y * _d.x, gy = _d.y * _d.y - 1, gz = _d.y * _d.z;
   for (let k = 0; k <= STRAND_SEG; k++) {
@@ -2511,6 +2874,16 @@ function drawStrand(i, w, dt) {
     if (L < 1e-5) { strandMesh.setMatrixAt(base + k, ZERO4); continue; }
     q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
     strandMesh.setMatrixAt(base + k, m.compose(p, q, s.set(th, L, th)));
+  }
+  /* the rope lying on the buildings: anchor, bend, bend ... taut and straight */
+  for (let k = 0; k < WRAP_MAX; k++) {
+    if (k >= w.nb) { strandMesh.setMatrixAt(base + STRAND_SEG + k, ZERO4); continue; }
+    if (k) p.set(w.bp[k * 3 - 3], w.bp[k * 3 - 2], w.bp[k * 3 - 1]); else p.copy(w.a);
+    _d.set(w.bp[k * 3], w.bp[k * 3 + 1], w.bp[k * 3 + 2]).sub(p);
+    const L = _d.length();
+    if (L < 1e-5) { strandMesh.setMatrixAt(base + STRAND_SEG + k, ZERO4); continue; }
+    q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
+    strandMesh.setMatrixAt(base + STRAND_SEG + k, m.compose(p, q, s.set(th, L, th)));
   }
   return f >= 1;     // the splat belongs to a strand that has arrived
 }
@@ -2682,12 +3055,13 @@ function poseRig(dt, inp) {
   if (wA.on || wB.on) {
     sh[0].getWorldPosition(_sa); sh[1].getWorldPosition(_sb);
     if (wA.on && wB.on) {
-      const direct = _sa.distanceToSquared(wA.a) + _sb.distanceToSquared(wB.a);
-      const swap = _sa.distanceToSquared(wB.a) + _sb.distanceToSquared(wA.a);
+      const eA = webEnd(wA), eB = webEnd(wB);
+      const direct = _sa.distanceToSquared(eA) + _sb.distanceToSquared(eB);
+      const swap = _sa.distanceToSquared(eB) + _sb.distanceToSquared(eA);
       if (swap < direct) { armFor[0] = 1; armFor[1] = 0; } else { armFor[0] = 0; armFor[1] = 1; }
     } else {
       const wi = wA.on ? 0 : 1, w = player.webs[wi];
-      armFor[_sa.distanceToSquared(w.a) <= _sb.distanceToSquared(w.a) ? 0 : 1] = wi;
+      armFor[_sa.distanceToSquared(webEnd(w)) <= _sb.distanceToSquared(webEnd(w)) ? 0 : 1] = wi;
     }
   }
   for (let a = 0; a < 2; a++) {
@@ -2696,7 +3070,7 @@ function poseRig(dt, inp) {
     /* not into _d itself: copy() would overwrite the shoulder before it was
        subtracted, the direction came out zero, and the arm holding the line
        simply hung at the body's side */
-    _d.copy(w.a).sub(sh[a].getWorldPosition(_sa)).normalize();
+    _d.copy(webEnd(w)).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
     aimAt(sh[a], _d, _pq);
     el[a].rotation.set(-0.12, 0, 0);
@@ -2829,6 +3203,146 @@ function updateSash(dt) {
   sashGeo.attributes.position.needsUpdate = true; sashGeo.attributes.normal.needsUpdate = true;
 }
 /* =====================================================================
+   BIRDS, AND A BELL: things that notice you
+   ---------------------------------------------------------------------
+   The city was a model: nothing in it knew you were there. Pigeons roost on
+   the rooftops and gulls on the sand, and they do. Arrive at speed, land
+   beside them, walk into them or put a web down next to them and the flock
+   goes up, wheels over the place it left and comes back down on it.
+
+   A flock in the air is a closed curve in time: every bird's path starts and
+   ends on its own roosting spot and takes FLOCK_T seconds, so nothing is
+   integrated, nothing drifts, and a flock is exactly where it was once it has
+   settled. Only flocks in the air are touched each frame.
+
+   Its own random stream, like the ring courses: the city is the same city
+   whether or not this file exists.
+   ===================================================================== */
+const FLOCK_T = 11;            // seconds from the flush to the last bird down
+const FLOCK_NEAR = 13;         // metres at which a flock minds you, if you are moving
+const FLOCK_TOUCH = 4;         // metres at which it minds you however gently you come
+const FLOCK_BIRDS = 8;
+const flocks = [];
+{
+  let st = 0x51ed270b;
+  const fr = () => (st = (st * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const add = (x, y, z, w, d, gull) => {
+    const f = { x, y, z, gull, t: -1, cool: 0, birds: [] };
+    for (let i = 0; i < FLOCK_BIRDS; i++) {
+      f.birds.push({
+        ox: (fr() - 0.5) * w, oz: (fr() - 0.5) * d, yaw: fr() * TAU,
+        R: 9 + fr() * 9, H: 5 + fr() * 8, turns: fr() < 0.5 ? 2 : 3, dir: fr() < 0.5 ? -1 : 1,
+        late: fr() * 0.5, ph: fr() * TAU
+      });
+    }
+    flocks.push(f);
+  };
+  /* pigeons: a share of the roofs you actually land on */
+  for (const b of buildings) {
+    if (b.h < 16 || b.h > 85 || b.w < 9 || b.d < 9) continue;
+    if (fr() < 0.22 && flocks.length < 44) add(b.x, b.h, b.z, Math.min(b.w, 14) - 3, Math.min(b.d, 14) - 3, false);
+  }
+  /* gulls: along the sand */
+  for (let i = 0; i < 7; i++) add(SAND_X + 12 + fr() * (SEA_X - SAND_X - 24), 0, -400 + fr() * 690, 9, 9, true);
+}
+const V_BIRD = (() => {
+  const wing = new THREE.PlaneGeometry(0.46, 0.24).rotateX(-PI / 2);
+  return mergeGeos([
+    { geo: BOX, matrix: M4(0, 0.07, 0, 0.13, 0.12, 0.34), color: 0xffffff },
+    { geo: BOX, matrix: M4(0, 0.12, 0.2, 0.09, 0.09, 0.1), color: 0xd8d8d8 },
+    { geo: wing, matrix: new THREE.Matrix4().makeRotationZ(0.42).setPosition(0.27, 0.19, 0), color: 0xe9e9e9 },
+    { geo: wing, matrix: new THREE.Matrix4().makeRotationZ(-0.42).setPosition(-0.27, 0.19, 0), color: 0xe9e9e9 }]);
+})();
+const birdMesh = new THREE.InstancedMesh(V_BIRD,
+  new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), flocks.length * FLOCK_BIRDS);
+birdMesh.frustumCulled = false; scene.add(birdMesh);
+
+/* where bird b of flock f is, u seconds after the flush (u < 0 or past
+   FLOCK_T: on its spot). Writes the position into `out`, returns how far
+   through its flight it is, 0..1 (0 when roosting). */
+function birdAt(f, b, u, out) {
+  const T = FLOCK_T - 0.5, v = clamp((u - b.late) / (T - 0.5), 0, 1);
+  /* out and up quickly, round, and in again: radius and height both leave
+     from the roost spot and return to it */
+  const away = sstep(0, 0.16, v) * (1 - sstep(0.80, 1, v));
+  const a = b.dir * TAU * b.turns * (v * v * (3 - 2 * v));
+  const ca = Math.cos(a), sa = Math.sin(a);
+  /* the spot turned about the roost centre, pushed out to the circling radius */
+  const rx = b.ox * ca - b.oz * sa, rz = b.ox * sa + b.oz * ca, rl = Math.hypot(rx, rz) || 1;
+  const rad = lerp(rl, b.R, away);
+  out.set(f.x + rx / rl * rad, f.y + (b.H + 2.2 * Math.sin(a * 1.5 + b.ph)) * away, f.z + rz / rl * rad);
+  return v > 0 && v < 1 ? v : 0;
+}
+function setFlock(fi, u) {
+  const f = flocks[fi], { m, q, e, p, s } = scratch;
+  for (let i = 0; i < FLOCK_BIRDS; i++) {
+    const b = f.birds[i], v = birdAt(f, b, u, p);
+    if (v > 0) {
+      /* facing where it is going: where it will be a moment from now */
+      const px = p.x, py = p.y, pz = p.z;
+      birdAt(f, b, u + 0.08, p);
+      const dx = p.x - px, dz = p.z - pz;
+      p.set(px, py, pz);
+      /* wings beat by turning the wing V inside out; quicker on the way up */
+      const beat = Math.sin(u * (17 - 7 * v) + b.ph);
+      q.setFromEuler(e.set(0, Math.atan2(dx, dz), -b.dir * 0.45 * sstep(0.1, 0.3, v) * (1 - sstep(0.75, 0.95, v))));
+      m.compose(p, q, s.set(f.gull ? 1.8 : 1.25, (f.gull ? 1.8 : 1.25) * beat, f.gull ? 1.8 : 1.25));
+    } else {
+      q.setFromEuler(e.set(0, b.yaw, 0));
+      m.compose(p, q, s.set(f.gull ? 0.75 : 0.5, f.gull ? 1.5 : 1.1, f.gull ? 1.5 : 1.1));   // wings folded
+    }
+    birdMesh.setMatrixAt(fi * FLOCK_BIRDS + i, m);
+  }
+}
+{
+  const c = new THREE.Color();
+  flocks.forEach((f, fi) => {
+    setFlock(fi, -1);
+    for (let i = 0; i < FLOCK_BIRDS; i++) birdMesh.setColorAt(fi * FLOCK_BIRDS + i, c.copy(SRGB(f.gull ? 0xf4f2ea : (i % 3 ? 0x7d8794 : 0x9aa0a8))));
+  });
+  birdMesh.instanceMatrix.needsUpdate = true; birdMesh.instanceColor.needsUpdate = true;
+}
+function flushFlock(f) {
+  if (f.t >= 0 || f.cool > 0) return false;
+  f.t = 0; emit('flush', f.gull, f.x, f.y, f.z);
+  return true;
+}
+function updateBirds(dt) {
+  const P = player.p, fast = player.v.lengthSq() > 25 && !player.riding;
+  let moved = false;
+  for (let fi = 0; fi < flocks.length; fi++) {
+    const f = flocks[fi];
+    if (f.t >= 0) {
+      f.t += dt; moved = true;
+      if (f.t >= FLOCK_T) { f.t = -1; f.cool = 2.5; }
+      setFlock(fi, f.t);
+      continue;
+    }
+    if (f.cool > 0) { f.cool -= dt; continue; }
+    const dx = P.x - f.x, dy = P.y - f.y, dz = P.z - f.z, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 < FLOCK_TOUCH * FLOCK_TOUCH || (fast && d2 < FLOCK_NEAR * FLOCK_NEAR)) flushFlock(f);
+  }
+  if (moved) birdMesh.instanceMatrix.needsUpdate = true;
+}
+/* a web landing beside them is as good as you landing beside them */
+listen('attach', (i) => {
+  const a = player.webs[i].a;
+  for (const f of flocks) {
+    const dx = a.x - f.x, dy = a.y - f.y, dz = a.z - f.z;
+    if (dx * dx + dy * dy + dz * dz < 100) flushFlock(f);
+  }
+  /* and the temple answers a web on its towers */
+  const g = gopuramAt(a.x, a.y, a.z);
+  if (g) emit('bell', g);
+});
+/* which gopuram a point is on, if any */
+function gopuramAt(x, y, z) {
+  for (const g of GOPURAMS) {
+    if (Math.abs(x - g.x) < g.bw / 2 + 1 && Math.abs(z - g.z) < g.bd / 2 + 1 && y < g.h + 6) return g;
+  }
+  return null;
+}
+/* =====================================================================
    CAMERA
    ===================================================================== */
 const PITCH_MAX = 1.47;                  // ~84 deg, near-vertical either way
@@ -2867,12 +3381,14 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip;
+  pivot.y += 1.05 - camDip + perchK * 0.9;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
-  const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
+  /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
+     lower in a wider frame; where it looks is still exactly where you aim */
+  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
   boomDir.set(-Math.sin(yaw) * cbp, Math.sin(bp), Math.cos(yaw) * cbp);
-  const want = camDist + clamp(spd * 0.055, 0, 3.4);
+  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT;
   camPos.copy(pivot).addScaledVector(boomDir, -want);
   camPos.y += 0.55;
 
@@ -2905,6 +3421,41 @@ function updateCamera(dt) {
   if (Math.abs(camera.fov - fovS) > 0.01) { camera.fov = fovS; camera.updateProjectionMatrix(); }
 }
 
+/* =====================================================================
+   PERCH
+   ---------------------------------------------------------------------
+   Stopping used to be the absence of play: the same view, the same readouts,
+   nothing to do. Stand still somewhere high for a few seconds and the game
+   steps back instead. The readouts and the aim ring fade, the camera pulls
+   out and begins a slow turn about you, and the sounds of the streets come
+   up to where you are. It is a place to look at the city from.
+
+   No button and nothing to learn. Looking around by hand keeps the perch and
+   takes the turn over for a while; moving, jumping or firing a web ends it at
+   once. `perchK` (0..1) is how far in it is, and is all anything else reads.
+   ===================================================================== */
+const PERCH_AFTER = 3.5;      // seconds of standing still before it begins
+const PERCH_Y = 16;           // metres up that counts as somewhere high
+const PERCH_OUT = 8.5;        // metres further back the camera sits
+const PERCH_TURN = 0.06;      // rad/s of the slow turn (a full circle in 105 s)
+const PERCH_HANDS = 4;        // seconds the turn waits after you look for yourself
+let perch = false, perchK = 0, perchStill = 0, perchHands = 0, perchYaw = 0, perchPitch = 0;
+function updatePerch(dt, busy) {
+  const here = (player.grounded || player.clinging) && !player.riding && !player.inWater && !photoMode && !flying()
+    && player.p.y > PERCH_Y && player.v.lengthSq() < 0.3 && !busy
+    && !player.webs[0].on && !player.webs[1].on;
+  perchStill = here ? perchStill + dt : 0;
+  const on = perchStill > PERCH_AFTER;
+  if (on !== perch) { perch = on; perchHands = 0; document.body.classList.toggle('perch', on); }
+  /* eases in over a few seconds; gone in a fraction of one */
+  perchK = damp(perchK, on ? 1 : 0, on ? 0.9 : 7, dt);
+  if (on) {
+    /* the view moved and it was not this that moved it: it is yours for now */
+    if (Math.abs(yaw - perchYaw) > 1e-6 || Math.abs(pitch - perchPitch) > 1e-6) perchHands = PERCH_HANDS;
+    if (perchHands > 0) perchHands -= dt; else yaw += PERCH_TURN * perchK * dt;
+  }
+  perchYaw = yaw; perchPitch = pitch;
+}
 /* =====================================================================
    INPUT · AUDIO · HUD
    ===================================================================== */
@@ -3226,13 +3777,14 @@ function rumble(strong, weak, ms) {
 }
 listen('land', (hit) => { if (pad.dev) { rumble(clamp(hit / 28, 0.12, 1), 0.3, 80 + hit * 4); pad.quiet = 0.2; } });
 listen('attach', () => { if (pad.dev && pad.quiet <= 0) { rumble(0, 0.45, 45); pad.quiet = 0.06; } });
+listen('bend', (n, on) => { if (pad.dev && on) { rumble(0.25, 0.5, 55); pad.quiet = 0.08; } });
 
 /* ---- settings persistence ---- */
 const SAVE_KEY = 'nagaram.settings';
 function saveSettings() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      sens, assist, muted, shadowsOn, dayT,
+      sens, assist, muted, shadowsOn, dayT, ropeWrap,
       help: document.getElementById('help').classList.contains('hide')
     }));
   } catch (e) {}
@@ -3244,6 +3796,7 @@ function loadSettings() {
   if (typeof s.sens === 'number') sens = clamp(s.sens, 0.0009, 0.0130);
   if (typeof s.assist === 'boolean') assist = s.assist;
   if (typeof s.muted === 'boolean') muted = s.muted;
+  if (typeof s.ropeWrap === 'boolean') ropeWrap = s.ropeWrap;
   if (typeof s.shadowsOn === 'boolean') { shadowsOn = s.shadowsOn; sun.castShadow = shadowsOn; }
   if (typeof s.dayT === 'number' && isFinite(s.dayT)) dayT = ((s.dayT % 1) + 1) % 1;
   if (s.help) document.getElementById('help').classList.add('hide');
@@ -3264,6 +3817,7 @@ addEventListener('keydown', e => {
       saveSettings();
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
+    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'the line bends round corners' : 'the line goes straight'); saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
     if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
@@ -3329,6 +3883,7 @@ function initAmbience() {
   beds.bazaar  = makeBed('bandpass', 720, 0.6, noiseBuf);   // crowd murmur
   beds.night   = makeBed('bandpass', 5200, 9, noiseBuf);    // insects
   beds.engine  = makeBed('lowpass',  240, 1.2, noiseBuf);   // turbofan hiss
+  beds.rail    = makeBed('lowpass',  150, 2.2, noiseBuf);   // steel on steel, heard through a viaduct
   /* the engine also needs a pitched core, not just filtered noise */
   const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 58;
   const of = AC.createBiquadFilter(); of.type = 'lowpass'; of.frequency.value = 320;
@@ -3391,12 +3946,18 @@ function honk(vol) {
   o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
 }
 
+/* How much of the street reaches you, 0..1 and a little over. Everything on
+   the ground thins out as you climb, unless you have stopped to listen
+   (91-perch.js): then most of it comes back up to you. */
+function ambAlt(y) {
+  const alt = clamp(1 - (y - 22) / 230, 0, 1);
+  return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
+}
 let tBell = 6, tGull = 3, tHonk = 2;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
-  /* everything on the ground thins out as you climb */
-  const alt = clamp(1 - (p.y - 22) / 230, 0, 1);
+  const alt = ambAlt(p.y);
   const dSea = p.x - SAND_X;                       // positive once over sand
   const surfN = clamp(1 - Math.abs(dSea) / 300, 0, 1);
   const dCore = Math.hypot(p.x, p.z);
@@ -3410,11 +3971,13 @@ function updateAudio(dt) {
 
   /* nearest aircraft, for engine noise and for riding */
   let eng = 0;
+  let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
-    eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
+    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) eng = 1;
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -3423,6 +3986,7 @@ function updateAudio(dt) {
     bazaar: bazaarN * alt * 0.085 * (1 - night * 0.75),
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
     engine: eng * 0.16,
+    rail: rail * rail * 0.26,
     engineTone: eng * eng * 0.055
   };
   const k = 1 - Math.exp(-2.2 * dt);
@@ -3600,6 +4164,41 @@ listen('release', (spd, age) => {
   const vol = clamp((spd - 14) / 38, 0.12, 1);
   noiseHit('bandpass', 620, 2100, 0.2, 1.3, 0.17 * vol, 0.03, 0.34);
 });
+/* the line taking a corner (81-wrap.js): a short dry knock as it comes to
+   bear on the edge, a lighter one as it comes off */
+listen('bend', (n, on) => {
+  if (!AC) return;
+  const f = on ? 1500 : 2300;
+  noiseHit('bandpass', f, f * 0.55, 0.05, 5, on ? 0.13 : 0.06, 0.003, 0.08);
+});
+/* a flock going up: a second of wingbeats, which is noise chopped at the rate
+   wings beat; gulls complain as well */
+listen('flush', (sea) => {
+  if (!AC) return;
+  const t = AC.currentTime, dur = 1.5;
+  const src = AC.createBufferSource(); src.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.9;
+  f.frequency.setValueAtTime(sea ? 1500 : 2300, t); f.frequency.exponentialRampToValueAtTime(sea ? 900 : 1300, t + dur);
+  const chop = AC.createGain(); chop.gain.value = 0.5;
+  const lfo = AC.createOscillator(); lfo.type = 'sine';
+  lfo.frequency.setValueAtTime(sea ? 9 : 15, t); lfo.frequency.linearRampToValueAtTime(sea ? 6 : 9, t + dur);
+  const lg = AC.createGain(); lg.gain.value = 0.5; lfo.connect(lg); lg.connect(chop.gain);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.2, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(chop); chop.connect(g); g.connect(master);
+  src.start(t, Math.random() * 0.4); src.stop(t + dur + 0.05); lfo.start(t); lfo.stop(t + dur + 0.05);
+  if (sea) gull(0.8);
+});
+/* a web on a gopuram rings it. Not twice in a breath: two hands landing
+   together are one strike. */
+let bellQuiet = 0;
+listen('bell', () => {
+  if (!AC || AC.currentTime < bellQuiet) return;
+  bellQuiet = AC.currentTime + 0.35;
+  bell(0.26);
+});
 /* ---- minimap ---- */
 const mapCan = document.getElementById('map'), mctx = mapCan.getContext('2d');
 const MAPR = 620;
@@ -3621,6 +4220,8 @@ const mapBase = document.createElement('canvas'); mapBase.width = mapBase.height
     c.fillStyle = b.kind === 'glass' ? `rgba(120,180,200,${0.35 + t * 0.5})` : `rgba(226,214,180,${0.14 + t * 0.55})`;
     c.fillRect(o + (b.x - b.w / 2) * f, o + (b.z - b.d / 2) * f, Math.max(1, b.w * f), Math.max(1, b.d * f));
   }
+  c.fillStyle = 'rgba(232,83,44,0.55)';             // the metro line
+  c.fillRect(o + METRO.x * f - 1, o + METRO.z0 * f, 2, (METRO.z1 - METRO.z0) * f);
   c.fillStyle = '#d9a83a';
   c.fillRect(o - PW * f, o - PW * f, PW * 2 * f, PW * 2 * f);
   c.fillStyle = '#e8532c';
@@ -4060,6 +4661,7 @@ function frame() {
   inp.zip = !!keys['KeyQ'];
   inp.cling = !!keys['KeyE'];
   inp.mount = mountEdge;
+  updatePerch(dt, fb !== 0 || rl !== 0 || jumpEdge || !!keys['Space'] || inp.tuck || inp.zip || held[0] || held[1]);
 
   /* ---- fixed-step physics ---- */
   updateWind(T);
@@ -4107,14 +4709,15 @@ function frame() {
     else aimMark.position.lerp(_d, 1 - Math.exp(-26 * dt));
     aimMark.scale.setScalar(clamp(aimPt.t * 0.021, 0.34, 2.6));
     /* dimmer when the assist picked it rather than your crosshair */
-    aimMat.opacity = aimPt.off < 0.01 ? 0.95 : 0.52;
-    aimBack.opacity = aimPt.off < 0.01 ? 0.55 : 0.30;
+    const show = 1 - perchK;        // perched, the ring is not what you are looking at
+    aimMat.opacity = (aimPt.off < 0.01 ? 0.95 : 0.52) * show;
+    aimBack.opacity = (aimPt.off < 0.01 ? 0.55 : 0.30) * show;
     const gp = guideGeo.attributes.position;
     gp.setXYZ(0, pRender.x, pRender.y + 0.9, pRender.z);
     gp.setXYZ(1, aimMark.position.x, aimMark.position.y, aimMark.position.z);
     gp.needsUpdate = true;
     guide.visible = true;
-    guide.material.opacity = aimPt.off < 0.01 ? 0.26 : 0.14;
+    guide.material.opacity = (aimPt.off < 0.01 ? 0.26 : 0.14) * show;
   } else { aimMark.visible = false; guide.visible = false; }
   if (missFlash > 0) missFlash -= dt;
 
@@ -4122,6 +4725,8 @@ function frame() {
   updateTraffic(dt);
   updateProps(T);
   updateMotes(T);
+  updateWindSigns(T);
+  if (!photoMode) updateBirds(dt);
   updateSplashes(dt);
   skyUni.uTime.value = T; waterUni.uTime.value = T;
   sky.position.copy(camera.position);

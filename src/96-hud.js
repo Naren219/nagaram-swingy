@@ -19,6 +19,8 @@ const mapBase = document.createElement('canvas'); mapBase.width = mapBase.height
     c.fillStyle = b.kind === 'glass' ? `rgba(120,180,200,${0.35 + t * 0.5})` : `rgba(226,214,180,${0.14 + t * 0.55})`;
     c.fillRect(o + (b.x - b.w / 2) * f, o + (b.z - b.d / 2) * f, Math.max(1, b.w * f), Math.max(1, b.d * f));
   }
+  c.fillStyle = 'rgba(232,83,44,0.55)';             // the metro line
+  c.fillRect(o + METRO.x * f - 1, o + METRO.z0 * f, 2, (METRO.z1 - METRO.z0) * f);
   c.fillStyle = '#d9a83a';
   c.fillRect(o - PW * f, o - PW * f, PW * 2 * f, PW * 2 * f);
   c.fillStyle = '#e8532c';
