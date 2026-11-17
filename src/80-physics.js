@@ -372,7 +372,7 @@ function stepPhysics(h, inp) {
   }
   /* zip line pull */
   if (inp.zip) for (const w of player.webs) if (w.on) {
-    _tmp.copy(w.a).sub(P); const dl = _tmp.length();
+    _tmp.copy(webEnd(w)).sub(P); const dl = _tmp.length();
     if (dl > 2) { _tmp.multiplyScalar(1 / dl); ax += _tmp.x * 78; ay += _tmp.y * 78; az += _tmp.z * 78; }
     w.tgt = Math.max(WEB_MIN, w.tgt - 34 * h);
   }
@@ -409,16 +409,20 @@ function stepPhysics(h, inp) {
   /* a latched aircraft carries its anchor with it, so the constraint target
      has to be re-evaluated every substep — that is what tows the player */
   pinAnchors();
+  /* where the line has met a corner you hang from the corner, on what rope is
+     left (81-wrap.js). With no bends that is the anchor and the whole line. */
+  for (const w of player.webs) if (w.on) updateWrap(w, P);
 
   for (let it = 0; it < 5; it++) {
     for (const w of player.webs) {
       if (!w.on) continue;
-      const dx = P.x - w.a.x, dy = P.y - w.a.y, dz = P.z - w.a.z;
+      const e = webEnd(w), L = webFree(w);
+      const dx = P.x - e.x, dy = P.y - e.y, dz = P.z - e.z;
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d <= w.len || d < 1e-5) continue;
-      const c = ((d - w.len) / d) * K;
+      if (d <= L || d < 1e-5) continue;
+      const c = ((d - L) / d) * K;
       P.x -= dx * c; P.y -= dy * c; P.z -= dz * c;
-      w.corr += (d - w.len) * K;
+      w.corr += (d - L) * K;
     }
     solveContacts(P);
   }
@@ -428,7 +432,7 @@ function stepPhysics(h, inp) {
   for (const w of player.webs) {
     if (!w.on) { w.tension = damp(w.tension, 0, 12, h); continue; }
     w.tension = damp(w.tension, MASS * w.corr / (h * h), 14, h);
-    if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
+    if (w.used + webEnd(w).distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
   /* A landing is the first touch after time in the air, and how hard is the
@@ -532,7 +536,7 @@ function fireWebAt(i, a) {
   if (!a) { emit('miss'); return false; }
   w.pl = a.pl || null;
   if (w.pl) worldToPlane(w.pl, a.x, a.y, a.z, w.lo);
-  w.on = true; w.a.set(a.x, a.y, a.z);
+  w.on = true; w.a.set(a.x, a.y, a.z); clearWrap(w);
   w.len = Math.max(WEB_MIN, player.p.distanceTo(w.a));
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);

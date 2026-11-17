@@ -319,13 +319,14 @@ function rumble(strong, weak, ms) {
 }
 listen('land', (hit) => { if (pad.dev) { rumble(clamp(hit / 28, 0.12, 1), 0.3, 80 + hit * 4); pad.quiet = 0.2; } });
 listen('attach', () => { if (pad.dev && pad.quiet <= 0) { rumble(0, 0.45, 45); pad.quiet = 0.06; } });
+listen('bend', (n, on) => { if (pad.dev && on) { rumble(0.25, 0.5, 55); pad.quiet = 0.08; } });
 
 /* ---- settings persistence ---- */
 const SAVE_KEY = 'nagaram.settings';
 function saveSettings() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      sens, assist, muted, shadowsOn, dayT,
+      sens, assist, muted, shadowsOn, dayT, ropeWrap,
       help: document.getElementById('help').classList.contains('hide')
     }));
   } catch (e) {}
@@ -337,6 +338,7 @@ function loadSettings() {
   if (typeof s.sens === 'number') sens = clamp(s.sens, 0.0009, 0.0130);
   if (typeof s.assist === 'boolean') assist = s.assist;
   if (typeof s.muted === 'boolean') muted = s.muted;
+  if (typeof s.ropeWrap === 'boolean') ropeWrap = s.ropeWrap;
   if (typeof s.shadowsOn === 'boolean') { shadowsOn = s.shadowsOn; sun.castShadow = shadowsOn; }
   if (typeof s.dayT === 'number' && isFinite(s.dayT)) dayT = ((s.dayT % 1) + 1) % 1;
   if (s.help) document.getElementById('help').classList.add('hide');
@@ -357,6 +359,7 @@ addEventListener('keydown', e => {
       saveSettings();
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
+    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'the line bends round corners' : 'the line goes straight'); saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
     if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }

@@ -309,3 +309,10 @@ listen('release', (spd, age) => {
   const vol = clamp((spd - 14) / 38, 0.12, 1);
   noiseHit('bandpass', 620, 2100, 0.2, 1.3, 0.17 * vol, 0.03, 0.34);
 });
+/* the line taking a corner (81-wrap.js): a short dry knock as it comes to
+   bear on the edge, a lighter one as it comes off */
+listen('bend', (n, on) => {
+  if (!AC) return;
+  const f = on ? 1500 : 2300;
+  noiseHit('bandpass', f, f * 0.55, 0.05, 5, on ? 0.13 : 0.06, 0.003, 0.08);
+});

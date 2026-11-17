@@ -537,7 +537,7 @@ async function strandPicture(page, check) {
      weight; and when it is longer than the gap it hangs by what a rope of that
      length would. Polarity: a line switched off draws nothing at all. */
   const r = await page.evaluate(() => {
-    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_SEG + k) * 16 + 5] !== 0 || a[(i * STRAND_SEG + k) * 16 + 4] !== 0) n++; return n; };
+    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_ALL + k) * 16 + 5] !== 0 || a[(i * STRAND_ALL + k) * 16 + 4] !== 0) n++; return n; };
     const A = { x: -46, y: 260, z: -230, pl: null };
     const arrive = (hz) => {
       __reset(hz); assist = false; player.p.set(-46, 180, -230); player.v.set(0, 0, 0); player.grounded = false; __run(2);
@@ -749,8 +749,122 @@ async function quietHud(page, check) {
     JSON.stringify({ afterRoll: r.afterRoll, afterH: r.afterH, again: r.again, stopped: r.stopped, aboard: r.aboard }));
 }
 
+async function ropeWrap(page, check) {
+  /* The trial (B): a line that meets a building bends round its edge instead
+     of passing through. Everything is measured against the same run with it
+     off, so a check here cannot pass by the trial simply doing nothing. */
+  const r = await page.evaluate(() => {
+    const pa = new THREE.Vector3(), pb = new THREE.Vector3();
+    /* is the straight line s -> e blocked? cast toward s: an anchor is ON a wall */
+    const blocked = (s, e) => { const dx = s.x - e.x, dy = s.y - e.y, dz = s.z - e.z, d = Math.hypot(dx, dy, dz); return d > 0.4 && !!rayHit(e.x, e.y, e.z, dx / d, dy / d, dz / d, d - 0.15); };
+    const ropeBlocked = (w) => {
+      if (blocked(webEnd(w), player.p)) return true;
+      for (let k = 0; k < w.nb; k++) {
+        const s = k ? pa.set(w.bp[k * 3 - 3], w.bp[k * 3 - 2], w.bp[k * 3 - 1]) : w.a;
+        if (blocked(s, pb.set(w.bp[k * 3], w.bp[k * 3 + 1], w.bp[k * 3 + 2]))) return true;
+      }
+      return false;
+    };
+    /* the tallest tower; anchor on its -x face 4 m short of the +z corner, and
+       a start that carries you round that corner */
+    const b = buildings.reduce((a, c) => c.h > a.h ? c : a);
+    const cx = b.x - b.w / 2, cz = b.z + b.d / 2;
+    const A = { x: cx, y: b.h - 5, z: cz - 4, pl: null };
+    const corner = (wrap, hz, winch) => {
+      __reset(hz); assist = false; ropeWrap = wrap;
+      player.p.set(cx - 18, A.y - 12, cz + 2); player.v.set(7, 0, 21); player.grounded = false;
+      fireWebAt(0, A);
+      const w = player.webs[0], E = () => (0.5 * player.v.lengthSq() + G * player.p.y) / G, e0 = E();
+      const out = { clip: 0, maxNb: 0, rise: 0, jump: 0, kick: 0, bent: null, freed: null, short: 0, piece: 0 };
+      let nb = 0, path = w.len, dPrev = 0; const bt0 = w.len;
+      for (let f = 0; f < hz * 6; f++) {
+        const eB = E();
+        __run(1);
+        const now = w.used + webEnd(w).distanceTo(player.p), dE = E() - eB;
+        if (ropeBlocked(w)) out.clip++;
+        if (w.nb !== nb) {
+          out.jump = Math.max(out.jump, Math.abs(now - path));
+          out.kick = Math.max(out.kick, Math.abs(dE - dPrev));
+          if (w.nb > nb && !out.bent) {
+            out.bent = { f: f / hz, dx: w.e.x - cx, dz: w.e.z - cz, y: w.e.y, free: webFree(w), len: w.len, used: w.used, spd: player.v.length() };
+            const m = strandMesh.instanceMatrix.array, o = STRAND_SEG * 16;
+            out.piece = Math.hypot(m[o + 4], m[o + 5], m[o + 6]);      // length of the piece drawn anchor -> bend
+            if (winch) { out.short = 1e9; for (let g = 0; g < hz && w.nb; g++) { w.tgt = WEB_MIN; __run(1); if (w.nb) { out.short = Math.min(out.short, w.len - w.used); out.reeled = g + 1; } } out.lenWas = bt0; break; }
+          }
+          if (w.nb < nb && !out.freed) out.freed = { f: f / hz, nb: w.nb };
+          nb = w.nb;
+        }
+        path = w.used + webEnd(w).distanceTo(player.p); dPrev = dE;
+        out.maxNb = Math.max(out.maxNb, w.nb);
+        if (!player.touch) out.rise = Math.max(out.rise, E() - e0);
+      }
+      releaseWeb(0); assist = true; ropeWrap = false;
+      return out;
+    };
+    /* a crude flyer let loose in the city: alternate hands, random headings */
+    const fuzz = (wrap, seed, secs) => {
+      __reset(60); ropeWrap = wrap; respawn();
+      let st = seed; const rnd = () => (st = (st * 1664525 + 1013904223) >>> 0) / 4294967296;
+      const out = { on: 0, clip: 0, bends: 0, maxNb: 0, bad: false };
+      let hand = 0, t = 0, hold = 1.2; const last = [0, 0];
+      for (let f = 0; f < 60 * secs; f++) {
+        t += 1 / 60;
+        if (t > hold) { held[hand] = false; releaseWeb(hand); hand = 1 - hand; t = 0; hold = 0.7 + rnd() * 1.6; yaw += (rnd() - 0.5) * 1.2; pitch = 0.25 + rnd() * 0.5; }
+        else if (t > 0.15) held[hand] = true;
+        keys['KeyW'] = true;
+        __run(1);
+        for (let i = 0; i < 2; i++) {
+          const w = player.webs[i]; if (!w.on) { last[i] = 0; continue; }
+          if (w.pl) continue;
+          out.on++;
+          if (ropeBlocked(w)) out.clip++;
+          if (w.nb > last[i]) out.bends++;
+          last[i] = w.nb; out.maxNb = Math.max(out.maxNb, w.nb);
+          if (w.len < w.used || !isFinite(w.used + w.e.x)) out.bad = true;
+        }
+        if (!isFinite(player.p.x + player.p.y + player.p.z + player.v.x)) { out.bad = true; break; }
+      }
+      held[0] = held[1] = false; keys['KeyW'] = false; ropeWrap = false;
+      return out;
+    };
+    const res = { off: corner(false, 120), on: corner(true, 120), on60: corner(true, 60), on144: corner(true, 144), winch: corner(true, 120, true), max: WRAP_MAX,
+      fz: { on: { on: 0, clip: 0, bends: 0, maxNb: 0, bad: false }, off: { on: 0, clip: 0 } } };
+    for (const seed of [1, 2, 3]) {
+      const a = fuzz(true, seed, 60), o = fuzz(false, seed, 60);
+      for (const k of ['on', 'clip', 'bends']) res.fz.on[k] += a[k];
+      res.fz.on.maxNb = Math.max(res.fz.on.maxNb, a.maxNb); res.fz.on.bad = res.fz.on.bad || a.bad;
+      res.fz.off.on += o.on; res.fz.off.clip += o.clip;
+    }
+    respawn();
+    return res;
+  });
+  const { on, off } = r, bt = on.bent || {};
+  check('without the trial a line still passes through the tower', off.clip > 30 && off.maxNb === 0, off.clip + ' steps with the tower between you and the anchor');
+  check('with it the line bends at the corner it meets', !!on.bent && Math.abs(bt.dx) < 0.1 && Math.abs(bt.dz) < 0.1,
+    on.bent ? 'bend ' + bt.dx.toFixed(2) + ', ' + bt.dz.toFixed(2) + ' m off the edge, after ' + bt.f.toFixed(2) + ' s' : 'no bend');
+  check('a bent line never passes through anything', on.clip === 0, on.clip + ' steps blocked (off: ' + off.clip + ')');
+  check('you swing about the corner on the rope that is left', on.bent && Math.abs(bt.free - (bt.len - bt.used)) < 1e-6 && bt.used > 3.9 && bt.used < 6,
+    on.bent ? bt.len.toFixed(1) + ' m line, ' + bt.used.toFixed(1) + ' m lying on the tower, ' + bt.free.toFixed(1) + ' m of swing' : '');
+  check('the rope is the same length the moment before and after', on.jump < 0.02, 'largest jump ' + (on.jump * 1000).toFixed(2) + ' mm');
+  check('a bend neither gives energy nor takes it', on.kick < 0.05 && on.rise < 0.01 && off.rise < 0.01,
+    'step change ' + (on.kick * 100).toFixed(1) + ' cm of height; most gained in free swing ' + (on.rise * 100).toFixed(1) + ' cm');
+  check('swinging back across the corner lets it go', !!on.freed && on.freed.nb === 0, on.freed ? 'released after ' + on.freed.f.toFixed(2) + ' s' : 'never released');
+  check('the stretch on the building is drawn', Math.abs(on.piece - bt.used) < 0.3, 'piece ' + on.piece.toFixed(2) + ' m for ' + (bt.used || 0).toFixed(2) + ' m of rope');
+  check('the winch cannot reel in rope that lies on a building', r.winch.reeled > 10 && r.winch.short >= 1 - 1e-6 && r.winch.short < 1.5,
+    'reeled hard for ' + r.winch.reeled + ' steps while bent: never less than ' + r.winch.short.toFixed(2) + ' m left to swing on');
+  for (const k of ['on60', 'on144']) {
+    const o = r[k], x = o.bent || {};
+    check('the same bend at ' + k.slice(2) + ' Hz', !!o.bent && Math.abs(x.f - bt.f) < 0.04 && Math.abs(x.y - bt.y) < 0.3 && o.clip === 0,
+      o.bent ? 'after ' + x.f.toFixed(2) + ' s at height ' + x.y.toFixed(1) + ' (120 Hz: ' + bt.f.toFixed(2) + ' s, ' + bt.y.toFixed(1) + ')' : 'no bend');
+  }
+  const fz = r.fz;
+  check('three minutes of random swinging: no line through a wall', !fz.on.bad && fz.on.bends > 5 && fz.on.clip <= fz.on.on * 0.002 && fz.off.clip > 20 * Math.max(1, fz.on.clip),
+    fz.on.clip + ' of ' + fz.on.on + ' line-steps blocked with it on, ' + fz.off.clip + ' of ' + fz.off.on + ' with it off; ' + fz.on.bends + ' bends');
+  check('a line never holds more bends than it has room for', fz.on.maxNb <= r.max, 'most at once ' + fz.on.maxNb + ' of ' + r.max);
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
@@ -763,7 +877,7 @@ module.exports = async function fixedStep({ newPage, BASE, check }) {
     window.__run = (n) => { for (let i = 0; i < n; i++) frame(); };
     window.__reset = (hz) => {
       window.__dt = 1 / (hz || 60);
-      player.riding = null;
+      player.riding = null; ropeWrap = false;
       held[0] = held[1] = false; releaseWeb(0); releaseWeb(1);
       for (const k of Object.keys(keys)) keys[k] = false;
     };
