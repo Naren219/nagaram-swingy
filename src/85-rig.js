@@ -131,8 +131,17 @@ let runPhase = 0;
    smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
-let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
-listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
+/* A rolling touchdown is the same layer turned the other way and done on the
+   ground: one forward turn, over before the ground has its grip back. A hard
+   landing of any kind also sinks the hips for a moment (landSq, 0..1). */
+let landSq = 0;
+listen('land', (hit, ny, rolling) => {
+  if (ny > 0.6) landSq = Math.max(landSq, clamp(hit / 24, 0, 1));
+  /* a somersault still unwinding owns the layer; let it finish */
+  if (rolling && flipA === 0) { flipN = -1; flipDur = 0.5; flipT = 0; flipGround = true; }
+});
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.
@@ -150,8 +159,10 @@ function poseRig(dt, inp) {
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
-  rigY = damp(rigY, player.grounded ? 0.44 : 0.06, 9, dt);
-  rig.position.copy(pRender); rig.position.y += rigY;
+  const rolling = flipGround && flipT < flipDur && player.grounded;
+  rigY = damp(rigY, rolling ? -0.22 : player.grounded ? 0.44 : 0.06, rolling ? 20 : 9, dt);
+  landSq = damp(landSq, 0, 7, dt);
+  rig.position.copy(pRender); rig.position.y += rigY - (player.grounded ? landSq * 0.26 : 0);
 
   /* orientation */
   if (spd > 3.5) _bz.copy(V).multiplyScalar(-1 / spd);
@@ -175,11 +186,14 @@ function poseRig(dt, inp) {
      fresh line interrupts it — the applied angle then unwinds to the nearest
      full turn instead of snapping to identity. */
   if (flipT < flipDur || flipA !== 0) {
-    const interrupted = player.grounded || player.clinging || player.riding ||
-      player.inWater || player.webs[0].on || player.webs[1].on;
+    /* a somersault ends on anything solid or a fresh line; a roll ends by
+       leaving the ground */
+    const interrupted = player.clinging || player.riding || player.inWater || (flipGround
+      ? !player.grounded
+      : player.grounded || player.webs[0].on || player.webs[1].on);
     if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, 0.22);
+      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
     } else {
       flipT = flipDur;
       const turn = Math.round(flipA / TAU) * TAU;
@@ -197,6 +211,14 @@ function poseRig(dt, inp) {
     smoothEuler(elbowL, -1.1, 0, 0, k); smoothEuler(elbowR, -1.1, 0, 0, k);
     smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
     smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
+  } else if (flipT < flipDur) {
+    /* tucked ball for the somersault and the landing roll — snappier than the other transitions so
+       the tuck forms before the tumble picks up speed */
+    smoothEuler(spine, 0.5, 0, 0, 22);
+    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
+    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
+    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
+    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
   } else if (player.grounded) {
     /* on an aircraft the body's speed is the aircraft's; the legs only move
        when you walk the hull */
@@ -207,20 +229,14 @@ function poseRig(dt, inp) {
     const amp = clamp(gait / 9, 0, 1.1);
     /* a foot comes down every half cycle of the run */
     if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
-    smoothEuler(spine, -0.12 - amp * 0.22, 0, 0, k);
-    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16, k);
+    /* sq: the knees take a landing, on top of whatever the run is doing */
+    const sq = landSq;
+    smoothEuler(spine, -0.12 - amp * 0.22 - sq * 0.3, 0, 0, k);
+    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16 - sq * 0.5, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16 + sq * 0.5, k);
     smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
-    smoothEuler(hipL, -s * 0.85 * amp, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp, 0, 0, k);
-    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-  } else if (flipT < flipDur) {
-    /* tucked ball for the somersault — snappier than the other transitions so
-       the tuck forms before the tumble picks up speed */
-    smoothEuler(spine, 0.5, 0, 0, 22);
-    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
-    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
-    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
-    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
+    smoothEuler(hipL, -s * 0.85 * amp - sq * 0.75, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp - sq * 0.75, 0, 0, k);
+    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
+    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);

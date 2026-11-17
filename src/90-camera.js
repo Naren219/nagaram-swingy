@@ -19,6 +19,9 @@ function updateCamDirs() {
 }
 const camVel = V3(0, 0, 0), camFwdS = V3(0, 0, 1), boomDir = V3(0, 0, 1), _lookT = V3(0, 0, 0);
 const GROUND_CLEAR = 1.25;
+/* the view sinks with a landing and comes back up: weight, without a shake */
+let camDip = 0;
+listen('land', (hit, ny) => { if (ny > 0.6) camDip = Math.max(camDip, clamp((hit - 4) / 30, 0, 1) * 0.8); });
 /* The boom carrying the camera is deliberately NOT the aim direction. Aiming
    near-vertical used to swing the boom under the street, where the floor clamp
    shoved the camera back up on top of the character. The boom pitch is limited
@@ -32,8 +35,9 @@ function updateCamera(dt) {
      amplified that noise into the view. The camera rides a smoothed copy. */
   camVel.lerp(player.v, 1 - Math.exp(-6.5 * dt));
   const V = camVel, spd = V.length();
+  camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05;
+  pivot.y += 1.05 - camDip;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);

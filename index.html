@@ -1695,13 +1695,20 @@ const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
 const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
 const LAND_AIR = 0.18;     // seconds clear of every surface before a touch counts as a landing
+/* A fast touchdown used to be the end of the run: ground friction took 35 m/s
+   to nothing in half a second. Come down faster than you can run and you roll
+   instead: for ROLL_FREE seconds the ground barely holds you, then its grip
+   eases back in until ROLL_END. Jump inside the window and the speed leaves
+   with you. The roll gives nothing: it only declines to take. */
+const ROLL_MIN = 13, ROLL_FREE = 0.35, ROLL_END = 0.95;
+const GRIP = 6.2, ROLL_GRIP = 0.5, SPRINT_V = 10;
 
 /* Physics announces what happened and stops there. It used to call the HUD,
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
      board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
-     land(closingSpeed, normalY)  release(speed, secondsOnTheLine)
+     land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
    The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
 function listen(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
@@ -1755,6 +1762,7 @@ const player = {
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
   depth: 0, wasWet: false,
   touch: false, airT: 0,     // touching anything this substep · seconds since the last touch
+  roll: 9,                   // seconds since a rolling touchdown; past ROLL_END it is over
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
   webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
          { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
@@ -1910,7 +1918,7 @@ function stepPhysics(h, inp) {
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
-    player.touch = true; player.airT = 0;
+    player.touch = true; player.airT = 0; player.roll = ROLL_END;
     player.lastAccel.set(0, 0, 0);
     if (inp.jump) {                       // step off, keeping the aircraft's speed
       player.riding = null;
@@ -1982,8 +1990,21 @@ function stepPhysics(h, inp) {
   /* ---- control ---- */
   if (onGround) {
     const runA = inp.tuck ? 62 : 42;
-    ax += inp.mx * runA; az += inp.mz * runA;
-    ax -= V.x * 6.2; az -= V.z * 6.2;
+    let mx = inp.mx, mz = inp.mz, grip = GRIP;
+    if (player.roll < ROLL_END) {
+      grip = ROLL_GRIP + (GRIP - ROLL_GRIP) * sstep(ROLL_FREE, ROLL_END, player.roll);
+      player.roll += h;
+      /* While you are still faster than a sprint the legs can steer the roll
+         but not push it: with the ground's grip this low, running along your
+         own velocity would add 15 m/s for nothing. */
+      const vh = Math.hypot(V.x, V.z);
+      if (vh > SPRINT_V) {
+        const along = (mx * V.x + mz * V.z) / vh;
+        if (along > 0) { mx -= along * V.x / vh; mz -= along * V.z / vh; }
+      }
+    }
+    ax += mx * runA; az += mz * runA;
+    ax -= V.x * grip; az -= V.z * grip;
     if (inp.jump) takeOff();
   } else if (player.inWater) {
     ax += inp.mx * 15; az += inp.mz * 15;                 // swim
@@ -2068,10 +2089,13 @@ function stepPhysics(h, inp) {
   /* A landing is the first touch after time in the air, and how hard is the
      speed you were closing on the surface at. Sliding along a wall or standing
      on a roof touches every step and so announces nothing. */
+  if (!player.grounded) player.roll = ROLL_END;
   if (player.touch) {
     if (player.airT > LAND_AIR && !player.inWater) {
       const n = player.cn, hit = -(ux * n.x + uy * n.y + uz * n.z);
-      if (hit > 1.5) emit('land', hit, n.y);
+      const rolling = player.grounded && Math.hypot(ux, uz) > ROLL_MIN;
+      if (rolling) player.roll = 0;
+      if (hit > 1.5 || rolling) emit('land', hit, n.y, rolling);
     }
     player.airT = 0;
   } else player.airT += h;
@@ -2426,8 +2450,17 @@ let runPhase = 0;
    smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
-let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
-listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
+/* A rolling touchdown is the same layer turned the other way and done on the
+   ground: one forward turn, over before the ground has its grip back. A hard
+   landing of any kind also sinks the hips for a moment (landSq, 0..1). */
+let landSq = 0;
+listen('land', (hit, ny, rolling) => {
+  if (ny > 0.6) landSq = Math.max(landSq, clamp(hit / 24, 0, 1));
+  /* a somersault still unwinding owns the layer; let it finish */
+  if (rolling && flipA === 0) { flipN = -1; flipDur = 0.5; flipT = 0; flipGround = true; }
+});
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.
@@ -2445,8 +2478,10 @@ function poseRig(dt, inp) {
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
-  rigY = damp(rigY, player.grounded ? 0.44 : 0.06, 9, dt);
-  rig.position.copy(pRender); rig.position.y += rigY;
+  const rolling = flipGround && flipT < flipDur && player.grounded;
+  rigY = damp(rigY, rolling ? -0.22 : player.grounded ? 0.44 : 0.06, rolling ? 20 : 9, dt);
+  landSq = damp(landSq, 0, 7, dt);
+  rig.position.copy(pRender); rig.position.y += rigY - (player.grounded ? landSq * 0.26 : 0);
 
   /* orientation */
   if (spd > 3.5) _bz.copy(V).multiplyScalar(-1 / spd);
@@ -2470,11 +2505,14 @@ function poseRig(dt, inp) {
      fresh line interrupts it — the applied angle then unwinds to the nearest
      full turn instead of snapping to identity. */
   if (flipT < flipDur || flipA !== 0) {
-    const interrupted = player.grounded || player.clinging || player.riding ||
-      player.inWater || player.webs[0].on || player.webs[1].on;
+    /* a somersault ends on anything solid or a fresh line; a roll ends by
+       leaving the ground */
+    const interrupted = player.clinging || player.riding || player.inWater || (flipGround
+      ? !player.grounded
+      : player.grounded || player.webs[0].on || player.webs[1].on);
     if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, 0.22);
+      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
     } else {
       flipT = flipDur;
       const turn = Math.round(flipA / TAU) * TAU;
@@ -2492,6 +2530,14 @@ function poseRig(dt, inp) {
     smoothEuler(elbowL, -1.1, 0, 0, k); smoothEuler(elbowR, -1.1, 0, 0, k);
     smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
     smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
+  } else if (flipT < flipDur) {
+    /* tucked ball for the somersault and the landing roll — snappier than the other transitions so
+       the tuck forms before the tumble picks up speed */
+    smoothEuler(spine, 0.5, 0, 0, 22);
+    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
+    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
+    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
+    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
   } else if (player.grounded) {
     /* on an aircraft the body's speed is the aircraft's; the legs only move
        when you walk the hull */
@@ -2502,20 +2548,14 @@ function poseRig(dt, inp) {
     const amp = clamp(gait / 9, 0, 1.1);
     /* a foot comes down every half cycle of the run */
     if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
-    smoothEuler(spine, -0.12 - amp * 0.22, 0, 0, k);
-    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16, k);
+    /* sq: the knees take a landing, on top of whatever the run is doing */
+    const sq = landSq;
+    smoothEuler(spine, -0.12 - amp * 0.22 - sq * 0.3, 0, 0, k);
+    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16 - sq * 0.5, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16 + sq * 0.5, k);
     smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
-    smoothEuler(hipL, -s * 0.85 * amp, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp, 0, 0, k);
-    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-  } else if (flipT < flipDur) {
-    /* tucked ball for the somersault — snappier than the other transitions so
-       the tuck forms before the tumble picks up speed */
-    smoothEuler(spine, 0.5, 0, 0, 22);
-    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
-    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
-    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
-    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
+    smoothEuler(hipL, -s * 0.85 * amp - sq * 0.75, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp - sq * 0.75, 0, 0, k);
+    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
+    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
@@ -2604,6 +2644,9 @@ function updateCamDirs() {
 }
 const camVel = V3(0, 0, 0), camFwdS = V3(0, 0, 1), boomDir = V3(0, 0, 1), _lookT = V3(0, 0, 0);
 const GROUND_CLEAR = 1.25;
+/* the view sinks with a landing and comes back up: weight, without a shake */
+let camDip = 0;
+listen('land', (hit, ny) => { if (ny > 0.6) camDip = Math.max(camDip, clamp((hit - 4) / 30, 0, 1) * 0.8); });
 /* The boom carrying the camera is deliberately NOT the aim direction. Aiming
    near-vertical used to swing the boom under the street, where the floor clamp
    shoved the camera back up on top of the character. The boom pitch is limited
@@ -2617,8 +2660,9 @@ function updateCamera(dt) {
      amplified that noise into the view. The camera rides a smoothed copy. */
   camVel.lerp(player.v, 1 - Math.exp(-6.5 * dt));
   const V = camVel, spd = V.length();
+  camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05;
+  pivot.y += 1.05 - camDip;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);

@@ -433,8 +433,56 @@ async function motionEvents(page, check) {
     'pan ' + ev.beside.pan.toFixed(2) + ' facing along the wall, ' + ev.flipped.toFixed(2) + ' facing back');
 }
 
+async function landing(page, check) {
+  /* a fast touchdown rolls: the ground declines to stop you for a moment, and
+     a jump inside that moment leaves with the speed. Polarity: on the old
+     ground (grip 6.2 from the first step) 30 m/s was 4.7 m/s after 0.3 s. It
+     must also give nothing away: running into the roll adds no speed, hopping
+     from roll to roll only loses it, and at a walk nothing has changed. */
+  const r = await page.evaluate(() => {
+    const hs = () => Math.hypot(player.v.x, player.v.z);
+    const touch = (hz, vx, held) => {
+      __reset(hz); yaw = -Math.PI / 2; pitch = 0;          // facing +x, along the road
+      player.p.set(-350, 2.2, -182); player.v.set(vx, -4, 0); player.airT = 1; player.roll = 9; player.grounded = false;
+      let f = 0; while (!player.grounded && f++ < hz) __run(1);
+      if (held) keys[held] = true;
+      return hs();
+    };
+    const after = (hz, vx, secs, held) => { touch(hz, vx, held); __run(Math.round(hz * secs)); const v = hs(); keys[held] = false; return v; };
+    const out = { at60: after(60, 30, 0.3), at240: after(240, 30, 0.3), rest: after(60, 30, 2.0), walk: after(60, 6, 0.3) };
+    /* the old ground, for the polarity: the same touchdown with the roll switched off */
+    touch(60, 30); player.roll = 9; __run(18); out.old = hs();
+    /* jump a quarter of a second in */
+    const v0 = touch(60, 30); __run(15); jumpEdge = true; __run(4);
+    out.jump = { v0, v: hs(), vy: player.v.y, up: !player.grounded };
+    /* run with it, as hard as the legs go, and watch for any gain */
+    touch(60, 30, 'KeyW'); keys['ShiftLeft'] = true; let top = 0;
+    for (let i = 0; i < 90; i++) { __run(1); top = Math.max(top, hs()); }
+    keys['KeyW'] = keys['ShiftLeft'] = false; out.pushed = top; out.sprint = hs();
+    /* hop from roll to roll */
+    touch(60, 30); const hops = [hs()];
+    for (let k = 0; k < 5; k++) {
+      __run(10); jumpEdge = true; __run(2);
+      let f = 0; while (!player.grounded && f++ < 400) __run(1);
+      hops.push(hs());
+    }
+    out.hops = hops; out.rollOver = player.roll;
+    return out;
+  });
+  check('a 108 km/h touchdown is still moving 0.3 s later', r.at60 > 24 && Math.abs(r.at60 - r.at240) < 0.5 && r.old < 7,
+    r.at60.toFixed(1) + ' m/s at 60 Hz, ' + r.at240.toFixed(1) + ' at 240 Hz (without the roll: ' + r.old.toFixed(1) + ')');
+  check('a jump out of the roll takes the speed with it', r.jump.up && r.jump.v > 0.8 * r.jump.v0 && r.jump.vy > 8,
+    r.jump.v.toFixed(1) + ' of ' + r.jump.v0.toFixed(1) + ' m/s, rising at ' + r.jump.vy.toFixed(1));
+  check('left alone, the roll ends and you stop', r.rest < 0.5, r.rest.toFixed(2) + ' m/s after 2 s');
+  check('at a walk the ground is as it was', r.walk < 1.5, r.walk.toFixed(2) + ' m/s 0.3 s after a 6 m/s touchdown');
+  check('running into the roll adds nothing', r.pushed <= 30.05 && r.sprint < 11 && r.sprint > 8,
+    'peak ' + r.pushed.toFixed(2) + ' m/s from a 30 m/s touchdown, settling to a ' + r.sprint.toFixed(1) + ' m/s sprint');
+  check('hopping from roll to roll only loses speed', r.hops.every((v, i, a) => i === 0 || v < a[i - 1]),
+    r.hops.map(v => v.toFixed(1)).join(' > ') + ' m/s');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents];
+  motionEvents, landing];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
