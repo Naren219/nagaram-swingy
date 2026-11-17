@@ -481,8 +481,58 @@ async function landing(page, check) {
     r.hops.map(v => v.toFixed(1)).join(' > ') + ' m/s');
 }
 
+async function wallRun(page, check) {
+  /* a wall met while travelling along it carries most of your weight for a
+     moment. Polarity: the same launch in open air is plain free fall. It must
+     not be a source of height or energy, must not happen head-on, slowly, on a
+     line or in a dive, and must run out. */
+  const r = await page.evaluate(() => {
+    const b = buildings.filter(b => b.kind === 'glass' && b.h > 90 && b.d > 44).sort((a, c) => c.h - a.h)[0];
+    const face = b.x + b.w / 2, z0 = b.z - b.d / 2 + 2, y0 = b.h * 0.75;
+    const E = () => 0.5 * player.v.lengthSq() + G * player.p.y;
+    const fly = (hz, o) => {
+      __reset(hz); yaw = 0; pitch = 0;
+      const air = o.air ? 400 : 0;                       // the same launch, clear of everything
+      player.p.set(face + RAD + 0.01 + air, y0 + air, z0); player.v.set(o.vx, o.vy || 0, o.vz);
+      player.grounded = false; player.wallT = WALL_T; player.airT = 0; player.touch = false;
+      if (o.line) fireWebAt(0, { x: face + 30, y: y0 + 60, z: z0 + 30, pl: null });
+      if (o.dive) keys['ShiftLeft'] = true;
+      const e0 = E(), out = { ran: 0, gain: -1e9, top: -1e9 }, n = Math.round(hz * (o.secs || 1));
+      for (let i = 0; i < n; i++) {
+        __run(1);
+        if (player.wallRun) out.ran++;
+        out.gain = Math.max(out.gain, E() - e0); out.top = Math.max(out.top, player.p.y - y0 - air);
+        if (o.kickAt === i) jumpEdge = true;
+      }
+      keys['ShiftLeft'] = false; releaseWeb(0);
+      out.drop = y0 + air - player.p.y; out.ran /= hz; out.vy = player.v.y; out.left = player.wallT;
+      out.off = (player.p.x - air - face - RAD); out.vOut = player.v.x;
+      return out;
+    };
+    return {
+      wall: fly(60, { vx: -2, vz: 22 }), wall240: fly(240, { vx: -2, vz: 22 }), free: fly(60, { vx: -2, vz: 22, air: true }),
+      headOn: fly(60, { vx: -22, vz: 3 }), slow: fly(60, { vx: -2, vz: 7 }),
+      line: fly(60, { vx: -2, vz: 22, line: true }), dive: fly(60, { vx: -2, vz: 22, dive: true }),
+      long: fly(60, { vx: -2, vz: 18, secs: 2.2 }),
+      rising: fly(60, { vx: -2, vy: 12, vz: 22 }), risingFree: fly(60, { vx: -2, vy: 12, vz: 22, air: true }),
+      kick: fly(60, { vx: -2, vz: 22, kickAt: 20, secs: 0.4 }), depth: b.d, h: b.h
+    };
+  });
+  check('a wall run along a tower face sinks a fraction of free fall', r.wall.ran > 0.9 && r.wall.drop < 0.45 * r.free.drop && r.free.drop > 10,
+    r.wall.drop.toFixed(1) + ' m lost in 1 s on the wall, ' + r.free.drop.toFixed(1) + ' m in open air');
+  check('the wall run is the same at 240 Hz', Math.abs(r.wall.drop - r.wall240.drop) < 0.3, r.wall.drop.toFixed(2) + ' vs ' + r.wall240.drop.toFixed(2) + ' m');
+  check('no wall run head-on, at a jog, on a line or in a dive', r.headOn.ran === 0 && r.slow.ran === 0 && r.line.ran === 0 && r.dive.ran === 0,
+    [r.headOn.ran, r.slow.ran, r.line.ran, r.dive.ran].join(' / ') + ' s');
+  check('the wall run runs out', r.long.ran > 1.2 && r.long.ran < 1.4 && r.long.vy < -12, r.long.ran.toFixed(2) + ' s on the wall, then falling at ' + r.long.vy.toFixed(1) + ' m/s');
+  check('the wall never lifts: no energy gained, no height beyond a plain throw',
+    r.wall.gain < 0.5 && r.rising.gain < 0.5 && r.rising.top < r.risingFree.top + 0.1,
+    'energy change at most ' + Math.max(r.wall.gain, r.rising.gain).toFixed(2) + ' J/kg, peak ' + r.rising.top.toFixed(2) + ' m on the wall vs ' + r.risingFree.top.toFixed(2) + ' m thrown');
+  check('a jump kicks off the wall and buys the next run', r.kick.vOut > 8 && r.kick.vy > 0 && r.kick.off > 0.3 && r.kick.left === 1.3,
+    r.kick.vOut.toFixed(1) + ' m/s off the wall, ' + r.kick.vy.toFixed(1) + ' up, ' + r.kick.left + ' s of wall in hand');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing];
+  motionEvents, landing, wallRun];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

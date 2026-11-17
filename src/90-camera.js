@@ -64,7 +64,9 @@ function updateCamera(dt) {
   /* rolling the horizon while free-falling makes the skyline harder to read —
      bank only when a line is actually loaded */
   const anyLine = player.webs[0].on || player.webs[1].on;
-  camRoll = damp(camRoll, anyLine ? player.bank * 0.55 : 0, anyLine ? 5 : 3.2, dt);
+  /* on a wall the view tips away from it, with the body */
+  const lean = player.wallRun ? 0.12 * (player.cn.x * camRight.x + player.cn.z * camRight.z) : 0;
+  camRoll = damp(camRoll, anyLine ? player.bank * 0.55 : lean, anyLine || lean ? 5 : 3.2, dt);
   camera.up.set(0, 1, 0).applyAxisAngle(camFwdS, camRoll);
   camera.lookAt(_lookT.copy(camPosS).addScaledVector(camFwdS, 140));
 

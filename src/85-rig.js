@@ -154,6 +154,7 @@ function trapEase(p, r) {
 }
 
 let rigY = 0.44;
+const rigUp = V3(0, 1, 0);   // which way the head points: straight up, except leaning out from a wall being run
 function poseRig(dt, inp) {
   poseDt = dt;
   const V = player.v, spd = V.length();
@@ -169,9 +170,11 @@ function poseRig(dt, inp) {
   else _bz.copy(inp.fwd).multiplyScalar(-1);
   if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
   if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
+  const lat = player.wallRun ? 0 : player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
   player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
-  _by.set(0, 1, 0);
+  /* on a wall the feet go to the wall: lean out until the legs just reach it */
+  if (player.wallRun) _by.set(player.cn.x * 0.7, 0.72, player.cn.z * 0.7).normalize(); else _by.set(0, 1, 0);
+  _by.copy(rigUp.lerp(_by, 1 - Math.exp(-12 * dt)).normalize());
   _bx.copy(_by).cross(_bz);
   if (_bx.lengthSq() < 1e-5) _bx.set(1, 0, 0);
   _bx.normalize(); _by.copy(_bz).cross(_bx).normalize();
@@ -219,7 +222,7 @@ function poseRig(dt, inp) {
     smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
     smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
     smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
-  } else if (player.grounded) {
+  } else if (player.grounded || player.wallRun) {
     /* on an aircraft the body's speed is the aircraft's; the legs only move
        when you walk the hull */
     const gait = player.riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 6 : spd;

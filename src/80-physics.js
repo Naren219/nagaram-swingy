@@ -15,6 +15,16 @@ const LAND_AIR = 0.18;     // seconds clear of every surface before a touch coun
    with you. The roll gives nothing: it only declines to take. */
 const ROLL_MIN = 13, ROLL_FREE = 0.35, ROLL_END = 0.95;
 const GRIP = 6.2, ROLL_GRIP = 0.5, SPRINT_V = 10;
+/* Walls did the same thing as the ground, sideways: touch one and you slid
+   down it at full gravity. Meet a wall while travelling along it at speed and
+   it now carries most of your weight for a moment — a wall-run, with no button,
+   in the spirit of the somersault. It only ever holds you up on the way DOWN:
+   a rising body gets nothing, so the wall cannot lift you and the run adds no
+   energy. WALL_T seconds per run; the ground, the water, a line, a cling or a
+   kick off the wall buys the next one. */
+const WALL_T = 1.3, WALL_MIN = 11;       // seconds of run · m/s along the wall to start one
+const WALL_CARRY = 0.62, WALL_SINK = 2.2, WALL_HOLD = 7;
+const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
 
 /* Physics announces what happened and stops there. It used to call the HUD,
    the rig and the water effects itself, which tied the simulation to the DOM.
@@ -76,6 +86,7 @@ const player = {
   depth: 0, wasWet: false,
   touch: false, airT: 0,     // touching anything this substep · seconds since the last touch
   roll: 9,                   // seconds since a rolling touchdown; past ROLL_END it is over
+  wallRun: false, wallT: WALL_T,   // on a wall right now · seconds of wall-run left
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
   webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
          { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
@@ -232,6 +243,7 @@ function stepPhysics(h, inp) {
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
     player.touch = true; player.airT = 0; player.roll = ROLL_END;
+    player.wallRun = false; player.wallT = WALL_T;
     player.lastAccel.set(0, 0, 0);
     if (inp.jump) {                       // step off, keeping the aircraft's speed
       player.riding = null;
@@ -248,7 +260,9 @@ function stepPhysics(h, inp) {
   /* contact is re-tested on every solver pass and reads false again once a
      pass has pushed you clear, so it cannot say whether you touched anything
      this step. touch can: the contact solver only ever sets it. */
+  const wasTouch = player.touch;
   player.touch = false;
+  player.wallRun = false;
   const surf = waterSurfaceAt(P.x, P.z);
   player.inWater = surf !== null && P.y < surf;
   player.depth = player.inWater ? surf - P.y : 0;
@@ -333,7 +347,25 @@ function stepPhysics(h, inp) {
   } else {
     /* Coyote time: a jump pressed just after running off an edge still counts.
        Only while falling and off the line, so it cannot stack on a real jump. */
-    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) takeOff();
+    const lines = player.webs[0].on || player.webs[1].on;
+    /* the wall you touched last step, if you are going along it fast enough.
+       Not on a line (the line is already carrying you), and not in a dive:
+       shift means down. */
+    const n = player.cn;
+    if (wasTouch && Math.abs(n.y) < 0.3 && player.wallT > 0 && !lines && !inp.tuck) {
+      const vn = V.x * n.x + V.z * n.z;
+      player.wallRun = Math.hypot(V.x - vn * n.x, V.z - vn * n.z) > WALL_MIN;
+    }
+    if (player.wallRun) {
+      player.wallT -= h;
+      if (V.y <= 0) { ay += G * WALL_CARRY; ay -= V.y * WALL_SINK; }
+      /* lean on the wall, or the next step finds you a hair clear of it */
+      ax -= n.x * WALL_HOLD; az -= n.z * WALL_HOLD;
+      if (inp.jump) {
+        V.x += n.x * WALL_KICK; V.z += n.z * WALL_KICK; V.y = Math.max(V.y, 0) + WALL_HOP;
+        player.wallRun = false; player.wallT = WALL_T;
+      }
+    } else if (inp.jump && player.coyote > 0 && V.y < 1 && !lines) takeOff();
     const air = inp.glide ? 15 : 11;
     ax += inp.mx * air; az += inp.mz * air;
     if (inp.tuck) { ax += inp.fwd.x * 16; ay += inp.fwd.y * 16; az += inp.fwd.z * 16; }
@@ -403,6 +435,7 @@ function stepPhysics(h, inp) {
      speed you were closing on the surface at. Sliding along a wall or standing
      on a roof touches every step and so announces nothing. */
   if (!player.grounded) player.roll = ROLL_END;
+  if (player.grounded || player.inWater || player.clinging) player.wallT = WALL_T;
   if (player.touch) {
     if (player.airT > LAND_AIR && !player.inWater) {
       const n = player.cn, hit = -(ux * n.x + uy * n.y + uz * n.z);
@@ -504,7 +537,7 @@ function fireWebAt(i, a) {
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
   w.tension = 0; w.tavg = 0; w.age = 0;
-  player.clinging = false;
+  player.clinging = false; player.wallT = WALL_T;
   emit('attach', i);
   return true;
 }
