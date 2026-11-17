@@ -223,3 +223,31 @@ for (const [mx, mz, mh] of [[-410, -430, 96], [300, -450, 88], [-300, 380, 82], 
   addBox(mx, 0, mz, 7, mh, 7);
 }
 
+
+/* --- tower cranes on two tech-park roofs, a tower going up. The mast stands
+   on the roof, the jib slews round above it (77-cranes-wheel.js). A roof is
+   only chosen where the jib clears every neighbour it can sweep over. Like the
+   metro, the masts are solid but go into the hash late. --- */
+const CRANES = [];
+{
+  const MAST = 26, JIB = 40, TAIL = 12;
+  const roofOf = (x, z, r) => {          // the highest roof within r of (x, z)
+    let top = 0;
+    for (const b of buildings) {
+      const dx = Math.max(Math.abs(x - b.x) - b.w / 2, 0), dz = Math.max(Math.abs(z - b.z) - b.d / 2, 0);
+      if (dx * dx + dz * dz < r * r) top = Math.max(top, b.h);
+    }
+    return top;
+  };
+  const site = buildings.filter(b => b.kind === 'glass' && b.h < 120)
+    .map(b => ({ b, clear: b.h + MAST - roofOf(b.x, b.z, JIB + 3) }))
+    .filter(s => s.clear > 6).sort((a, b) => b.clear - a.clear || a.b.x - b.b.x);
+  CRANES.box0 = boxesArr.length / 6;
+  for (const { b } of site) {
+    if (CRANES.length === 2) break;
+    if (CRANES.some(c => Math.hypot(c.x - b.x, c.z - b.z) < 2 * JIB + 6)) continue;
+    CRANES.push({ x: b.x, z: b.z, base: b.h, top: b.h + MAST, jib: JIB, tail: TAIL });
+    addBox(b.x, b.h, b.z, 2.2, MAST, 2.2);
+  }
+  CRANES.box1 = boxesArr.length / 6;
+}

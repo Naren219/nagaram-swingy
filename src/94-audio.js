@@ -39,6 +39,7 @@ function initAmbience() {
   beds.night   = makeBed('bandpass', 5200, 9, noiseBuf);    // insects
   beds.engine  = makeBed('lowpass',  240, 1.2, noiseBuf);   // turbofan hiss
   beds.rail    = makeBed('lowpass',  150, 2.2, noiseBuf);   // steel on steel, heard through a viaduct
+  beds.rain    = makeBed('bandpass', 2400, 0.45, noiseBuf); // a squall going over (88-weather.js)
   /* the engine also needs a pitched core, not just filtered noise */
   const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 58;
   const of = AC.createBiquadFilter(); of.type = 'lowpass'; of.frequency.value = 320;
@@ -128,11 +129,12 @@ function updateAudio(dt) {
   let eng = 0;
   let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
+    if (pl.kind !== 'plane' && pl.kind !== 'train') continue;
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
-    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -142,7 +144,8 @@ function updateAudio(dt) {
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
     engine: eng * 0.16,
     rail: rail * rail * 0.26,
-    engineTone: eng * eng * 0.055
+    engineTone: eng * eng * 0.055,
+    rain: rainHere * 0.34
   };
   const k = 1 - Math.exp(-2.2 * dt);
   for (const name in tgt) {
@@ -168,6 +171,21 @@ function updateAudio(dt) {
     tHonk = 1.4 + Math.random() * 5.5;
     if (trafficN > 0.35 && alt > 0.35) honk((0.4 + 0.6 * trafficN) * alt * (1 - night * 0.6));
   }
+}
+
+/* thunder: a long low roll that arrives a beat after the flash */
+listen('thunder', thunder);
+function thunder(vol) {
+  if (!AC) return;
+  const t = AC.currentTime + 0.4 + Math.random() * 1.6;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 140; f.Q.value = 0.8;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5 * vol, t + 0.25);
+  g.gain.exponentialRampToValueAtTime(0.18 * vol, t + 1.2);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 3.7);
 }
 
 /* water impact: a broadband slap that darkens fast, then a short hiss of foam */

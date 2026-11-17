@@ -433,7 +433,8 @@ const fixedStep = require('./fixed-step');
     check('touch drag turns the view', yaw1 > yaw0, 'yaw ' + yaw0.toFixed(3) + ' → ' + yaw1.toFixed(3));
 
     /* contextual board button near an aircraft, tap boards */
-    await page.evaluate(() => { const pl = planes[0]; player.p.copy(pl.p); player.p.y += 2; player.v.copy(pl.v); });
+    /* beside the hull, not over it: coming down on its spine is a landing, and boards by itself */
+    await page.evaluate(() => { const pl = planes[0]; planePoint(pl, pl.hx + 6, 0, 0, player.p); player.v.copy(pl.v); });
     const boardShown = await page.waitForFunction(
       () => document.getElementById('tBoard').classList.contains('show'), null, { timeout: 25000 }
     ).then(() => true).catch(() => false);

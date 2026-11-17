@@ -132,6 +132,7 @@
   #gate p{margin-top:16px;font-size:12px;letter-spacing:.26em;text-transform:uppercase;opacity:.65}
   #gate .rule{width:min(420px,70vw);height:1px;margin:18px 0 2px;
     background:linear-gradient(90deg,transparent,var(--vermilion),var(--turmeric),transparent)}
+  #gate #today{margin-top:6px;font-size:10px;opacity:.45}
   #gate.gone{display:none}
 
   /* ---- pause ---- */
@@ -265,7 +266,7 @@
   <div class="tbtn" id="tJump">jump</div>
   <div class="tbtn" id="tZip">zip</div>
   <div class="tbtn" id="tTuck">dive</div>
-  <div class="tbtn" id="tBoard">board aircraft</div>
+  <div class="tbtn" id="tBoard">board</div>
   <div class="tbtn" id="tRun">run</div>
   <div class="tbtn" id="tRunNext">next</div>
   <div class="tbtn" id="tRunQuit">end</div>
@@ -280,6 +281,7 @@
   <h2>NAGARAM</h2>
   <div class="rule"></div>
   <p>click to swing</p>
+  <p id="today"></p>
 </div>
 <!-- three.js r128, vendored from npm three@0.128.0 (MIT, see vendor/three.LICENSE).
      Local rather than CDN so the game has no third-party runtime dependency. -->
@@ -645,6 +647,79 @@ for (const [mx, mz, mh] of [[-410, -430, 96], [300, -450, 88], [-300, 380, 82], 
   addBox(mx, 0, mz, 7, mh, 7);
 }
 
+
+/* --- tower cranes on two tech-park roofs, a tower going up. The mast stands
+   on the roof, the jib slews round above it (77-cranes-wheel.js). A roof is
+   only chosen where the jib clears every neighbour it can sweep over. Like the
+   metro, the masts are solid but go into the hash late. --- */
+const CRANES = [];
+{
+  const MAST = 26, JIB = 40, TAIL = 12;
+  const roofOf = (x, z, r) => {          // the highest roof within r of (x, z)
+    let top = 0;
+    for (const b of buildings) {
+      const dx = Math.max(Math.abs(x - b.x) - b.w / 2, 0), dz = Math.max(Math.abs(z - b.z) - b.d / 2, 0);
+      if (dx * dx + dz * dz < r * r) top = Math.max(top, b.h);
+    }
+    return top;
+  };
+  const site = buildings.filter(b => b.kind === 'glass' && b.h < 120)
+    .map(b => ({ b, clear: b.h + MAST - roofOf(b.x, b.z, JIB + 3) }))
+    .filter(s => s.clear > 6).sort((a, b) => b.clear - a.clear || a.b.x - b.b.x);
+  CRANES.box0 = boxesArr.length / 6;
+  for (const { b } of site) {
+    if (CRANES.length === 2) break;
+    if (CRANES.some(c => Math.hypot(c.x - b.x, c.z - b.z) < 2 * JIB + 6)) continue;
+    CRANES.push({ x: b.x, z: b.z, base: b.h, top: b.h + MAST, jib: JIB, tail: TAIL });
+    addBox(b.x, b.h, b.z, 2.2, MAST, 2.2);
+  }
+  CRANES.box1 = boxesArr.length / 6;
+}
+/* =====================================================================
+   THE CITY HAS A DAY
+   ---------------------------------------------------------------------
+   Like today's ring course, the date (UTC) is a seed, and it picks what kind
+   of day the city is having: the weather, how hard the breeze blows and from
+   where, whether it is a kite-festival day, whether tonight the temple is lit
+   with lamps. Everyone gets the same city on the same day, and a different
+   one tomorrow. Nothing here is a rule or a goal; it is a reason the city is
+   worth coming back to.
+
+   The season leans the odds the way the Coromandel coast's year does: the
+   north-east monsoon brings the rain from October to December, the kites
+   go up for Sankranti in the middle of January, and the lamps for Karthigai
+   in late November.
+
+     ?day=2026-01-14   that date's city, for sharing a day
+     ?day=plain        the reference city the tests run in: clear, an
+                       ordinary breeze, no festival
+   ===================================================================== */
+const CITY_DAY = (() => {
+  const q = /[?&]day=([0-9]{4}-[0-9]{2}-[0-9]{2}|plain)\b/.exec(location.search);
+  if (q && q[1] === 'plain')
+    return { plain: true, weather: 'clear', squallEvery: Infinity, windK: 1, windTurn: 0, kites: false, lamps: false, seed: 0, line: '' };
+  const d = q ? new Date(q[1] + 'T12:00:00Z') : new Date();
+  const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, dd = d.getUTCDate();
+  const seed = y * 10000 + m * 100 + dd;
+  const r = mulberry32(seed * 7919 + 17);
+  r(); r();                                          // the first draws off a fresh seed are the least mixed
+  /* weather: clear, passing showers, or the monsoon proper */
+  const wet = m >= 10 ? [0.25, 0.45] : m >= 6 ? [0.45, 0.40] : [0.70, 0.25];
+  const w = r(), weather = w < wet[0] ? 'clear' : w < wet[0] + wet[1] ? 'showers' : 'monsoon';
+  const squallEvery = weather === 'clear' ? Infinity : weather === 'showers' ? 420 : 285;
+  const windK = 0.7 + 0.65 * r();                    // how hard the breeze is blowing today
+  const windTurn = (r() - 0.5) * 2.2;                // and from where
+  const kites = (m === 1 && (dd === 14 || dd === 15)) || r() < 0.12;
+  const lamps = (m === 11 && dd >= 20) || (m === 12 && dd <= 8) ? r() < 0.7 : r() < 0.1;
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const said = [DAYS[d.getUTCDay()] + ' ' + dd + ' ' + MONTHS[m - 1]];
+  said.push(weather === 'clear' ? (windK > 1.15 ? 'clear, a fresh breeze' : windK < 0.85 ? 'clear and still' : 'clear')
+          : weather === 'showers' ? 'showers coming in off the bay' : 'the monsoon is in');
+  if (kites) said.push('kites up all over the city');
+  if (lamps) said.push('lamps at the temple tonight');
+  return { plain: false, weather, squallEvery, windK, windTurn, kites, lamps, seed, line: said.join(' · ') };
+})();
 /* =====================================================================
    GEOMETRY HELPERS
    ===================================================================== */
@@ -1361,12 +1436,14 @@ function hashBox(b) {
       const k = hkey(i, j); let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(b);
     }
 }
-/* The metro's boxes are held back until the plants, traffic and boats have
-   been placed (76-metro.js puts them in). Placement asks freeAt() and draws
-   from the world's random stream until it has enough: one more box in the way
-   is one more draw, and every palm, aircraft and kite after it would land
-   somewhere else. This way the city is the same city, plus a metro. */
-for (let b = 0; b < NBOX; b++) if (b < METRO.box0 || b >= METRO.box1) hashBox(b);
+/* The metro's boxes and the crane masts are held back until the plants,
+   traffic and boats have been placed (76-metro.js and 77-cranes-wheel.js put
+   them in). Placement asks freeAt() and draws from the world's random stream
+   until it has enough: one more box in the way is one more draw, and every
+   palm, aircraft and kite after it would land somewhere else. This way the
+   city is the same city, plus a metro and two cranes. */
+const lateBox = (b) => (b >= METRO.box0 && b < METRO.box1) || (b >= CRANES.box0 && b < CRANES.box1);
+for (let b = 0; b < NBOX; b++) if (!lateBox(b)) hashBox(b);
 function freeAt(x, z, r) {
   const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
   for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
@@ -1611,16 +1688,30 @@ const V_BOAT = mergeGeos([
   { geo: BOXB, matrix: M4(0, 1.0, 0, 2.0, 0.16, 7.6), color: 0xd9c9a4 },
   { geo: BOXB, matrix: M4(0, 1.0, -0.5, 0.18, 5.4, 0.18), color: 0x7a6544 },
   { geo: BOXB, matrix: M4(0.02, 1.6, 1.0, 0.06, 3.6, 2.9), color: 0xe6dcc4 }]);
+/* Boats and kites used to be scenery. They are carriers now (see AIRCRAFT
+   below): what is drawn is where the carrier is, and the carrier is what a
+   web latches and a landing stands on. Their own random stream, so the city
+   placed after them is the city it was. */
+const RIDE_UP = 0.85;      // a rider's centre above the surface they stand on
+const BOAT_HX = 1.1, BOAT_HY = 0.58, BOAT_HZ = 4.25;   // hull and deck, about the hull's centre
 const boats = [];
+const kites = [];
+const KITE_MAX = 72;       // a festival day (11-city-day.js) flies all of them; any other day, 26
+const KITES_ON = CITY_DAY.kites ? KITE_MAX : 26;
 {
   const im = new THREE.InstancedMesh(V_BOAT, vegMat, 34);
   im.castShadow = true; im.frustumCulled = false; scene.add(im);
-  const m = new THREE.Matrix4();
+  const m = new THREE.Matrix4(), br = mulberry32(7310);
   for (let i = 0; i < 34; i++) {
     const wet = i > 17;
-    const x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
+    let x = wet ? rnd(SEA_X + 20, SEA_X + 300) : rnd(SAND_X + 8, SEA_X - 6);
     const z = rnd(-420, 300);
-    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU) });
+    /* afloat, each sails a slow circle offshore; on the sand it stays put */
+    const r = wet ? 30 + br() * 70 : 0, spd = 2.5 + br() * 2.5, th = br() * TAU;
+    if (wet) x = Math.max(x, SEA_X + 18 + 2 * r);
+    boats.push({ x, z, wet, yaw: rnd(0, TAU), ph: rnd(0, TAU),
+      kind: 'boat', step: sailBoat, cx: x - r * Math.cos(th), cz: z - r * Math.sin(th), r, th, w: wet ? (br() < 0.5 ? -1 : 1) * spd / r : 0,
+      p: V3(x, 0, z), v: V3(), hx: BOAT_HX, hy: BOAT_HY, hz: BOAT_HZ, reach: 1.2, deck: BOAT_HY + RIDE_UP, walkX: 0.6, walkZ: 3.3 });
     m.compose(V3(x, 0, z), new THREE.Quaternion(), V3(1, 1, 1));
     im.setMatrixAt(i, m);
   }
@@ -1629,11 +1720,19 @@ const boats = [];
 const V_KITE = mergeGeos([
   { geo: BOXB, matrix: M4(0, 0, 0, 1.5, 0.04, 1.5, PI / 4), color: 0xe0402c },
   { geo: BOXB, matrix: M4(0, -0.02, -1.6, 0.12, 0.03, 2.6), color: 0xf0c93a }]);
-const kites = [];
 {
-  const im = new THREE.InstancedMesh(V_KITE, vegMat, 26);
+  const im = new THREE.InstancedMesh(V_KITE, vegMat, KITE_MAX);
   im.frustumCulled = false; scene.add(im);
-  for (let i = 0; i < 26; i++) kites.push({ x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) });
+  const kr = mulberry32(4417), krnd = (a, b) => a + kr() * (b - a);
+  for (let i = 0; i < KITE_MAX; i++) {
+    /* the first 26 draw from the world's stream, as they always have */
+    const k = i < 26 ? { x: rnd(-EXT, EXT), z: rnd(-EXT, EXT), y: rnd(55, 150), ph: rnd(0, TAU), r: rnd(9, 26) }
+                     : { x: krnd(-EXT, EXT), z: krnd(-EXT, EXT), y: krnd(50, 140), ph: krnd(0, TAU), r: krnd(9, 26) };
+    Object.assign(k, { kind: 'kite', step: flyKite, p: V3(k.x, k.y, k.z), v: V3(), yaw: 0, a: 0, held: 0, ox: 0, oy: 0, oz: 0,
+      hx: 1.2, hy: 0.5, hz: 1.2, reach: 2.2, deck: null });
+    kites.push(k);
+  }
+  im.count = KITES_ON;
   kites.mesh = im;
 }
 /* ---------------------------------------------------------------
@@ -1662,7 +1761,7 @@ const planes = [];
     mesh.castShadow = true; mesh.frustumCulled = false;
     scene.add(mesh);
     planes.push({
-      mesh,
+      kind: 'plane', step: flyPlane, mesh,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
       cx: rnd(-120, 120), cz: rnd(-160, 120),
@@ -1675,19 +1774,60 @@ const planes = [];
     });
   }
 }
-function updatePlanes(dt) {
-  for (const pl of planes) {
-    if (pl.train) { updateTrain(pl, dt); continue; }
-    pl.ph += pl.w * dt;
-    const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-    const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
-    pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
-    pl.p.set(px, py, pz);
-    /* nose points along the tangent; bank into the turn */
-    pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
-    pl.mesh.position.copy(pl.p);
-    pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+/* every carrier moves itself: the aircraft here, the train in 76-metro.js,
+   boats, kites, crane jibs and the wheel's cars (77-cranes-wheel.js) */
+for (const b of boats) planes.push(b);
+for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
+function flyPlane(pl, dt) {
+  pl.ph += pl.w * dt;
+  const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  pl.p.set(px, py, pz);
+  /* nose points along the tangent; bank into the turn */
+  pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.mesh.position.copy(pl.p);
+  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+}
+/* afloat, a boat sails its circle and rides the swell; beached, it sits */
+function sailBoat(b, dt) {
+  if (b.wet) b.th += b.w * dt;
+  const x = b.wet ? b.cx + Math.cos(b.th) * b.r : b.x, z = b.wet ? b.cz + Math.sin(b.th) * b.r : b.z;
+  const y = (b.wet ? Math.sin(T * 1.1 + b.ph) * 0.35 - 0.3 : 0) + BOAT_HY;
+  b.v.set(x - b.p.x, y - b.p.y, z - b.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  b.p.set(x, y, z);
+  if (b.wet) b.yaw = Math.atan2(-Math.sin(b.th) * b.w, Math.cos(b.th) * b.w);
+}
+/* A kite flies down-wind of whoever holds it, nose into the breeze and its
+   tail streaming behind: look up and you can read which way the air is going
+   and how hard. In a calm it wanders in wide lazy circles; as the wind rises
+   it is carried out along it and held there. (k.x, k.z) is the hand on the
+   ground. Put a web on one and it takes you where the wind is going, sinking
+   under you, faster the less wind there is to hold it up; let go and it is
+   walked back out to where it flew. */
+const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+const KITE_LOW = 26;       // a dragged kite comes no lower than this
+function flyKite(k, dt) {
+  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
+  const hx = Math.cos(windHead), hz = Math.sin(windHead);
+  k.held = 0;
+  for (const w of player.webs) if (w.on && w.pl === k) k.held = 1;
+  if (k.held) {
+    const run = 1.2 + 0.75 * ws;
+    k.ox += hx * run * dt; k.oz += hz * run * dt;
+    k.oy = Math.max(KITE_LOW - k.y, k.oy - (0.7 + 2.3 * (1 - fly)) * dt);
+  } else {
+    const f = Math.exp(-dt / 25);
+    k.ox *= f; k.oy *= f; k.oz *= f;
   }
+  const a = T * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
+  k.a = a; k.fly = fly;
+  const x = k.x + hx * out + Math.cos(a) * r + k.ox, y = k.y + Math.sin(a * 1.6) * 5 + k.oy, z = k.z + hz * out + Math.sin(a) * r + k.oz;
+  k.v.set(x - k.p.x, y - k.p.y, z - k.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  k.p.set(x, y, z);
+}
+function updatePlanes(dt) {
+  for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
 /* local offset -> world, so a latched anchor rides the hull */
 function planePoint(pl, lx, ly, lz, out) {
@@ -1699,21 +1839,31 @@ function worldToPlane(pl, wx, wy, wz, out) {
   const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
   return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
 }
-/* slab test against each hull; only five of them, so brute force */
+/* Slab test against each hull, in the hull's own frame: a crane jib is a long
+   thin box turned to wherever it is pointing, and a world-aligned box round
+   it would catch rays a jib's length away. A sphere round each hull turns
+   most of them away before the slab test. No arrays: this runs for every aim
+   ray, every frame. */
 const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null };
 function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
+    if (pl.off) continue;
+    const ex = pl.hx + pl.reach, ey = pl.hy + pl.reach * 0.5, ez = pl.hz + pl.reach;
+    const qx = pl.p.x - ox, qy = pl.p.y - oy, qz = pl.p.z - oz;
+    const tc = qx * dx + qy * dy + qz * dz, r2 = ex * ex + ey * ey + ez * ez;
+    if (tc < -Math.sqrt(r2) || tc - Math.sqrt(r2) > best) continue;
+    if (qx * qx + qy * qy + qz * qz - tc * tc > r2) continue;
+    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
     let t0 = 0.02, t1 = best, ok = true;
-    /* no arrays: this runs for every aim ray, every frame */
     for (let a = 0; a < 3 && ok; a++) {
-      const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
-      const c = a === 0 ? pl.p.x : a === 1 ? pl.p.y : pl.p.z;
-      const h = a === 0 ? pl.hx + pl.reach : a === 1 ? pl.hy + pl.reach * 0.5 : pl.hz + pl.reach;
-      const lo = c - h, hi = c + h;
-      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) ok = false; continue; }
+      /* the ray in the hull's frame (worldToPlane), about the hull's centre */
+      const o = a === 0 ? -qx * c + qz * sn : a === 1 ? -qy : -qx * sn - qz * c;
+      const d = a === 0 ? dx * c - dz * sn : a === 1 ? dy : dx * sn + dz * c;
+      const h = a === 0 ? ex : a === 1 ? ey : ez;
+      if (Math.abs(d) < 1e-8) { if (o < -h || o > h) ok = false; continue; }
       const inv = 1 / d;
-      let n = (lo - o) * inv, f = (hi - o) * inv;
+      let n = (-h - o) * inv, f = (h - o) * inv;
       if (n > f) { const tmp = n; n = f; f = tmp; }
       if (n > t0) t0 = n;
       if (f < t1) t1 = f;
@@ -1726,36 +1876,26 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   _ph2.x = ox + dx * best; _ph2.y = oy + dy * best; _ph2.z = oz + dz * best;
   return _ph2;
 }
-
 const KITE_SCALE = V3(1.6, 1.6, 1.6);
-const KITE_LEAN = 0.32;    // metres down-wind per metre of height, in a full breeze
+/* what is drawn is where the carriers are */
 function updateProps(t) {
   const { m, q, e, p } = scratch;
   for (let i = 0; i < boats.length; i++) {
     const b = boats[i];
-    const bob = b.wet ? Math.sin(t * 1.1 + b.ph) * 0.35 : 0;
     e.set(b.wet ? Math.sin(t * 0.9 + b.ph) * 0.08 : 0.12, b.yaw, b.wet ? Math.cos(t * 0.7 + b.ph) * 0.06 : 0.05);
-    m.compose(p.set(b.x, bob - (b.wet ? 0.3 : 0), b.z), q.setFromEuler(e), UNIT);
+    m.compose(p.set(b.p.x, b.p.y - BOAT_HY, b.p.z), q.setFromEuler(e), UNIT);
     boats.mesh.setMatrixAt(i, m);
   }
   boats.mesh.instanceMatrix.needsUpdate = true;
-  /* A kite flies down-wind of whoever holds it, nose into the breeze and its
-     tail streaming behind: look up and you can read which way the air is
-     going and how hard. In a calm it wanders in wide lazy circles; as the
-     wind rises it is carried out along it and held there. (k.x, k.z) is the
-     hand on the ground. */
-  const ws = Math.hypot(WIND.x, WIND.z), fly = sstep(0.3, 3.6, ws);
-  const hx = Math.cos(windHead), hz = Math.sin(windHead);
-  for (let i = 0; i < kites.length; i++) {
-    const k = kites[i];
-    const a = t * 0.22 + k.ph, r = k.r * (1 - 0.6 * fly), out = k.y * KITE_LEAN * fly;
-    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
-    m.compose(p.set(k.x + hx * out + Math.cos(a) * r, k.y + Math.sin(a * 1.6) * 5, k.z + hz * out + Math.sin(a) * r), q.setFromEuler(e), KITE_SCALE);
+  for (let i = 0; i < KITES_ON; i++) {
+    const k = kites[i], a = k.a, fly = k.fly || 0;
+    /* a dragged kite stands up in the wind, nose high */
+    e.set(Math.sin(a * 1.7) * (0.5 - 0.3 * fly) - 0.35 * fly - 0.5 * k.held, -PI / 2 - windHead + Math.sin(a * 1.3) * (0.9 - 0.7 * fly), Math.cos(a * 1.3) * 0.4);
+    m.compose(k.p, q.setFromEuler(e), KITE_SCALE);
     kites.mesh.setMatrixAt(i, m);
   }
   kites.mesh.instanceMatrix.needsUpdate = true;
 }
-
 /* =====================================================================
    THE METRO
    ---------------------------------------------------------------------
@@ -1809,7 +1949,7 @@ const TRAIN_A = (METRO.z1 - METRO.z0) / 2 - TRAIN_HZ - 5;  // how far either sid
   const mesh = new THREE.Mesh(mergeGeos(cars), mat);
   mesh.castShadow = true; mesh.frustumCulled = false; scene.add(mesh);
   planes.push({
-    train: true, mesh, ph: 0.6, w: TRAIN_W,
+    kind: 'train', step: updateTrain, train: true, mesh, ph: 0.6, w: TRAIN_W,
     p: V3(METRO.x, TRAIN_Y, 0), v: V3(), yaw: 0,
     hx: CAR_W / 2, hy: CAR_H / 2, hz: TRAIN_HZ, reach: 0.8, deck: CAR_H / 2 + 0.3, walkX: 1.0, walkZ: TRAIN_HZ - 1
   });
@@ -1823,6 +1963,143 @@ function updateTrain(pl, dt) {
   pl.mesh.position.copy(pl.p);
 }
 metroTrain.p.z = (METRO.z0 + METRO.z1) / 2 + TRAIN_A * Math.sin(metroTrain.ph);
+/* =====================================================================
+   CRANES AND THE FERRIS
+   ---------------------------------------------------------------------
+   Two more things that move and can be used, both slow.
+
+   Tower cranes stand on two tech-park roofs (CRANES, 10-world.js). The mast
+   is solid; the jib slews back and forth above the roof and is a carrier:
+   hang a web from it and it carries you round, or come down on it and walk
+   its length.
+
+   A big wheel turns on the sand north of the marina. Each of its cars is a
+   carrier: latch one and it lifts you, or stand on its roof and ride it over
+   the top for the highest view on the beach.
+
+   Neither structure is solid beyond the crane masts: a box cannot follow a
+   rim that turns, so the wheel's frame is for looking at.
+   ===================================================================== */
+for (let b = CRANES.box0; b < CRANES.box1; b++) hashBox(b);    // see 65-broadphase.js
+
+const CRANE_W = 0.06;          // rad/s of the slew at its fastest
+const craneMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+{
+  const Y = 0xe3ac1d, G = 0x55595e;
+  const mastGeo = mergeGeos([
+    { geo: BOXB, matrix: M4(0, 0, 0, 2.2, 1, 2.2), color: Y },
+    { geo: BOXB, matrix: M4(0, 0, 0, 2.4, 0.04, 2.4), color: G }]);
+  for (const c of CRANES) {
+    const len = c.top - c.base;
+    const mast = new THREE.Mesh(mergeGeos([
+      { geo: BOXB, matrix: M4(0, 0, 0, 2.2, len, 2.2), color: Y },
+      { geo: BOXB, matrix: M4(0, 0, 0, 4.2, 0.8, 4.2), color: G },                 // foot on the roof
+      { geo: BOXB, matrix: M4(0, len - 2.2, -1.9, 1.8, 1.8, 1.6), color: 0xd8d2c4 } // the operator's cab
+    ]), craneMat);
+    mast.position.set(c.x, c.base, c.z); mast.castShadow = true; scene.add(mast);
+    /* the turning part, about the top of the mast with +z along the jib */
+    const jib = new THREE.Mesh(mergeGeos([
+      { geo: BOXB, matrix: M4(0, 0, (c.jib - c.tail) / 2, 1.8, 1.8, c.jib + c.tail), color: Y },
+      { geo: BOXB, matrix: M4(0, 1.8, 0, 1.2, 7, 1.2), color: Y },                     // the apex
+      { geo: BOXB, matrix: M4(0, -1.6, -c.tail + 2.2, 2.6, 2.6, 3.6), color: 0x8e8a80 },// counterweight
+      { geo: BOXB, matrix: M4(0, -0.5, c.jib * 0.7, 1.4, 0.5, 1.8), color: G },          // trolley
+      { geo: BOXB, matrix: M4(0, -9.5, c.jib * 0.7, 0.05, 9, 0.05), color: 0x2a2a2a },   // its hoist line
+      { geo: BOXB, matrix: M4(0, -10.6, c.jib * 0.7, 0.9, 1.1, 0.9), color: 0xc8432b }   // and hook block
+    ]), craneMat);
+    jib.position.set(c.x, c.top, c.z); jib.castShadow = true; scene.add(jib);
+    const zc = (c.jib - c.tail) / 2, hz = (c.jib + c.tail) / 2;
+    planes.push({
+      kind: 'jib', step: slewJib, mesh: jib, crane: c, zc,
+      ph: c.x * 0.013, y0: c.z * 0.017, w: CRANE_W,
+      p: V3(c.x, c.top + 0.9, c.z), v: V3(), yaw: 0,
+      hx: 0.9, hy: 0.9, hz, reach: 1.4, deck: 0.9 + RIDE_UP, walkX: 0.3, walkZ: hz - 0.8
+    });
+  }
+}
+/* the slew eases out to either side and back, as a driver would */
+function slewJib(j, dt) {
+  j.ph += j.w * dt;
+  j.yaw = j.y0 + 1.5 * Math.sin(j.ph);
+  const c = j.crane, x = c.x + Math.sin(j.yaw) * j.zc, z = c.z + Math.cos(j.yaw) * j.zc;
+  j.v.set(x - j.p.x, 0, z - j.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  j.p.set(x, c.top + 0.9, z);
+  j.mesh.rotation.y = j.yaw;
+}
+
+/* ---- the wheel ---- */
+const FERRIS = { x: 462, z: 222, y: 37, r: 30, cars: 16, w: 0.04, a: 0 };
+const CAR_HX = 1.25, CAR_HY = 1.1, CAR_HANG = 1.7;     // a car's half-size, and how far below the rim it hangs
+{
+  /* nothing beached where the legs stand */
+  for (const b of boats) if (!b.wet && Math.abs(b.z - FERRIS.z) < FERRIS.r + 6 && Math.abs(b.x - FERRIS.x) < 12) {
+    b.z = FERRIS.z + Math.sign(b.z - FERRIS.z || 1) * (FERRIS.r + 8);
+    b.p.z = b.z;
+  }
+  const W = 0xe9e4da, ST = 0x9aa3a8, parts = [];
+  /* two rims, an axle between them, spokes out to each rim */
+  for (const sx of [-2.4, 2.4]) {
+    for (let i = 0; i < 40; i++) {
+      const a = (i + 0.5) * TAU / 40, seg = FERRIS.r * TAU / 40 + 0.3;
+      /* a box turned about x by -a points its z along the radius; a quarter
+         turn more lays it along the rim */
+      parts.push({ geo: BOX, matrix: new THREE.Matrix4().makeRotationX(-a - PI / 2).setPosition(sx, Math.sin(a) * FERRIS.r, Math.cos(a) * FERRIS.r)
+        .multiply(new THREE.Matrix4().makeScale(0.45, 0.45, seg)), color: W });
+    }
+    for (let i = 0; i < FERRIS.cars; i++) {
+      const a = i * TAU / FERRIS.cars;
+      parts.push({ geo: BOX, matrix: new THREE.Matrix4().makeRotationX(-a).setPosition(sx, Math.sin(a) * FERRIS.r / 2, Math.cos(a) * FERRIS.r / 2)
+        .multiply(new THREE.Matrix4().makeScale(0.16, 0.16, FERRIS.r)), color: ST });
+    }
+  }
+  for (let i = 0; i < FERRIS.cars; i++) {          // the bars the cars hang from
+    const a = i * TAU / FERRIS.cars;
+    parts.push({ geo: BOX, matrix: M4(0, Math.sin(a) * FERRIS.r, Math.cos(a) * FERRIS.r, 5.2, 0.2, 0.2), color: ST });
+  }
+  parts.push({ geo: BOX, matrix: M4(0, 0, 0, 7, 1.6, 1.6), color: ST });
+  const rim = new THREE.Mesh(mergeGeos(parts), craneMat);
+  rim.position.set(FERRIS.x, FERRIS.y, FERRIS.z); rim.castShadow = true; scene.add(rim);
+  FERRIS.rim = rim;
+  /* the A-frame legs either side, which do not turn */
+  const legs = [];
+  for (const sx of [-4.2, 4.2]) for (const sz of [-1, 1]) {
+    const lean = Math.atan2(FERRIS.r * 0.42, FERRIS.y), len = Math.hypot(FERRIS.r * 0.42, FERRIS.y);
+    legs.push({ geo: BOXB, matrix: new THREE.Matrix4().makeRotationX(-sz * lean).setPosition(sx, 0, sz * FERRIS.r * 0.42)
+      .multiply(new THREE.Matrix4().makeScale(0.9, len, 0.9)), color: ST });
+  }
+  legs.push({ geo: BOXB, matrix: M4(0, -0.2, 0, 12, 0.4, FERRIS.r * 0.84 + 4), color: 0xb7aa92 });
+  const frame = new THREE.Mesh(mergeGeos(legs), craneMat);
+  frame.position.set(FERRIS.x, 0, FERRIS.z); frame.castShadow = true; scene.add(frame);
+  /* the cars: one instance each, upright whatever the rim is doing */
+  const CAR_COL = [0xc8432b, 0x2f8f83, 0xe3ac1d, 0x3a6ea5];
+  const carGeo = mergeGeos([
+    { geo: BOXB, matrix: M4(0, -CAR_HY, 0, CAR_HX * 2, CAR_HY * 2, CAR_HX * 2), color: 0xffffff },
+    { geo: BOXB, matrix: M4(0, -0.1, 0, CAR_HX * 2 + 0.06, 0.7, CAR_HX * 2 - 0.5), color: 0x1f2c35 },
+    { geo: BOXB, matrix: M4(0, CAR_HY, 0, 0.15, CAR_HANG - 0.2, 0.15), color: ST }]);
+  const carMesh = new THREE.InstancedMesh(carGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), FERRIS.cars);
+  carMesh.castShadow = true; carMesh.frustumCulled = false; scene.add(carMesh);
+  const col = new THREE.Color();
+  for (let i = 0; i < FERRIS.cars; i++) {
+    carMesh.setColorAt(i, col.setHex(CAR_COL[i % 4]));
+    planes.push({
+      kind: 'car', step: turnCar, idx: i, a0: i * TAU / FERRIS.cars,
+      p: V3(), v: V3(), yaw: 0,
+      hx: CAR_HX, hy: CAR_HY, hz: CAR_HX, reach: 1.0, deck: CAR_HY + RIDE_UP, walkX: 0.5, walkZ: 0.5
+    });
+  }
+  FERRIS.carMesh = carMesh;
+}
+/* the first car turns the wheel; every car hangs plumb below its bar */
+function turnCar(c, dt) {
+  if (c.idx === 0) { FERRIS.a += FERRIS.w * dt; FERRIS.rim.rotation.x = -FERRIS.a; }
+  const a = c.a0 + FERRIS.a;
+  const x = FERRIS.x, y = FERRIS.y + Math.sin(a) * FERRIS.r - CAR_HANG - CAR_HY, z = FERRIS.z + Math.cos(a) * FERRIS.r;
+  c.v.set(x - c.p.x, y - c.p.y, z - c.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  c.p.set(x, y, z);
+  const arr = FERRIS.carMesh.instanceMatrix.array, o = c.idx * 16;
+  arr[o] = 1; arr[o + 5] = 1; arr[o + 10] = 1; arr[o + 15] = 1;
+  arr[o + 12] = x; arr[o + 13] = y + CAR_HY; arr[o + 14] = z;
+  FERRIS.carMesh.instanceMatrix.needsUpdate = true;
+}
 /* =====================================================================
    PHYSICS
    XPBD: integrate -> solve distance constraints + contacts -> derive v
@@ -1894,17 +2171,19 @@ function thermalAt(x, y, z) {
     const w = THERM_V * core * alt;
     if (w > v) v = w;
   }
-  return v;
+  return Math.max(v, squallLift(x, y, z));   // and the air rising ahead of a squall
 }
 
 const WIND = V3();
 let windHead = 0;          // where it is blowing TO, radians; still meaningful in a dead calm
 function updateWind(t) {
-  const a = t * 0.011 + Math.sin(t * 0.023) * 1.8;               // heading drifts
-  const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)   // strength swells
-                        + 1.1 * Math.sin(t * 0.0053));          // and dies away
+  const a = t * 0.011 + Math.sin(t * 0.023) * 1.8 + CITY_DAY.windTurn;   // heading drifts
+  const s = Math.max(0, 2.4 + 2.0 * Math.sin(t * 0.017 + 1.3)            // strength swells
+                        + 1.1 * Math.sin(t * 0.0053)) * CITY_DAY.windK;  // and dies away
   windHead = a;
   WIND.set(Math.cos(a) * s, 0, Math.sin(a) * s);
+  /* a squall going over blows its own way (88-weather.js) */
+  if (squallWind(WIND)) windHead = Math.atan2(WIND.z, WIND.x);
 }
 
 const player = {
@@ -2013,18 +2292,57 @@ function solveContacts(p) {
    access from any distance — you are literally attached, so E climbs the line
    aboard. Without one, E reaches the nearest point on a hull's box, not its
    centre: a centre test fails from a wingtip anchor even with the line winched
-   to minimum. The mobile board button shows exactly when this returns a hull. */
+   to minimum. The box is the hull's own, turned with it. A kite has no deck.
+   The mobile board button shows exactly when this returns a hull. */
+const _bp = V3();
 function boardablePlane(P) {
-  for (const w of player.webs) if (w.on && w.pl) return w.pl;
+  for (const w of player.webs) if (w.on && w.pl && w.pl.deck != null) return w.pl;
   let near = null, nd = 15 * 15;
   for (const pl of planes) {
-    const dx = Math.max(Math.abs(P.x - pl.p.x) - pl.hx, 0);
-    const dy = Math.max(Math.abs(P.y - pl.p.y) - pl.hy, 0);
-    const dz = Math.max(Math.abs(P.z - pl.p.z) - pl.hz, 0);
+    if (pl.deck == null || pl.off) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 15 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 15) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    const dx = Math.max(Math.abs(_bp.x) - pl.hx, 0);
+    const dy = Math.max(Math.abs(_bp.y) - pl.hy, 0);
+    const dz = Math.max(Math.abs(_bp.z) - pl.hz, 0);
     const d = dx * dx + dy * dy + dz * dz;
     if (d < nd) { nd = d; near = pl; }
   }
   return near;
+}
+/* aboard: on the deck where you are, held to its walkway */
+function boardCarrier(pl, P) {
+  worldToPlane(pl, P.x, P.y, P.z, player.rideLo);
+  player.rideLo.x = clamp(player.rideLo.x, -pl.walkX, pl.walkX);
+  player.rideLo.z = clamp(player.rideLo.z, -pl.walkZ, pl.walkZ);
+  player.rideLo.y = pl.deck;
+  player.riding = pl;
+  releaseWeb(0); releaseWeb(1);
+  emit('board', pl);
+}
+/* Come down on a deck and you are standing on it: a boat, the train's roof, a
+   crane's jib, a car of the wheel, an aircraft's spine. Only from above and
+   only coming down onto it, so a swing up past one goes on by. Anywhere on its
+   box will do (an aircraft's wing puts you on its spine). The hull moved
+   between frames, so where you were a substep ago is allowed to read a little
+   below the deck. */
+const _lp = V3();
+function landOnCarrier(P, prev, V) {
+  for (const pl of planes) {
+    if (pl.deck == null || pl.off || V.y - pl.v.y > 0) continue;
+    if (Math.abs(P.x - pl.p.x) > pl.hx + pl.hz + 2 || Math.abs(P.z - pl.p.z) > pl.hx + pl.hz + 2) continue;
+    worldToPlane(pl, P.x, P.y, P.z, _bp);
+    if (_bp.y >= pl.deck || _bp.y < pl.deck - 1.5) continue;
+    if (Math.abs(_bp.x) > Math.max(pl.walkX, pl.hx) + 0.3 || Math.abs(_bp.z) > Math.max(pl.walkZ, pl.hz) + 0.3) continue;
+    worldToPlane(pl, prev.x, prev.y, prev.z, _lp);
+    if (_lp.y < pl.deck - 0.3) continue;
+    const hit = pl.v.y - V.y;
+    boardCarrier(pl, P);
+    pinRider(); V.copy(pl.v);
+    if (hit > 1.5) emit('land', hit, 1, false);
+    return true;
+  }
+  return false;
 }
 
 const _pp = V3(), _tmp = V3(), _tmp2 = V3();
@@ -2046,17 +2364,9 @@ function stepPhysics(h, inp) {
 
   /* ---- riding an aircraft ---- */
   if (!player.riding && inp.mount) {
+    /* snap onto the spine of the hull rather than wherever you grabbed */
     const near = boardablePlane(P);
-    if (near) {
-      worldToPlane(near, P.x, P.y, P.z, player.rideLo);
-      /* snap onto the spine of the fuselage rather than wherever you grabbed */
-      player.rideLo.x = clamp(player.rideLo.x, -near.walkX, near.walkX);
-      player.rideLo.z = clamp(player.rideLo.z, -near.walkZ, near.walkZ);
-      player.rideLo.y = near.deck;
-      player.riding = near;
-      releaseWeb(0); releaseWeb(1);
-      emit('board', near);
-    }
+    if (near) boardCarrier(near, P);
   }
   if (player.riding) {
     const pl = player.riding;
@@ -2210,6 +2520,7 @@ function stepPhysics(h, inp) {
   if (vm > 150) V.multiplyScalar(150 / vm);
   const ux = V.x, uy = V.y, uz = V.z;     // the velocity you arrive with, before anything stops it
   P.x += V.x * h; P.y += V.y * h; P.z += V.z * h;
+  if (landOnCarrier(P, _pp, V)) { player.touch = true; player.airT = 0; return; }
 
   /* ---- rope length control ---- */
   for (const w of player.webs) {
@@ -2784,13 +3095,17 @@ const pelvisMesh = new THREE.Mesh(mergeGeos([
   { geo: SPH12, matrix: M4(0.135, -0.22, 0, 0.112, 0.095, 0.112), color: PANEL }
 ]), suitMat);
 
-const spine = node(rig, 0, 0, 0, null);
+/* The model faces +z, with +y up; its own right hand is on -x. The pelvis is
+   the root, the waist a joint above it, so the upper body can lean and twist
+   over legs that stay under it. (The hips hung from the waist before: any
+   lean of the torso swung the legs with it.) */
+const pelvis = node(rig, 0, 0, 0, null);
+node(pelvis, 0, 0, 0, pelvisMesh);
+const spine = node(pelvis, 0, 0, 0, null);
 node(spine, 0, 0, 0, torsoMesh);
-node(spine, 0, 0, 0, pelvisMesh);
 const neck = node(spine, 0, 0.68, 0, headMesh);
 const shoulderL = node(spine, -0.245, 0.60, 0, limb(ARM, 0.092, 0.070, SUIT, -1));
 const shoulderR = node(spine, 0.245, 0.60, 0, limb(ARM, 0.092, 0.070, SUIT, 1));
-
 /* hand: palm block, a thumb, and a gold cuff at the wrist */
 const hand = (side) => [
   { geo: BOXB, matrix: M4(0, -FORE - 0.115, 0.012, 0.085, 0.125, 0.10), color: SKIN },
@@ -2800,8 +3115,8 @@ const hand = (side) => [
 const elbowL = node(shoulderL, 0, -ARM, 0, limb(FORE, 0.074, 0.053, SUIT2, -1, hand(-1)));
 const elbowR = node(shoulderR, 0, -ARM, 0, limb(FORE, 0.074, 0.053, SUIT2, 1, hand(1)));
 
-const hipL = node(spine, -0.135, -0.22, 0, limb(THIGH, 0.118, 0.092, SUIT, -1));
-const hipR = node(spine, 0.135, -0.22, 0, limb(THIGH, 0.118, 0.092, SUIT, 1));
+const hipL = node(pelvis, -0.135, -0.22, 0, limb(THIGH, 0.118, 0.092, SUIT, -1));
+const hipR = node(pelvis, 0.135, -0.22, 0, limb(THIGH, 0.118, 0.092, SUIT, 1));
 
 /* boot: sole, toe box and a raised heel so feet aren't flat slabs */
 const boot = () => [
@@ -2894,36 +3209,60 @@ const splats = [0, 1].map(() => {
 
 const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _d = V3(), _up = V3(0, -1, 0);
 const _sa = V3(), _sb = V3();   // shoulder world positions, for arm assignment
-function aimAt(nodeObj, worldDir, parentQ) {
+/* the rotation that hangs a limb (which points down its own -y) along a world direction */
+function aimQ(worldDir, parentQ, out) {
   _d.copy(worldDir).applyQuaternion(_qi.copy(parentQ).invert()).normalize();
-  _q.setFromUnitVectors(_up, _d);
-  nodeObj.quaternion.slerp(_q, 1);
+  return out.setFromUnitVectors(_up, _d);
 }
-/* the frame time poseRig is running on; a hard-coded 1/60 here made every limb
-   settle 2.4x faster on a 144 Hz display and 2x slower at 30 fps */
+
+/* ---------------------------------------------------------------------
+   JOINTS ON SPRINGS
+   Every joint is driven toward a target pose by a critically damped spring,
+   solved exactly for the frame's dt: no overshoot, no dependence on the frame
+   rate for a target that holds still, and the velocity carries across a
+   change of target, so one pose flows into the next instead of each joint
+   starting over from rest (which is what made the old blends look robotic).
+   pose() sets a target; the springs run once per frame after all of them.
+   --------------------------------------------------------------------- */
+const JOINTS = [];
+function joint(o) { o.tg = V3(); o.jv = V3(); o.w = 16; o.free = false; JOINTS.push(o); return o; }
+for (const o of [pelvis, spine, neck, shoulderL, shoulderR, elbowL, elbowR, hipL, hipR, kneeL, kneeR]) joint(o);
 let poseDt = 1 / 60;
-function smoothEuler(o, x, y, z, k) {
-  o.rotation.x = damp(o.rotation.x, x, k, poseDt);
-  o.rotation.y = damp(o.rotation.y, y, k, poseDt);
-  o.rotation.z = damp(o.rotation.z, z, k, poseDt);
+/* w: how quick (rad/s of the spring); larger is snappier */
+function pose(o, x, y, z, w) { o.tg.set(x, y, z); if (w) o.w = w; }
+function springAxis(cur, tgt, v, w, dt, o, k) {
+  const e0 = cur - tgt, a = v + w * e0, ex = Math.exp(-w * dt);
+  o.jv.setComponent(k, (v - w * a * dt) * ex);
+  return tgt + (e0 + a * dt) * ex;
 }
+function runSprings(dt) {
+  for (const o of JOINTS) {
+    if (o.free) { o.free = false; o.jv.set(0, 0, 0); continue; }   // set directly this frame (an arm on a line)
+    const r = o.rotation;
+    r.set(springAxis(r.x, o.tg.x, o.jv.x, o.w, dt, o, 0),
+          springAxis(r.y, o.tg.y, o.jv.y, o.w, dt, o, 1),
+          springAxis(r.z, o.tg.z, o.jv.z, o.w, dt, o, 2));
+  }
+}
+/* the same pose on both sides of the body: z mirrors (the -x limbs are L) */
+function pair(l, r, x, y, z, w) { pose(l, x, -y, -z, w); pose(r, x, y, z, w); }
+
 const rigQ = new THREE.Quaternion();
 const _bx = V3(), _by = V3(), _bz = V3(), _bm = new THREE.Matrix4();
 let runPhase = 0;
 /* Somersault state: rotation about the rig's side axis, layered on top of the
    smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
    quaternion back through the orientation slerp corrupted the base and made
-   the spin rate erratic. flipA is the applied angle in radians. */
-let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false;
-listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
-/* A rolling touchdown is the same layer turned the other way and done on the
-   ground: one forward turn, over before the ground has its grip back. A hard
-   landing of any kind also sinks the hips for a moment (landSq, 0..1). */
+   the spin rate erratic. flipA is the applied angle in radians; flipSign is
+   which way: a release tumbles backward, carrying on the turn the swing gave
+   the body, and a landing rolls forward over the shoulder. */
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false, flipSign = -1;
+listen('flip', (turns) => { flipN = turns; flipSign = -1; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
 let landSq = 0;
 listen('land', (hit, ny, rolling) => {
   if (ny > 0.6) landSq = Math.max(landSq, clamp(hit / 24, 0, 1));
   /* a somersault still unwinding owns the layer; let it finish */
-  if (rolling && flipA === 0) { flipN = -1; flipDur = 0.5; flipT = 0; flipGround = true; }
+  if (rolling && flipA === 0) { flipN = 1; flipSign = 1; flipDur = 0.5; flipT = 0; flipGround = true; }
 });
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
@@ -2936,50 +3275,99 @@ function trapEase(p, r) {
   return vmax * (p - r / 2);
 }
 
-let rigY = 0.44;
-const rigUp = V3(0, 1, 0);   // which way the head points: straight up, except leaning out from a wall being run
+/* ---------------------------------------------------------------------
+   WHICH WAY THE BODY POINTS
+   heading: the horizontal way the body faces. It follows where you are going
+   when you are going somewhere, and otherwise stays put, so a figure at rest
+   does not spin with the camera; the head turns to look where you aim, and
+   only past what a neck can do does the body turn to follow.
+   Then the up axis: straight up on the ground; along the rope while a line
+   carries you, so the body hangs from it and swings through the arc with it;
+   tipped forward in the air by how the body is falling or flying.
+   --------------------------------------------------------------------- */
+const rigHead = V3(0, 0, 1), _hv = V3(), _ropeU = V3(), _camL = V3();
+let T_rig = 0, rigY = 0.44, rigPitch = 0, gaitBlend = 0, flail = 0, armSwap = 0;
+function turnHeading(x, z, rate, dt) {
+  const l = Math.hypot(x, z); if (l < 1e-4) return;
+  _hv.set(x / l, 0, z / l);
+  rigHead.lerp(_hv, 1 - Math.exp(-rate * dt));
+  if (rigHead.lengthSq() < 1e-6) rigHead.copy(_hv); else rigHead.normalize();
+}
+/* the rope's pull on the body: toward the ends of whatever lines carry weight */
+function ropeUp(P) {
+  _ropeU.set(0, 0, 0); let wt = 0;
+  for (const w of player.webs) {
+    if (!w.on) continue;
+    const k = 0.15 + sstep(150, 1400, w.tension);
+    _d.copy(webEnd(w)).sub(P); const l = _d.length(); if (l < 0.5) continue;
+    _ropeU.addScaledVector(_d, k / l); wt += k;
+  }
+  if (wt > 0) _ropeU.multiplyScalar(1 / wt);
+  return Math.min(1, wt);
+}
+
 function poseRig(dt, inp) {
   poseDt = dt;
-  const V = player.v, spd = V.length();
-  /* the collision sphere sits at the hips; lift the skeleton so the feet
-     land on the ground rather than through it */
+  const V = player.v, spd = V.length(), vh = Math.hypot(V.x, V.z), P = pRender;
+  const swinging = player.webs[0].on || player.webs[1].on;
+  const onFoot = (player.grounded || player.wallRun) && !(flipT < flipDur && !flipGround);
   const rolling = flipGround && flipT < flipDur && player.grounded;
-  rigY = damp(rigY, rolling ? -0.22 : player.grounded ? 0.44 : 0.06, rolling ? 20 : 9, dt);
-  landSq = damp(landSq, 0, 7, dt);
-  rig.position.copy(pRender); rig.position.y += rigY - (player.grounded ? landSq * 0.26 : 0);
+  const riding = !!player.riding;
+  T_rig += dt;
 
-  /* orientation */
-  if (spd > 3.5) _bz.copy(V).multiplyScalar(-1 / spd);
-  else _bz.copy(inp.fwd).multiplyScalar(-1);
-  if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
-  if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.wallRun ? 0 : player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
-  player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
-  /* on a wall the feet go to the wall: lean out until the legs just reach it */
-  if (player.wallRun) _by.set(player.cn.x * 0.7, 0.72, player.cn.z * 0.7).normalize(); else _by.set(0, 1, 0);
-  _by.copy(rigUp.lerp(_by, 1 - Math.exp(-12 * dt)).normalize());
-  _bx.copy(_by).cross(_bz);
-  if (_bx.lengthSq() < 1e-5) _bx.set(1, 0, 0);
-  _bx.normalize(); _by.copy(_bz).cross(_bx).normalize();
+  /* ---- heading ---- */
+  if (player.clinging) turnHeading(-player.cn.x, -player.cn.z, 14, dt);
+  else if (riding) { if (inp.mx || inp.mz) turnHeading(inp.mx, inp.mz, 8, dt); }
+  else if (player.wallRun) turnHeading(V.x, V.z, 14, dt);
+  else if (player.grounded) {
+    if (vh > 0.6) turnHeading(V.x, V.z, 12, dt);
+    /* standing: turn to the camera only when the head can no longer look there */
+    else if (rigHead.x * camFwd.x + rigHead.z * camFwd.z < -0.05) turnHeading(camFwd.x, camFwd.z, 3.5, dt);
+  } else if (vh > 1.5) turnHeading(V.x, V.z, swinging ? 7 : 5, dt);
+
+  /* ---- up axis ---- */
+  const fall = -V.y, gamma = Math.atan2(V.y, Math.max(vh, 0.01));   // flight path angle, negative going down
+  let want = 0;                                                       // forward lean, rad
+  if (player.clinging) want = 0.1;
+  else if (onFoot) want = player.wallRun ? 0 : 0.04 + 0.2 * sstep(4, 14, vh) + 0.4 * landSq;
+  else if (player.inWater) want = vh > 4 ? 1.35 : 0.25;
+  else if (inp.tuck) want = clamp(PI / 2 - gamma, 0.9, 2.9);          // head first, down the line of flight
+  else if (inp.glide) want = clamp(PI / 2 + gamma * 0.75 - 0.12, 0.7, 1.75);   // flat to the air, a little nose up
+  else want = Math.max(0.12 + 0.55 * sstep(6, 30, vh), 1.3 * sstep(10, 36, fall)) - 0.35 * sstep(3, 16, V.y);
+  rigPitch = damp(rigPitch, want, onFoot ? 14 : 7, dt);
+  _by.set(0, 1, 0).multiplyScalar(Math.cos(rigPitch)).addScaledVector(rigHead, Math.sin(rigPitch));
+  if (player.wallRun) _by.set(player.cn.x * 0.7, 0.72, player.cn.z * 0.7).normalize();
+  /* on a line, hang from it */
+  const hang = swinging && !onFoot ? ropeUp(player.p) : 0;
+  if (hang > 0) {
+    /* a little ahead of the rope, as a body swung through an arc leads with its chest */
+    _ropeU.normalize().addScaledVector(_hv.copy(V).addScaledVector(_ropeU, -V.dot(_ropeU)), 0.008).normalize();
+    _by.lerp(_ropeU, hang).normalize();
+  }
+  /* forward: the heading, made square to the up axis */
+  _bz.copy(rigHead).addScaledVector(_by, -rigHead.dot(_by));
+  if (hang > 0 && spd > 2) { _hv.copy(V).addScaledVector(_by, -V.dot(_by)); if (_hv.lengthSq() > 1) _bz.lerp(_hv.normalize(), hang); }
+  if (_bz.lengthSq() < 1e-5) _bz.set(0, 0, 1).addScaledVector(_by, -_by.z);
+  _bz.normalize();
+  _bx.copy(_by).cross(_bz).normalize();          // the model's +x: its left
+  _by.copy(_bz).cross(_bx).normalize();
+  /* bank into the turn the body is being pulled through */
+  const lat = player.wallRun || player.clinging ? 0 : -player.lastAccel.dot(_bx);
+  player.bank = damp(player.bank, clamp(lat * (onFoot ? 0.012 : 0.018), -0.8, 0.8), 6, dt);
   _bx.applyAxisAngle(_bz, player.bank); _by.applyAxisAngle(_bz, player.bank);
   _bm.makeBasis(_bx, _by, _bz);
   rigQ.setFromRotationMatrix(_bm);
-  rigBaseQ.slerp(rigQ, 1 - Math.exp(-11 * dt));
+  rigBaseQ.slerp(rigQ, 1 - Math.exp(-(onFoot ? 16 : hang > 0 ? 9 : 8) * dt));
   rig.quaternion.copy(rigBaseQ);
 
-  /* layered somersault: constant-rate tumble with soft ends, applied on top of
-     the base so the orientation filter never sees it. Ground, wall, water or a
-     fresh line interrupts it — the applied angle then unwinds to the nearest
-     full turn instead of snapping to identity. */
+  /* layered somersault (see above) */
   if (flipT < flipDur || flipA !== 0) {
-    /* a somersault ends on anything solid or a fresh line; a roll ends by
-       leaving the ground */
-    const interrupted = player.clinging || player.riding || player.inWater || (flipGround
+    const interrupted = player.clinging || riding || player.inWater || (flipGround
       ? !player.grounded
       : player.grounded || player.webs[0].on || player.webs[1].on);
     if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
+      flipA = flipT >= flipDur ? 0 : flipSign * TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
     } else {
       flipT = flipDur;
       const turn = Math.round(flipA / TAU) * TAU;
@@ -2989,62 +3377,124 @@ function poseRig(dt, inp) {
     if (flipA !== 0) { _fq.setFromAxisAngle(_fx, flipA); rig.quaternion.multiply(_fq); }
   }
 
-  const swinging = player.webs[0].on || player.webs[1].on;
-  const k = 14;
-  if (player.clinging) {
-    smoothEuler(spine, 0, 0, 0, k);
-    smoothEuler(shoulderL, -0.2, 0, -1.35, k); smoothEuler(shoulderR, -0.2, 0, 1.35, k);
-    smoothEuler(elbowL, -1.1, 0, 0, k); smoothEuler(elbowR, -1.1, 0, 0, k);
-    smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
-    smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
-  } else if (flipT < flipDur) {
-    /* tucked ball for the somersault and the landing roll — snappier than the other transitions so
-       the tuck forms before the tumble picks up speed */
-    smoothEuler(spine, 0.5, 0, 0, 22);
-    smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
-    smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
-    smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
-    smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
-  } else if (player.grounded || player.wallRun) {
-    /* on an aircraft the body's speed is the aircraft's; the legs only move
-       when you walk the hull */
-    const gait = player.riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 6 : spd;
-    const stride = Math.floor(runPhase / PI);
-    runPhase += dt * clamp(gait * 1.5, 0, 26);
-    const s = Math.sin(runPhase), c = Math.cos(runPhase);
-    const amp = clamp(gait / 9, 0, 1.1);
-    /* a foot comes down every half cycle of the run */
-    if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
-    /* sq: the knees take a landing, on top of whatever the run is doing */
-    const sq = landSq;
-    smoothEuler(spine, -0.12 - amp * 0.22 - sq * 0.3, 0, 0, k);
-    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16 - sq * 0.5, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16 + sq * 0.5, k);
-    smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
-    smoothEuler(hipL, -s * 0.85 * amp - sq * 0.75, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp - sq * 0.75, 0, 0, k);
-    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
-    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
-  } else if (inp.glide) {
-    smoothEuler(spine, 0.30, 0, 0, k);
-    smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
-    smoothEuler(elbowL, -0.12, 0, 0, k); smoothEuler(elbowR, -0.12, 0, 0, k);
-    smoothEuler(hipL, 0.16, 0, -0.16, k); smoothEuler(hipR, 0.16, 0, 0.16, k);
-    smoothEuler(kneeL, 0.10, 0, 0, k); smoothEuler(kneeR, 0.10, 0, 0, k);
-  } else if (inp.tuck) {
-    smoothEuler(spine, 0.42, 0, 0, k);
-    smoothEuler(shoulderL, 2.5, 0, -0.22, k); smoothEuler(shoulderR, 2.5, 0, 0.22, k);
-    smoothEuler(elbowL, -0.3, 0, 0, k); smoothEuler(elbowR, -0.3, 0, 0, k);
-    smoothEuler(hipL, 0.30, 0, -0.05, k); smoothEuler(hipR, 0.30, 0, 0.05, k);
-    smoothEuler(kneeL, 0.12, 0, 0, k); smoothEuler(kneeR, 0.12, 0, 0, k);
-  } else {
-    const t = swinging ? 1 : 0.35;
-    smoothEuler(spine, -0.10, 0, 0, k);
-    smoothEuler(hipL, -1.25 * t, 0, -0.12, k); smoothEuler(hipR, -0.75 * t, 0, 0.12, k);
-    smoothEuler(kneeL, 1.85 * t, 0, 0, k); smoothEuler(kneeR, 1.05 * t, 0, 0, k);
-    if (!swinging) { smoothEuler(shoulderL, -0.5, 0, -0.9, k); smoothEuler(shoulderR, -0.5, 0, 0.9, k); }
-    smoothEuler(elbowL, -0.25, 0, 0, k); smoothEuler(elbowR, -0.25, 0, 0, k);
-  }
+  /* ---- where the eyes go: the aim, in the body's own frame ---- */
+  _camL.copy(camFwd).applyQuaternion(_qi.copy(rig.quaternion).invert());
+  const lookY = clamp(Math.atan2(_camL.x, _camL.z), -1.15, 1.15), lookP = clamp(Math.asin(clamp(_camL.y, -1, 1)), -0.7, 0.6);
 
-  rig.updateMatrixWorld(true);
+  /* ---- the pose ---- */
+  landSq = damp(landSq, 0, 6, dt);
+  let bob = 0;
+  if (player.clinging) {
+    /* spread on the wall, hands high */
+    pose(pelvis, 0, 0, 0, 14); pose(spine, -0.15, 0, 0, 14);
+    pair(shoulderL, shoulderR, -2.75, 0, 0.45, 14); pair(elbowL, elbowR, -0.7, 0, 0, 14);
+    pair(hipL, hipR, -0.55, 0, 0.45, 14); pair(kneeL, kneeR, 1.35, 0, 0, 14);
+    pose(neck, -0.35, lookY * 0.6, 0, 12);
+  } else if (flipT < flipDur) {
+    /* a tucked ball for the somersault and the roll, formed before the tumble picks up speed */
+    pose(pelvis, 0, 0, 0, 30); pose(spine, 0.55, 0, 0, 30); pose(neck, 0.45, 0, 0, 30);
+    pair(shoulderL, shoulderR, -1.4, 0, 0.25, 30); pair(elbowL, elbowR, -2.0, 0, 0, 30);
+    pair(hipL, hipR, -2.15, 0, 0.12, 30); pair(kneeL, kneeR, 2.4, 0, 0, 30);
+  } else if (onFoot) {
+    /* WALK AND RUN. The cadence rises with speed and the stride is whatever
+       carries the body that far per step, so the feet keep pace with the
+       ground instead of skating over it. Arms swing against the legs, the
+       shoulders turn against the hips, and the body rises and falls: at the
+       passing of the legs a walker is at the top of the stride and a runner
+       at the bottom. */
+    const gait = riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 5.5 : (player.wallRun ? spd : vh);
+    const cad = clamp(1.75 + 0.18 * gait, 1.75, 3.6);                  // steps per second
+    const stride = Math.floor(runPhase / PI);
+    runPhase += dt * PI * cad * sstep(0.15, 0.9, gait);
+    if (Math.floor(runPhase / PI) !== stride && gait > 2.2) emit('step', clamp(gait / 9, 0, 1.1));
+    const ph = runPhase, s = Math.sin(ph), c = Math.cos(ph);
+    const run = sstep(2.6, 5.5, gait), move = sstep(0.2, 1.2, gait);
+    gaitBlend = damp(gaitBlend, move, 8, dt);
+    /* A walker's legs cover the step, so the hip swing is whatever spans it.
+       A runner covers most of the ground in the air: the thigh swings less,
+       and mostly forward of the hip, reaching and pulling back under. */
+    const walkA = Math.asin(clamp(gait / cad / 1.96, 0, 0.6));
+    const reach = lerp(walkA, 0.52 + 0.1 * sstep(7, 12, gait), run) * gaitBlend;
+    const fore = 0.22 * run * gaitBlend;                               // the thigh's swing is centred ahead of the hip
+    const swingL = Math.max(0, c), swingR = Math.max(0, -c);         // which leg is coming through
+    const sq = landSq;
+    const w = 14 + 20 * gaitBlend;
+    pose(pelvis, 0, 0.14 * reach * s, 0.04 * reach * c, w);
+    pose(spine, 0.03 + 0.14 * run + 0.35 * sq, -0.32 * reach * s, 0, w);
+    pose(neck, -0.12 * run - 0.2 * sq + (1 - gaitBlend) * 0.04 * Math.sin(T_rig * 1.7), lookY * 0.85, 0, 12);
+    /* legs: the coming leg folds under, more as it runs; the stance leg stays long */
+    pose(hipL, -reach * s - fore - 0.75 * sq, 0, -0.05 - 0.04 * (1 - gaitBlend), w);
+    pose(hipR, reach * s - fore - 0.75 * sq, 0, 0.05 + 0.04 * (1 - gaitBlend), w);
+    pose(kneeL, 0.06 + (0.45 + 1.4 * run) * swingL * gaitBlend + 0.2 * run + 1.3 * sq, 0, 0, w);
+    pose(kneeR, 0.06 + (0.45 + 1.4 * run) * swingR * gaitBlend + 0.2 * run + 1.3 * sq, 0, 0, w);
+    /* arms: against the legs, from the shoulder, elbows folding to a runner's
+       right angle and a little more as the hand comes through */
+    const arm = (0.3 + 0.35 * run) * gaitBlend * clamp(reach / 0.5, 0, 1.2);
+    pose(shoulderL, arm * s - 0.08 * run, 0, -0.1 - 0.05 * run - 0.4 * sq, w);
+    pose(shoulderR, -arm * s - 0.08 * run, 0, 0.1 + 0.05 * run + 0.4 * sq, w);
+    pose(elbowL, -0.2 - 1.15 * run * gaitBlend - 0.35 * Math.max(0, -s) * run, 0, 0, w);
+    pose(elbowR, -0.2 - 1.15 * run * gaitBlend - 0.35 * Math.max(0, s) * run, 0, 0, w);
+    bob = gaitBlend * (0.035 * (1 - run) * Math.cos(2 * ph) - 0.05 * run * Math.cos(2 * ph)) - 0.012 * (1 - gaitBlend) * (1 + Math.sin(T_rig * 1.7));
+  } else if (player.inWater) {
+    const fast = vh > 4;
+    runPhase += dt * (fast ? 7 : 4);
+    const s = Math.sin(runPhase);
+    pose(pelvis, 0, 0, 0, 10); pose(spine, fast ? -0.2 : 0.05, 0, 0, 10); pose(neck, fast ? -0.6 : 0, 0, 0, 10);
+    if (fast) { pose(shoulderL, -1.7 + 1.3 * s, 0, -0.25, 16); pose(shoulderR, -1.7 - 1.3 * s, 0, 0.25, 16); }
+    else { pair(shoulderL, shoulderR, -0.5, 0, 0.9 + 0.35 * s, 10); }
+    pair(elbowL, elbowR, -0.5, 0, 0, 12);
+    pose(hipL, 0.25 * s, 0, -0.08, 16); pose(hipR, -0.25 * s, 0, 0.08, 16);
+    pair(kneeL, kneeR, 0.35, 0, 0, 12);
+  } else if (hang > 0) {
+    /* ON A LINE. Through the bottom the legs trail, long; going up the far
+       side they come forward and fold, and over the top they hang. The free
+       arm goes out and back to balance the one on the line. */
+    const up = clamp(V.y / 14, -1, 1), load = sstep(400, 2200, Math.max(player.webs[0].tension, player.webs[1].tension));
+    const lift = Math.max(0, up), drop = Math.max(0, -up);
+    pose(pelvis, 0, 0, 0, 9);
+    pose(spine, 0.25 * lift - 0.15 * load, 0, 0, 9);
+    pose(neck, -0.25 - 0.2 * load, lookY * 0.7, 0, 10);
+    pose(hipL, -0.25 - 1.05 * lift + 0.3 * drop, 0, -0.08, 8);
+    pose(hipR, -0.05 - 0.65 * lift + 0.45 * drop, 0, 0.1, 8);
+    pose(kneeL, 0.45 + 1.4 * lift + 0.1 * drop, 0, 0, 8);
+    pose(kneeR, 0.25 + 0.9 * lift + 0.35 * drop, 0, 0, 8);
+    pair(shoulderL, shoulderR, 0.35, 0, 1.05, 9);
+    pair(elbowL, elbowR, -0.55, 0, 0, 9);
+  } else if (inp.tuck) {
+    /* a dive: arms ahead of the head, the body a line behind them */
+    pose(pelvis, 0, 0, 0, 12); pose(spine, -0.05, 0, 0, 12); pose(neck, -0.5, 0, 0, 12);
+    pair(shoulderL, shoulderR, -2.95, 0, 0.18, 12); pair(elbowL, elbowR, -0.08, 0, 0, 12);
+    pair(hipL, hipR, 0.06, 0, 0.04, 12); pair(kneeL, kneeR, 0.12, 0, 0, 12);
+  } else if (inp.glide) {
+    /* flat on the air, arms out like wings, chest up to look ahead */
+    pose(pelvis, 0, 0, 0, 10); pose(spine, -0.22, 0, 0, 10); pose(neck, -0.7, lookY * 0.4, 0, 10);
+    pair(shoulderL, shoulderR, -0.25, 0, 1.45, 10); pair(elbowL, elbowR, -0.12, 0, 0, 10);
+    pair(hipL, hipR, 0.12, 0, 0.18, 10); pair(kneeL, kneeR, 0.18, 0, 0, 10);
+  } else {
+    /* NOTHING TO HOLD. Going up, a leap: one knee driven up, the other leg
+       trailing, the arms thrown up and out. Coming down, the limbs spread to
+       the air, and the faster the fall the more they work at it. */
+    const rise = sstep(-2, 6, V.y);
+    flail = damp(flail, sstep(8, 28, fall), 3, dt);
+    runPhase += dt * (3 + 6 * flail);
+    const f1 = Math.sin(runPhase), f2 = Math.sin(runPhase * 1.31 + 1.7);
+    const fl = flail * 0.3;
+    pose(pelvis, 0, 0, 0, 10);
+    pose(spine, 0.1 * rise - 0.18 * (1 - rise), 0, 0, 10);
+    pose(neck, -0.15 - 0.5 * flail, lookY * 0.8, 0, 10);
+    pose(hipL, lerp(-0.35 + fl * f1, -1.1, rise), 0, lerp(-0.25, -0.06, rise), 10);
+    pose(hipR, lerp(-0.1 - fl * f1, 0.3, rise), 0, lerp(0.25, 0.08, rise), 10);
+    pose(kneeL, lerp(0.75 + fl * f2, 1.6, rise), 0, 0, 10);
+    pose(kneeR, lerp(0.45 - fl * f2, 0.55, rise), 0, 0, 10);
+    pose(shoulderL, lerp(-0.75 + fl * f2, -1.0, rise), 0.25, lerp(-0.8 - 0.25 * flail, -0.55, rise), 10);
+    pose(shoulderR, lerp(-0.45 - fl * f1, 0.2, rise), -0.25, lerp(0.95 + 0.2 * flail, 0.7, rise), 10);
+    pose(elbowL, lerp(-1.05 + 0.25 * fl * f1, -0.9, rise), 0, 0, 10);
+    pose(elbowR, lerp(-0.75 - 0.25 * fl * f2, -0.9, rise), 0, 0, 10);
+  }
+  if (!(flipT < flipDur)) neck.tg.x -= lookP * 0.5;          // and up or down to where you aim
+  rigY = damp(rigY, rolling ? -0.22 : onFoot && !player.wallRun ? 0.44 : 0.06, rolling ? 20 : 12, dt);
+  rig.position.copy(P); rig.position.y += rigY + bob - (onFoot ? landSq * 0.3 : 0);
+
   /* Arms reach for live anchors. Which arm serves which line is decided by
      whichever shoulder is actually nearer the anchor, rather than a fixed
      left-click-to-left-arm mapping — a static mapping makes the arms cross
@@ -3052,6 +3502,7 @@ function poseRig(dt, inp) {
   const sh = [shoulderL, shoulderR], el = [elbowL, elbowR];
   const armFor = [-1, -1];                    // armFor[armIndex] = web index
   const wA = player.webs[0], wB = player.webs[1];
+  rig.updateMatrixWorld(true);
   if (wA.on || wB.on) {
     sh[0].getWorldPosition(_sa); sh[1].getWorldPosition(_sb);
     if (wA.on && wB.on) {
@@ -3064,16 +3515,18 @@ function poseRig(dt, inp) {
       armFor[_sa.distanceToSquared(webEnd(w)) <= _sb.distanceToSquared(webEnd(w)) ? 0 : 1] = wi;
     }
   }
+  runSprings(dt);
+  rig.updateMatrixWorld(true);
   for (let a = 0; a < 2; a++) {
     const wi = armFor[a]; if (wi < 0) continue;
     const w = player.webs[wi];
-    /* not into _d itself: copy() would overwrite the shoulder before it was
-       subtracted, the direction came out zero, and the arm holding the line
-       simply hung at the body's side */
+    /* the arm whips up to the line in a few hundredths of a second, then holds it */
     _d.copy(webEnd(w)).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
-    aimAt(sh[a], _d, _pq);
-    el[a].rotation.set(-0.12, 0, 0);
+    aimQ(_d, _pq, _q);
+    sh[a].quaternion.slerp(_q, w.age < 0.3 ? 1 - Math.exp(-40 * dt) : 1 - Math.exp(-30 * dt));
+    sh[a].free = true;
+    el[a].rotation.set(damp(el[a].rotation.x, -0.12, 30, dt), 0, 0); el[a].free = true;
   }
   rig.updateMatrixWorld(true);
 
@@ -3123,9 +3576,9 @@ let sashPh = 0;     // phase of the ripple: it runs faster the faster the air do
 
 function updateSash(dt) {
   /* where it is pinned, and which way the body's back and side face */
-  spine.localToWorld(sashPin.set(-0.12, 0.57, 0.13));   // off the left shoulder blade
+  spine.localToWorld(sashPin.set(0.12, 0.57, -0.13));   // off the left shoulder blade (the model faces +z; its left is +x)
   const e = rig.matrixWorld.elements;
-  sashSide.set(e[0], e[1], e[2]); sashBack.set(e[8], e[9], e[10]);
+  sashSide.set(e[0], e[1], e[2]); sashBack.set(-e[8], -e[9], -e[10]);
   /* the air going past: the breeze and any thermal, less your own velocity */
   const still = player.inWater, V = player.v;
   const wx = (still ? 0 : WIND.x) - V.x, wz = (still ? 0 : WIND.z) - V.z;
@@ -3341,6 +3794,244 @@ function gopuramAt(x, y, z) {
     if (Math.abs(x - g.x) < g.bw / 2 + 1 && Math.abs(z - g.z) < g.bd / 2 + 1 && y < g.h + 6) return g;
   }
   return null;
+}
+/* =====================================================================
+   WEATHER, AND WHAT KIND OF DAY IT IS
+   ---------------------------------------------------------------------
+   On a day of showers or monsoon (11-city-day.js), squalls come in off the
+   bay. A squall is a band of rain SQ_LEN deep, as wide as the city, crossing
+   it at SQ_V. Under it: rain, the light goes, the streets darken and stay
+   wet a while after. Its outflow runs ahead of it as a gust in the direction
+   it is going, and the air is rising along its leading edge: the same lift a
+   thermal gives, in a long moving line, which a glider can ride as it comes.
+   There is nothing to do about a squall. It goes over, and the same streets
+   are a different place for a minute.
+
+     squall.on, squall.s   whether one is crossing, and where its front is
+     squallRain(x, z)      0..1, how hard it is raining there
+     squallLift(x, y, z)   m/s of rising air (thermalAt takes the larger)
+     squallWind(W)         adds the gust at the player to the wind
+
+   And on a lamp night, the temple's walls, towers and tank are lit with oil
+   lamps after dark.
+   ===================================================================== */
+const SQ_V = 10, SQ_LEN = 520, SQ_FAR = 1000;   // m/s across the city · depth of the rain · where it starts and ends
+const SQ_GUST = 8.5, SQ_LIFT = 18;              // m/s of outflow at its strongest · of rise along the edge
+const SQ_LIFE = (2 * SQ_FAR + SQ_LEN) / SQ_V;   // seconds from coming in to gone
+const SQ_FIRST = 20;                            // the first one of a session starts this soon
+const squall = { on: false, t0: -1e9, head: PI, dx: -1, dz: 0, s: -1e9, k: -1, forced: false };
+/* which squall, if any, is crossing now: the schedule is the day's, and each
+   squall's heading comes from the day's seed, so a day's weather is the same
+   for everyone who plays it */
+function squallClock(t) {
+  if (!squall.forced || t - squall.t0 > SQ_LIFE) {
+    squall.forced = false;
+    const every = CITY_DAY.squallEvery;
+    if (!isFinite(every) || t < SQ_FIRST) { squall.on = false; return; }
+    const k = Math.floor((t - SQ_FIRST) / every);
+    if (k !== squall.k) {
+      squall.k = k;
+      const r = mulberry32(CITY_DAY.seed * 31 + k * 977 + 5);
+      r(); squall.head = PI + (r() - 0.5) * 1.1;           // off the bay, westward
+    }
+    squall.t0 = SQ_FIRST + k * every;
+  }
+  squall.dx = Math.cos(squall.head); squall.dz = Math.sin(squall.head);
+  squall.s = -SQ_FAR + SQ_V * (t - squall.t0);
+  squall.on = t - squall.t0 < SQ_LIFE;
+}
+/* one now, coming from the far side along a heading: for tests and for trying it */
+function startSquall(head, t) {
+  squall.forced = true; squall.head = head === undefined ? PI : head; squall.t0 = t === undefined ? T : t;
+  squallClock(T);
+}
+/* u: how far ahead of the front a point is. Behind it (u < 0) is the rain. */
+const squallU = (x, z) => x * squall.dx + z * squall.dz - squall.s;
+function squallRain(x, z) {
+  if (!squall.on) return 0;
+  const u = squallU(x, z);
+  return sstep(0, 60, -u) * sstep(-SQ_LEN, -SQ_LEN + 160, u);
+}
+function squallLift(x, y, z) {
+  if (!squall.on) return 0;
+  const u = squallU(x, z);
+  if (u < -20 || u > 110) return 0;
+  const a = (u - 40) / 26;
+  return SQ_LIFT * Math.exp(-a * a) * (1 - sstep(140, 300, y));
+}
+function squallWind(W) {
+  if (!squall.on) return false;
+  const u = squallU(player.p.x, player.p.z);
+  const g = sstep(-SQ_LEN, -SQ_LEN + 200, u) * (1 - sstep(90, 220, u));
+  if (g <= 0) return false;
+  const gust = SQ_GUST * g * (0.82 + 0.18 * Math.sin(T * 1.7) + 0.12 * Math.sin(T * 4.3 + 1));
+  W.x += squall.dx * gust; W.z += squall.dz * gust;
+  return true;
+}
+
+/* ---- what it looks like ---- */
+/* the squall itself, seen coming across the city: a grey body of rain */
+const squallBody = new THREE.Mesh(new THREE.BoxGeometry(SQ_LEN, 320, 2600),
+  new THREE.MeshBasicMaterial({ color: SRGB(0x5f6a75), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+squallBody.frustumCulled = false; squallBody.visible = false; scene.add(squallBody);
+/* rain round the camera: streaks that fall through a box that follows you,
+   wrapped in the shader, so nothing is moved on the CPU */
+const RAIN_N = 2600, RAIN_BOX = 70, RAIN_H = 44;
+const rainUni = { uCam: { value: V3() }, uTime: { value: 0 }, uSlant: { value: new THREE.Vector2() }, uA: { value: 0 } };
+const rain = (() => {
+  const g = new THREE.BufferGeometry(), seed = new Float32Array(RAIN_N * 6), end = new Float32Array(RAIN_N * 2);
+  const rr = mulberry32(911);
+  for (let i = 0; i < RAIN_N; i++) {
+    const a = rr(), b = rr(), c = rr();
+    seed.set([a, b, c, a, b, c], i * 6); end[i * 2 + 1] = 1;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(seed, 3));   // the seed is the position: three.js wants one
+  g.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
+  const m = new THREE.ShaderMaterial({
+    uniforms: rainUni, transparent: true, depthWrite: false,
+    vertexShader: `
+      uniform vec3 uCam; uniform float uTime; uniform vec2 uSlant;
+      attribute float aEnd; varying float vA;
+      void main() {
+        vec3 s = position;
+        vec3 p;
+        p.x = uCam.x + (fract(s.x - uCam.x / ${RAIN_BOX.toFixed(1)}) - 0.5) * ${RAIN_BOX.toFixed(1)};
+        p.z = uCam.z + (fract(s.z - uCam.z / ${RAIN_BOX.toFixed(1)}) - 0.5) * ${RAIN_BOX.toFixed(1)};
+        p.y = uCam.y + (fract(s.y - uTime * 0.62 - uCam.y / ${RAIN_H.toFixed(1)}) - 0.5) * ${RAIN_H.toFixed(1)};
+        p += aEnd * vec3(uSlant.x, -1.0, uSlant.y) * 1.9;
+        vA = 1.0 - aEnd * 0.8;
+        gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uA; varying float vA;
+      void main() { gl_FragColor = vec4(0.78, 0.82, 0.86, uA * vA); }`
+  });
+  const l = new THREE.LineSegments(g, m);
+  l.frustumCulled = false; l.visible = false; scene.add(l);
+  return l;
+})();
+
+/* ---- the lamps of a festival night ---- */
+const lamps = (() => {
+  if (!CITY_DAY.lamps) return null;
+  const pts = [];
+  const ring = (x, z, w, d, y, step) => {             // the edge of a w x d rectangle at height y
+    for (const [ax, az, len, along] of [[x, z - d / 2, w, true], [x, z + d / 2, w, true], [x - w / 2, z, d, false], [x + w / 2, z, d, false]]) {
+      const n = Math.max(1, Math.round(len / step));
+      for (let i = 0; i <= n; i++) {
+        const o = -len / 2 + len * i / n;
+        pts.push(along ? ax + o : ax, y, along ? az : az + o);
+      }
+    }
+  };
+  /* along the courtyard edge of the prakaram's coping (60-monuments.js: 0.8
+     deep, 2.6 walls wide; houses crowd its outer edge), gateways left dark */
+  for (const [ax, az, along] of [[0, -PW, true], [0, PW, true], [-PW, 0, false], [PW, 0, false]]) {
+    const e = -Math.sign(ax + az) * 7.6;
+    for (let o = -110; o <= 110; o += 2.6) {
+      if (WALL_GAPS.some(([c, gw]) => Math.abs(o - c) < gw / 2 + 0.5)) continue;
+      pts.push(along ? ax + o : ax + e, WALL_H + 0.95, along ? az + e : az + o);
+    }
+  }
+  /* each tier of each gopuram, and of the vimana; round the tank and the mandapam */
+  for (const g of GOPURAMS) {
+    ring(g.x, g.z, g.bw + 0.6, g.bd + 0.6, g.h * 0.35 + 0.3, 2.2);
+    ring(g.x, g.z, g.bw * 0.75 + 0.5, g.bd * 0.75 + 0.5, g.h * 0.70 + 0.3, 2.2);
+    ring(g.x, g.z, g.bw * 0.46 + 0.4, g.bd * 0.46 + 0.4, g.h + 0.3, 2.0);
+  }
+  ring(0, 0, 34.6, 34.6, 16.3, 2.4); ring(0, 0, 22.6, 22.6, 32.3, 2.2); ring(0, 0, 12.6, 12.6, 44.3, 2.0);
+  ring(0, -62, 60.6, 36.6, 12.3, 2.6);
+  ring(TANK.x, TANK.z, TANK.pool * 2 + 1, TANK.pool * 2 + 1, 0.75, 2.4);    // on the steps, above the coping
+  ring(TANK.x, TANK.z, TANK.half * 2 - 1, TANK.half * 2 - 1, 0.75, 2.8);
+  const g = new THREE.BufferGeometry(), ph = new Float32Array(pts.length / 3), rr = mulberry32(3301);
+  for (let i = 0; i < ph.length; i++) ph[i] = rr() * TAU;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.setAttribute('aPh', new THREE.BufferAttribute(ph, 1));
+  const uni = { uNight: { value: 0 }, uTime: { value: 0 }, uScale: { value: 400 } };
+  const m = new THREE.ShaderMaterial({
+    uniforms: uni, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `
+      uniform float uTime, uScale; attribute float aPh; varying float vF;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vF = 0.78 + 0.22 * sin(uTime * 7.0 + aPh) * sin(uTime * 2.3 + aPh * 1.7);
+        gl_PointSize = clamp(1.6 * uScale / -mv.z, 2.5, 30.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform float uNight; varying float vF;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5; float r = dot(c, c) * 4.0;
+        float a = exp(-r * 2.4) * uNight * vF;
+        gl_FragColor = vec4(vec3(1.0, 0.7, 0.34) * a * 1.5, a);
+      }`
+  });
+  const p = new THREE.Points(g, m);
+  p.frustumCulled = false; scene.add(p);
+  p.uni = uni;
+  return p;
+})();
+document.getElementById('today').textContent = CITY_DAY.line;
+
+/* ---- each frame ---- */
+let rainHere = 0, rainView = 0, gloom = 0, wetness = 0, flash = 0, squallSaid = -1;
+const GREY = SRGB(0x88919a), GREY_SKY = SRGB(0x6f7a84);
+const groundBase = ground.material.color.clone();
+/* before the wind and the physics: where the squall is now */
+function updateWeather(dt) {
+  squallClock(T);
+  const on = squall.on;
+  rainHere = on ? squallRain(player.p.x, player.p.z) : 0;
+  const cam = camera.position;
+  const rv = on ? squallRain(cam.x, cam.z) : 0;
+  rainView = damp(rainView, rv, 1.5, dt);
+  /* the light goes before the rain arrives: you see it coming */
+  const ahead = on ? squallU(cam.x, cam.z) : 1e9;
+  gloom = damp(gloom, Math.max(rv, on ? 0.55 * (1 - sstep(0, 650, ahead)) * sstep(-SQ_LEN - 300, -SQ_LEN, ahead) : 0), 0.8, dt);
+  wetness = rainHere > 0.3 ? damp(wetness, 1, 1 / 18, dt) : damp(wetness, 0, 1 / 90, dt);
+  /* one word as it comes in, not one per frame */
+  if (on && squall.k !== squallSaid && !photoMode) {
+    const u = squallU(player.p.x, player.p.z);
+    if (u < 420 && u > 0) { squallSaid = squall.k; toast('a squall is coming in off the bay'); }
+  }
+  if (on && rv > 0.4 && Math.random() < dt / 9) { flash = 1; emit('thunder', 0.3 + 0.7 * rv); }
+  flash = Math.max(0, flash - dt * 4.5);
+}
+/* after applyDay has set the day's light: the squall takes some of it away */
+function applyWeather(dt) {
+  squallBody.visible = squall.on;
+  if (squall.on) {
+    const c = squall.s - SQ_LEN / 2;
+    squallBody.position.set(squall.dx * c, 160, squall.dz * c);
+    squallBody.rotation.y = -squall.head;
+    /* fades in and out at either end of its life, and thins from inside */
+    const life = sstep(0, 25, T - squall.t0) * (1 - sstep(SQ_LIFE - 25, SQ_LIFE, T - squall.t0));
+    squallBody.material.opacity = 0.34 * life * (1 - 0.75 * rainView);
+  }
+  rain.visible = rainView > 0.01;
+  if (rain.visible) {
+    rainUni.uCam.value.copy(camera.position); rainUni.uTime.value = T;
+    rainUni.uSlant.value.set(WIND.x * 0.05, WIND.z * 0.05);
+    rainUni.uA.value = 0.55 * rainView;
+  }
+  if (gloom > 0.002 || flash > 0) {
+    scene.fog.density *= 1 + 2.6 * rainView;
+    scene.fog.color.lerp(GREY, 0.6 * gloom);
+    sun.intensity *= 1 - 0.7 * gloom;
+    hemi.intensity = hemi.intensity * (1 - 0.3 * gloom) + flash * 1.4;
+    skyUni.uTop.value.lerp(GREY_SKY, 0.55 * gloom);
+    skyUni.uMid.value.lerp(GREY, 0.55 * gloom);
+    skyUni.uBot.value.lerp(GREY, 0.45 * gloom);
+    skyUni.uCloud.value = Math.max(skyUni.uCloud.value, gloom);
+    waterUni.uFogColor.value.copy(scene.fog.color);
+    waterUni.uFogDensity.value = scene.fog.density;
+  }
+  ground.material.color.copy(groundBase).multiplyScalar(1 - 0.3 * wetness);
+  if (lamps) {
+    lamps.uni.uNight.value = sstep(0.3, 0.75, curNight);
+    lamps.uni.uTime.value = T;
+    lamps.uni.uScale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * PI / 360));
+  }
 }
 /* =====================================================================
    CAMERA
@@ -3884,6 +4575,7 @@ function initAmbience() {
   beds.night   = makeBed('bandpass', 5200, 9, noiseBuf);    // insects
   beds.engine  = makeBed('lowpass',  240, 1.2, noiseBuf);   // turbofan hiss
   beds.rail    = makeBed('lowpass',  150, 2.2, noiseBuf);   // steel on steel, heard through a viaduct
+  beds.rain    = makeBed('bandpass', 2400, 0.45, noiseBuf); // a squall going over (88-weather.js)
   /* the engine also needs a pitched core, not just filtered noise */
   const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 58;
   const of = AC.createBiquadFilter(); of.type = 'lowpass'; of.frequency.value = 320;
@@ -3973,11 +4665,12 @@ function updateAudio(dt) {
   let eng = 0;
   let rail = 0;                                   // and the train, which is not a jet
   for (const pl of planes) {
+    if (pl.kind !== 'plane' && pl.kind !== 'train') continue;
     const d = Math.hypot(p.x - pl.p.x, p.y - pl.p.y, p.z - pl.p.z);
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
-    else eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
+    else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else eng = 1; }
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -3987,7 +4680,8 @@ function updateAudio(dt) {
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
     engine: eng * 0.16,
     rail: rail * rail * 0.26,
-    engineTone: eng * eng * 0.055
+    engineTone: eng * eng * 0.055,
+    rain: rainHere * 0.34
   };
   const k = 1 - Math.exp(-2.2 * dt);
   for (const name in tgt) {
@@ -4013,6 +4707,21 @@ function updateAudio(dt) {
     tHonk = 1.4 + Math.random() * 5.5;
     if (trafficN > 0.35 && alt > 0.35) honk((0.4 + 0.6 * trafficN) * alt * (1 - night * 0.6));
   }
+}
+
+/* thunder: a long low roll that arrives a beat after the flash */
+listen('thunder', thunder);
+function thunder(vol) {
+  if (!AC) return;
+  const t = AC.currentTime + 0.4 + Math.random() * 1.6;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 140; f.Q.value = 0.8;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5 * vol, t + 0.25);
+  g.gain.exponentialRampToValueAtTime(0.18 * vol, t + 1.2);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 3.7);
 }
 
 /* water impact: a broadband slap that darkens fast, then a short hiss of foam */
@@ -4664,9 +5373,11 @@ function frame() {
   updatePerch(dt, fb !== 0 || rl !== 0 || jumpEdge || !!keys['Space'] || inp.tuck || inp.zip || held[0] || held[1]);
 
   /* ---- fixed-step physics ---- */
+  updateWeather(dt);
   updateWind(T);
   if (!photoMode) dayT = (dayT + dt / DAY_LEN) % 1;
   applyDay();
+  applyWeather(dt);
   if (photoMode) {
     /* the player and aircraft freeze for the shot; the rest of the city lives on */
     acc = 0; pPrev.copy(player.p); pRender.copy(player.p);

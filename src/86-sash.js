@@ -35,9 +35,9 @@ let sashPh = 0;     // phase of the ripple: it runs faster the faster the air do
 
 function updateSash(dt) {
   /* where it is pinned, and which way the body's back and side face */
-  spine.localToWorld(sashPin.set(-0.12, 0.57, 0.13));   // off the left shoulder blade
+  spine.localToWorld(sashPin.set(0.12, 0.57, -0.13));   // off the left shoulder blade (the model faces +z; its left is +x)
   const e = rig.matrixWorld.elements;
-  sashSide.set(e[0], e[1], e[2]); sashBack.set(e[8], e[9], e[10]);
+  sashSide.set(e[0], e[1], e[2]); sashBack.set(-e[8], -e[9], -e[10]);
   /* the air going past: the breeze and any thermal, less your own velocity */
   const still = player.inWater, V = player.v;
   const wx = (still ? 0 : WIND.x) - V.x, wz = (still ? 0 : WIND.z) - V.z;

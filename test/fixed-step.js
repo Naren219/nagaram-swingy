@@ -93,8 +93,8 @@ async function rigTiming(page, check) {
     const n = Math.round(0.1 * hz); for (let i = 0; i < n; i++) poseRig(1 / hz, glide);
     return spine.rotation.x;
   }));
-  const sMin = Math.min(...settle), sMax = Math.max(...settle);
-  check('rig pose speed is independent of frame rate', (sMax - sMin) / sMax < 0.05,
+  const sMin = Math.min(...settle), sMax = Math.max(...settle), big = Math.max(...settle.map(Math.abs));
+  check('rig pose speed is independent of frame rate', big > 0.02 && (sMax - sMin) / big < 0.05,
     'spine 0.1 s into a glide at 30/60/144/240 Hz: ' + settle.map(v => v.toFixed(3)).join(' '));
 }
 
@@ -942,15 +942,15 @@ async function windSigns(page, check) {
       __reset(); updateWind = () => { WIND.set(wx, 0, wz); windHead = Math.atan2(wz, wx); };
       __run(30);
       let ox = 0, oz = 0, tx = 0, tz = 0;
-      for (let i = 0; i < kites.length; i++) {
+      for (let i = 0; i < KITES_ON; i++) {
         kites.mesh.getMatrixAt(i, m4); m4.decompose(pos, q, sc);
         ox += pos.x - kites[i].x; oz += pos.z - kites[i].z;
         tail.set(0, 0, -1).applyQuaternion(q); tx += tail.x; tz += tail.z;
       }
-      const n = kites.length;
+      const n = KITES_ON;
       return { ox: ox / n, oz: oz / n, tx: tx / n, tz: tz / n, ux: windUni.uWind.value.x, uz: windUni.uWind.value.y };
     };
-    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: kites.length };
+    const out = { east: blow(5, 0), north: blow(0, -5), calm: blow(0, 0), n: flags.length, low: 0, kites: KITES_ON };
     for (const f of flags) {
       /* nothing solid within a pennant's length of its hoist, at its height */
       for (const b of buildings) if (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2 && f.y < b.h + 3) out.low++;
@@ -1083,7 +1083,8 @@ async function metro(page, check) {
     }
     /* a web finds it, and tows */
     __reset(); t.ph = 0; __run(1);
-    const o = { x: METRO.x - 30, y: t.p.y + 6, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.98, -0.2, 0, 60);
+    /* from below the roof: from above, a tow that swings you onto it is a landing and lets go */
+    const o = { x: METRO.x - 30, y: t.p.y - 4, z: t.p.z }, hit = rayHitPlanes(o.x, o.y, o.z, 0.99, 0.13, 0, 60);
     out.aim = !!hit && hit.pl === t;
     player.p.set(o.x, o.y, o.z); player.v.set(0, 0, 0); player.grounded = false;
     fireWebAt(0, { x: hit.x, y: hit.y, z: hit.z, pl: t });
@@ -1100,7 +1101,7 @@ async function metro(page, check) {
     out.off = { riding: !!player.riding, vz: player.v.z, tv };
     /* the aircraft are what they were */
     out.top = TRAIN_A * TRAIN_W; out.period = 2 * Math.PI / TRAIN_W;
-    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => !p.train).length };
+    out.plane = { hx: planes[0].hx, hz: planes[0].hz, deck: planes[0].deck, n: planes.filter(p => p.kind === 'plane').length };
     __reset(); respawn();
     return out;
   });
@@ -1123,8 +1124,196 @@ async function metro(page, check) {
   check('the aircraft are the carriers they were', r.plane.hx === 13 && r.plane.hz === 12 && r.plane.deck === 1.45 && r.plane.n === 5, r.plane.n + ' aircraft, hull ' + r.plane.hx + ' x ' + r.plane.hz);
 }
 
+async function carriers(page, check) {
+  /* Boats, kites, crane jibs and the wheel's cars are carriers, as the
+     aircraft and the train are. A deck is something to land on; a kite is
+     something to be dragged by. */
+  const r = await page.evaluate(() => {
+    const out = {}, o = new THREE.Vector3();
+    const jib = planes.find(p => p.kind === 'jib'), car = planes.find(p => p.kind === 'car');
+    /* off whatever deck the last part left you on, or the first frame lands you back on it */
+    const clear = () => { __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); };
+    /* a jib is found by its own box, turned with it, not by a box round it */
+    clear(); jib.ph = Math.PI / 4 / 1.5; __run(1);
+    const aimAt = (lx, ly, lz) => {      // straight down from 30 m above the point
+      planePoint(jib, lx, ly, lz, o);
+      const h = rayHitPlanes(o.x, o.y + 30, o.z, 0, -1, 0, 33);
+      return !!h && h.pl === jib;
+    };
+    out.jibTip = aimAt(0, 0, jib.hz - 1);
+    /* 20 m north of its centre is inside any world-aligned box round the jib, and nowhere near the jib itself */
+    worldToPlane(jib, jib.p.x, jib.p.y, jib.p.z + 20, o);
+    out.jibBeside = aimAt(0, 0, 0) && !aimAt(o.x, o.y, o.z);
+    out.yaw = jib.yaw;
+    /* the masts stand in nothing, and the jib clears every roof it swings over */
+    let overlap = 0, clip = 0;
+    for (let b = CRANES.box0; b < CRANES.box1; b++) for (let c = 0; c < NBOX; c++) {
+      if (c >= CRANES.box0 && c < CRANES.box1) continue;
+      let hit = true;
+      for (let k = 0; k < 3; k++) if (BOXES[b * 6 + k] >= BOXES[c * 6 + 3 + k] || BOXES[b * 6 + 3 + k] <= BOXES[c * 6 + k]) hit = false;
+      if (hit) overlap++;
+    }
+    for (const j of planes.filter(p => p.kind === 'jib')) for (let k = 0; k <= 60; k++) {
+      j.ph = k / 60 * Math.PI * 2; j.step(j, 0);
+      for (let z = -j.hz; z <= j.hz; z += 2) {
+        planePoint(j, 0, -j.hy, z, o);
+        for (const b of buildings) if (Math.abs(o.x - b.x) < b.w / 2 && Math.abs(o.z - b.z) < b.d / 2 && b.h > o.y - 1 && b.h !== j.crane.base) clip++;
+      }
+    }
+    out.cranes = CRANES.length; out.overlap = overlap; out.clip = clip;
+    /* come down on a boat afloat and it carries you */
+    clear(); const boat = boats.find(b => b.wet); __run(1);
+    player.p.set(boat.p.x, boat.p.y + 6, boat.p.z); player.v.copy(boat.v); player.grounded = false; player.airT = 1;
+    let lands = 0; const L = (s) => lands++; listen('land', L);
+    __run(60);
+    out.boat = { riding: player.riding === boat, y: player.p.y - boat.p.y - boat.deck };
+    const lo = player.rideLo.clone(), b0 = boat.p.clone(); __run(240);
+    planePoint(boat, lo.x, lo.y, lo.z, o);
+    out.boat.slip = o.distanceTo(player.p); out.boat.moved = boat.p.distanceTo(b0); out.boat.lands = lands;
+    /* only from above: rising up past a car goes on by */
+    clear(); __run(1);
+    player.p.set(car.p.x, car.p.y - car.hy - 3, car.p.z); player.v.set(car.v.x, 16, car.v.z); player.grounded = false;
+    __run(40); out.passUp = player.riding === null;
+    /* stand on a car and it takes you over the top of the wheel */
+    clear(); FERRIS.a = -Math.PI / 2 - car.a0 + 0.3; __run(2);   // two: the jump to there reads as a speed for a frame
+    player.p.set(car.p.x, car.p.y + 4, car.p.z); player.v.copy(car.v); player.grounded = false; __run(60);
+    const y0 = player.p.y; out.carRide = player.riding === car;
+    let top = y0, rad = 0;
+    for (let i = 0; i < 60 * 60; i++) { __run(1); top = Math.max(top, player.p.y); for (const c of planes) if (c.kind === 'car') rad = Math.max(rad, Math.abs(Math.hypot(c.p.y + CAR_HANG + CAR_HY - FERRIS.y, c.p.z - FERRIS.z) - FERRIS.r)); }
+    out.carRise = top - y0; out.carTop = top; out.rad = rad;
+    /* land on a jib and walk it */
+    clear(); jib.ph = 0; __run(2);
+    planePoint(jib, 0, 0, jib.hz - 6, o);
+    player.p.set(o.x, o.y + 5, o.z); player.v.copy(jib.v); player.grounded = false; __run(60);
+    out.jibRide = player.riding === jib; const j0 = player.p.clone(); __run(60 * 8);
+    out.jibCarry = player.p.distanceTo(j0);
+    /* a kite drags you down-wind, sinking under you, and cannot be boarded */
+    const realWind = updateWind;
+    updateWind = () => { WIND.set(5, 0, 0); windHead = 0; };
+    clear(); __run(2);
+    const k = kites.slice(0, KITES_ON).sort((a, b) => b.p.y - a.p.y)[0];
+    k.ox = k.oy = k.oz = 0; __run(1);
+    player.p.set(k.p.x - 30, k.p.y - 40, k.p.z); player.v.set(0, 0, 0); player.grounded = false;
+    const kx = k.p.x, ky = k.p.y, px = player.p.x;
+    fireWebAt(0, { x: k.p.x, y: k.p.y, z: k.p.z, pl: k });
+    __run(60 * 8);
+    out.kite = { on: player.webs[0].on, kiteRun: k.p.x - kx, sink: ky - k.p.y, run: player.p.x - px, low: k.p.y };
+    mountEdge = true; __run(2); out.kite.boarded = !!player.riding;
+    releaseWeb(0); const off = Math.hypot(k.ox, k.oy, k.oz); __run(60 * 60);
+    out.kite.back = Math.hypot(k.ox, k.oy, k.oz) / off;
+    updateWind = realWind;
+    listeners.land.splice(listeners.land.indexOf(L), 1);
+    __reset(); respawn();
+    return out;
+  });
+  check('a crane jib is found by its own box as it slews', r.jibTip && r.jibBeside, 'jib at ' + (r.yaw * 180 / Math.PI).toFixed(0) + '°: tip ' + r.jibTip + ', 20 m north of its centre not found ' + r.jibBeside);
+  check('two cranes, masts in nothing, jibs clear of every roof they swing over', r.cranes === 2 && r.overlap === 0 && r.clip === 0, r.cranes + ' cranes, ' + r.overlap + ' overlaps, ' + r.clip + ' points of jib in a roof');
+  check('come down on a boat and you are aboard', r.boat.riding && Math.abs(r.boat.y) < 1e-6 && r.boat.lands === 1, 'riding ' + r.boat.riding + ', ' + r.boat.lands + ' landing');
+  check('the boat sails and carries you', r.boat.moved > 6 && r.boat.slip < 1e-6, 'sailed ' + r.boat.moved.toFixed(1) + ' m in 4 s, slip ' + (r.boat.slip * 1000).toFixed(3) + ' mm');
+  check('a deck is only landed on from above', r.passUp);
+  check('a car of the wheel takes you over the top', r.carRide && r.carRise > 25 && r.rad < 1e-3, 'rose ' + r.carRise.toFixed(1) + ' m to ' + r.carTop.toFixed(0) + ' m; cars within ' + (r.rad * 1000).toFixed(2) + ' mm of the rim');
+  check('a crane jib is somewhere to stand, and it carries you round', r.jibRide && r.jibCarry > 5, 'carried ' + r.jibCarry.toFixed(1) + ' m in 8 s');
+  check('a kite drags you down-wind and sinks under you', r.kite.on && r.kite.kiteRun > 25 && r.kite.sink > 2 && r.kite.run > 25 && r.kite.low >= 26 - 1e-6,
+    'kite ran ' + r.kite.kiteRun.toFixed(0) + ' m and sank ' + r.kite.sink.toFixed(1) + ' m; the player went ' + r.kite.run.toFixed(0) + ' m');
+  check('a kite cannot be boarded, and is walked back out once let go', !r.kite.boarded && r.kite.back < 0.15, 'boarded ' + r.kite.boarded + ', ' + (r.kite.back * 100).toFixed(0) + '% of its drift left after a minute');
+}
+
+async function weatherAndDay(page, check) {
+  /* The day is the date's: the same city for everyone on it, another one
+     tomorrow. A squall is a band of rain that crosses the city and is gone,
+     with a gust ahead of it and rising air along its edge. The tests run on
+     ?day=plain, the reference city, where no squall ever comes. */
+  const r = await page.evaluate(() => {
+    const out = { plain: CITY_DAY.plain, kitesOn: KITES_ON, lamps: !!lamps };
+    let ever = false;
+    for (let t = 0; t < 3600; t += 1) { squallClock(t); if (squall.on) ever = true; }
+    out.plainSquall = ever; squallClock(T);
+    /* one, forced, coming in from the east */
+    const realWind = updateWind;
+    __reset(); player.p.set(-350, 0.85, -182); __run(2);
+    const base = WIND.clone();
+    startSquall(Math.PI, T - (SQ_FAR - 300) / SQ_V);       // its front 300 m east of the origin
+    __run(1);
+    const xf = squall.s / squall.dx;                        // where the front is, along x
+    out.rain = { behind: squallRain(xf + 200, 0), ahead: squallRain(xf - 80, 0), past: squallRain(xf + SQ_LEN + 50, 0) };
+    /* rising air along the edge, away from every thermal */
+    const lx = xf - 40, lz = -300;
+    out.lift = { edge: thermalAt(lx, 60, lz), before: thermalAt(xf - 200, 60, lz), high: thermalAt(lx, 400, lz) };
+    /* a glider in that band falls slower than in still air; the same drop with no squall */
+    const drop = (on) => {
+      __reset(); if (!on) { squall.forced = false; squallClock(T); } else startSquall(Math.PI, squall.t0);
+      updateWind = () => { WIND.set(0, 0, 0); windHead = 0; if (squallWind(WIND)) windHead = Math.atan2(WIND.z, WIND.x); };
+      /* gliding north along the front, drifting west with it */
+      const x0 = on ? squall.s / squall.dx - 40 : lx;
+      player.p.set(x0, 120, lz); player.v.set(-9, 0, 26); player.grounded = false; yaw = 0; pitch = -0.1;
+      keys['Space'] = true; __run(180); keys['Space'] = false;
+      return 120 - player.p.y;
+    };
+    const t0 = squall.t0;
+    out.glide = { inBand: drop(true), still: drop(false) };
+    updateWind = realWind;
+    /* under it the gust blows the way it is going, and harder than the breeze */
+    __reset(); startSquall(Math.PI, t0); __run(1);
+    const xs = squall.s / squall.dx;
+    player.p.set(xs + 100, 0.85, -300); player.v.set(0, 0, 0); __run(3);
+    out.gust = { along: -WIND.x - (-base.x), rainHere, base: base.length() };
+    __run(60 * 30);
+    out.wet = wetness;
+    /* and it is gone: no rain, the breeze is the breeze again */
+    startSquall(Math.PI, T - SQ_LIFE - 1); __run(2);
+    const wNow = WIND.clone(); updateWind(T); out.after = { on: squall.on, rain: rainHere, wind: wNow.distanceTo(WIND) };
+    __run(60 * 180); out.dry = wetness;
+    __reset(); respawn();
+    return out;
+  });
+  check('the reference day is clear, with the usual kites and no lamps, and no squall in an hour', r.plain && r.kitesOn === 26 && !r.lamps && !r.plainSquall);
+  check('a squall rains behind its front and nowhere else', r.rain.behind === 1 && r.rain.ahead === 0 && r.rain.past === 0,
+    JSON.stringify(r.rain));
+  check('the air rises along its leading edge, and only there', r.lift.edge > 15 && r.lift.before === 0 && r.lift.high === 0,
+    r.lift.edge.toFixed(1) + ' m/s 40 m ahead of it, ' + r.lift.before + ' at 200 m, ' + r.lift.high + ' at 400 m up');
+  check('a glider riding the edge sinks at well under half the rate', r.glide.inBand < r.glide.still * 0.5,
+    'lost ' + r.glide.inBand.toFixed(1) + ' m in 3 s along the edge, ' + r.glide.still.toFixed(1) + ' m in still air');
+  check('under it the wind blows the way it is going', r.gust.rainHere === 1 && r.gust.along > 5, '+' + r.gust.along.toFixed(1) + ' m/s westward on a ' + r.gust.base.toFixed(1) + ' m/s breeze');
+  check('the streets get wet under it, and dry after it has gone', r.wet > 0.6 && !r.after.on && r.after.rain === 0 && r.after.wind < 1e-9 && r.dry < 0.2,
+    'wetness ' + r.wet.toFixed(2) + ' after 30 s of rain, ' + r.dry.toFixed(2) + ' three minutes after');
+
+  /* other days, in their own pages */
+  const url = page.url().replace(/\?.*$/, '');
+  const day = async (d) => {
+    const p = await page.context().newPage(), errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    await p.goto(url + '?day=' + d, { waitUntil: 'load' });
+    await p.waitForFunction(() => document.getElementById('load').classList.contains('gone'));
+    const o = await p.evaluate(() => {
+      window.requestAnimationFrame = () => 0;
+      const box = (x, y, z) => { for (let b = 0; b < NBOX; b++) { const o = b * 6; if (x > BOXES[o] && x < BOXES[o + 3] && y > BOXES[o + 1] && y < BOXES[o + 4] && z > BOXES[o + 2] && z < BOXES[o + 5]) return true; } return false; };
+      const out = { day: JSON.stringify(CITY_DAY), kitesOn: KITES_ON, drawn: kites.mesh.count, gate: document.getElementById('today').textContent };
+      if (lamps) {
+        const a = lamps.geometry.attributes.position; out.lamps = a.count; out.buried = 0;
+        for (let i = 0; i < a.count; i++) if (box(a.getX(i), a.getY(i), a.getZ(i))) out.buried++;
+      }
+      const heads = [];
+      for (const k of [0, 1, 2]) { squall.k = -1; squallClock(SQ_FIRST + k * CITY_DAY.squallEvery + 1); heads.push(squall.on ? +squall.head.toFixed(6) : null); }
+      out.heads = heads;
+      return out;
+    });
+    await p.close();
+    o.errs = errs;
+    return o;
+  };
+  const sankranti = await day('2026-01-14'), again = await day('2026-01-14'), wet = await day('2026-11-26'), lit = await day('2026-11-24');
+  check('a day is its date: the same twice, another the next', sankranti.day === again.day && sankranti.day !== wet.day && JSON.stringify(wet.heads) === JSON.stringify((await day('2026-11-26')).heads),
+    sankranti.gate + ' | ' + wet.gate);
+  check('Sankranti flies every kite there is', sankranti.kitesOn === 72 && sankranti.drawn === 72 && /kites/.test(sankranti.gate));
+  check('a monsoon day sends squalls, each on its own heading', JSON.parse(wet.day).weather === 'monsoon' && wet.heads.every(h => h !== null) && new Set(wet.heads).size === 3,
+    'headings ' + wet.heads.map(h => (h * 180 / Math.PI).toFixed(0) + '°').join(', '));
+  check('a lamp night lights the temple, every lamp clear of the stone', lit.lamps > 400 && lit.buried === 0 && /lamps/.test(lit.gate),
+    lit.lamps + ' lamps, ' + lit.buried + ' inside a solid');
+  check('other days load clean', [sankranti, again, wet, lit].every(o => o.errs.length === 0), [sankranti, wet, lit].map(o => o.errs.join(';')).join(' | ') || 'no errors');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro, carriers, weatherAndDay];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

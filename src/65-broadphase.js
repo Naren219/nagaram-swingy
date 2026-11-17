@@ -13,12 +13,14 @@ function hashBox(b) {
       const k = hkey(i, j); let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(b);
     }
 }
-/* The metro's boxes are held back until the plants, traffic and boats have
-   been placed (76-metro.js puts them in). Placement asks freeAt() and draws
-   from the world's random stream until it has enough: one more box in the way
-   is one more draw, and every palm, aircraft and kite after it would land
-   somewhere else. This way the city is the same city, plus a metro. */
-for (let b = 0; b < NBOX; b++) if (b < METRO.box0 || b >= METRO.box1) hashBox(b);
+/* The metro's boxes and the crane masts are held back until the plants,
+   traffic and boats have been placed (76-metro.js and 77-cranes-wheel.js put
+   them in). Placement asks freeAt() and draws from the world's random stream
+   until it has enough: one more box in the way is one more draw, and every
+   palm, aircraft and kite after it would land somewhere else. This way the
+   city is the same city, plus a metro and two cranes. */
+const lateBox = (b) => (b >= METRO.box0 && b < METRO.box1) || (b >= CRANES.box0 && b < CRANES.box1);
+for (let b = 0; b < NBOX; b++) if (!lateBox(b)) hashBox(b);
 function freeAt(x, z, r) {
   const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
   for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {

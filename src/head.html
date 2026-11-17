@@ -132,6 +132,7 @@
   #gate p{margin-top:16px;font-size:12px;letter-spacing:.26em;text-transform:uppercase;opacity:.65}
   #gate .rule{width:min(420px,70vw);height:1px;margin:18px 0 2px;
     background:linear-gradient(90deg,transparent,var(--vermilion),var(--turmeric),transparent)}
+  #gate #today{margin-top:6px;font-size:10px;opacity:.45}
   #gate.gone{display:none}
 
   /* ---- pause ---- */
@@ -265,7 +266,7 @@
   <div class="tbtn" id="tJump">jump</div>
   <div class="tbtn" id="tZip">zip</div>
   <div class="tbtn" id="tTuck">dive</div>
-  <div class="tbtn" id="tBoard">board aircraft</div>
+  <div class="tbtn" id="tBoard">board</div>
   <div class="tbtn" id="tRun">run</div>
   <div class="tbtn" id="tRunNext">next</div>
   <div class="tbtn" id="tRunQuit">end</div>
@@ -280,6 +281,7 @@
   <h2>NAGARAM</h2>
   <div class="rule"></div>
   <p>click to swing</p>
+  <p id="today"></p>
 </div>
 <!-- three.js r128, vendored from npm three@0.128.0 (MIT, see vendor/three.LICENSE).
      Local rather than CDN so the game has no third-party runtime dependency. -->
