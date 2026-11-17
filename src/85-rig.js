@@ -100,10 +100,61 @@ for (const m of rigParts) m.castShadow = true;
 
 /* web strands */
 const webMat = new THREE.MeshBasicMaterial({ color: 0xf2f4ef, transparent: true, opacity: 0.92 });
-const strands = [0, 1].map(() => {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat);
-  m.visible = false; m.frustumCulled = false; scene.add(m); return m;
-});
+/* Each line is STRAND_SEG short cylinders, not one rigid rod, so it can do the
+   two things a rope does that a rod cannot: leave the hand and travel to the
+   anchor, and hang in a curve when it is longer than the gap it spans. Pure
+   picture: the solver's line is a length, and stays one.
+   One instanced mesh for both lines; a segment not in use is scaled to nothing. */
+const STRAND_SEG = 12, SHOOT_V = 600;      // segments per line · m/s the strand travels at
+const strandMesh = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_SEG * 2);
+strandMesh.frustumCulled = false; scene.add(strandMesh);
+const strandTip = [V3(), V3()];           // where each strand has got to
+const strandSag = [0, 0];                 // metres its middle hangs below the straight line
+const strandPts = new Float32Array((STRAND_SEG + 1) * 3);
+const ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
+for (let k = 0; k < STRAND_SEG * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
+/* seconds for a strand to cross d metres: quick enough to be on the anchor
+   before the line takes weight, slow enough to be seen leaving */
+const shootTime = (d) => clamp(d / SHOOT_V, 0.05, 0.2);
+function drawStrand(i, w, dt) {
+  const { m, q, p, s } = scratch, base = i * STRAND_SEG;
+  if (!w.on) {
+    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_SEG; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
+    return false;
+  }
+  if (strandSag[i] < 0) strandSag[i] = 0;
+  _d.copy(w.a).sub(w.hand);
+  const d = _d.length(), f = clamp(w.age / shootTime(d), 0, 1);
+  _d.multiplyScalar(1 / d);
+  strandTip[i].copy(w.hand).addScaledVector(_d, d * f);
+  /* a rope of length L across a gap d hangs sqrt(3 d (L - d) / 8) at the
+     middle (the parabola a shallow catenary nearly is). Straight down, less
+     whatever part of "down" lies along the rope: a vertical line cannot sag. */
+  /* Slack is the solver's: its length less the gap from the BODY to the
+     anchor. Measured from the hand, an arm's reach up the line always looked
+     like a metre and a half of slack, and a taut line hung in a bow. */
+  const slack = f < 1 ? 0 : Math.max(0, w.len - player.p.distanceTo(w.a));
+  strandSag[i] = damp(strandSag[i], Math.min(Math.sqrt(0.375 * d * slack), 0.3 * d), 16, dt);
+  const sag = strandSag[i], gx = _d.y * _d.x, gy = _d.y * _d.y - 1, gz = _d.y * _d.z;
+  for (let k = 0; k <= STRAND_SEG; k++) {
+    const t = k / STRAND_SEG, along = d * f * t, hang = sag * 4 * t * (1 - t);
+    strandPts[k * 3] = w.hand.x + _d.x * along + gx * hang;
+    strandPts[k * 3 + 1] = w.hand.y + _d.y * along + gy * hang;
+    strandPts[k * 3 + 2] = w.hand.z + _d.z * along + gz * hang;
+  }
+  const th = 1 + clamp(w.tension / 9000, 0, 1) * 0.7;
+  for (let k = 0; k < STRAND_SEG; k++) {
+    const o = k * 3;
+    p.set(strandPts[o], strandPts[o + 1], strandPts[o + 2]);
+    _d.set(strandPts[o + 3], strandPts[o + 4], strandPts[o + 5]).sub(p);
+    const L = _d.length();
+    if (L < 1e-5) { strandMesh.setMatrixAt(base + k, ZERO4); continue; }
+    q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
+    strandMesh.setMatrixAt(base + k, m.compose(p, q, s.set(th, L, th)));
+  }
+  return f >= 1;     // the splat belongs to a strand that has arrived
+}
 const splats = [0, 1].map(() => {
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), webMat);
   m.visible = false; scene.add(m); return m;
@@ -131,8 +182,17 @@ let runPhase = 0;
    smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
-let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
-listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
+/* A rolling touchdown is the same layer turned the other way and done on the
+   ground: one forward turn, over before the ground has its grip back. A hard
+   landing of any kind also sinks the hips for a moment (landSq, 0..1). */
+let landSq = 0;
+listen('land', (hit, ny, rolling) => {
+  if (ny > 0.6) landSq = Math.max(landSq, clamp(hit / 24, 0, 1));
+  /* a somersault still unwinding owns the layer; let it finish */
+  if (rolling && flipA === 0) { flipN = -1; flipDur = 0.5; flipT = 0; flipGround = true; }
+});
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.
@@ -145,22 +205,27 @@ function trapEase(p, r) {
 }
 
 let rigY = 0.44;
+const rigUp = V3(0, 1, 0);   // which way the head points: straight up, except leaning out from a wall being run
 function poseRig(dt, inp) {
   poseDt = dt;
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
-  rigY = damp(rigY, player.grounded ? 0.44 : 0.06, 9, dt);
-  rig.position.copy(pRender); rig.position.y += rigY;
+  const rolling = flipGround && flipT < flipDur && player.grounded;
+  rigY = damp(rigY, rolling ? -0.22 : player.grounded ? 0.44 : 0.06, rolling ? 20 : 9, dt);
+  landSq = damp(landSq, 0, 7, dt);
+  rig.position.copy(pRender); rig.position.y += rigY - (player.grounded ? landSq * 0.26 : 0);
 
   /* orientation */
   if (spd > 3.5) _bz.copy(V).multiplyScalar(-1 / spd);
   else _bz.copy(inp.fwd).multiplyScalar(-1);
   if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
   if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
+  const lat = player.wallRun ? 0 : player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
   player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
-  _by.set(0, 1, 0);
+  /* on a wall the feet go to the wall: lean out until the legs just reach it */
+  if (player.wallRun) _by.set(player.cn.x * 0.7, 0.72, player.cn.z * 0.7).normalize(); else _by.set(0, 1, 0);
+  _by.copy(rigUp.lerp(_by, 1 - Math.exp(-12 * dt)).normalize());
   _bx.copy(_by).cross(_bz);
   if (_bx.lengthSq() < 1e-5) _bx.set(1, 0, 0);
   _bx.normalize(); _by.copy(_bz).cross(_bx).normalize();
@@ -175,11 +240,14 @@ function poseRig(dt, inp) {
      fresh line interrupts it — the applied angle then unwinds to the nearest
      full turn instead of snapping to identity. */
   if (flipT < flipDur || flipA !== 0) {
-    const interrupted = player.grounded || player.clinging || player.riding ||
-      player.inWater || player.webs[0].on || player.webs[1].on;
+    /* a somersault ends on anything solid or a fresh line; a roll ends by
+       leaving the ground */
+    const interrupted = player.clinging || player.riding || player.inWater || (flipGround
+      ? !player.grounded
+      : player.grounded || player.webs[0].on || player.webs[1].on);
     if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, 0.22);
+      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
     } else {
       flipT = flipDur;
       const turn = Math.round(flipA / TAU) * TAU;
@@ -197,24 +265,32 @@ function poseRig(dt, inp) {
     smoothEuler(elbowL, -1.1, 0, 0, k); smoothEuler(elbowR, -1.1, 0, 0, k);
     smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
     smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
-  } else if (player.grounded) {
-    runPhase += dt * clamp(spd * 1.5, 0, 26);
-    const s = Math.sin(runPhase), c = Math.cos(runPhase);
-    const amp = clamp(spd / 9, 0, 1.1);
-    smoothEuler(spine, -0.12 - amp * 0.22, 0, 0, k);
-    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16, k);
-    smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
-    smoothEuler(hipL, -s * 0.85 * amp, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp, 0, 0, k);
-    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
   } else if (flipT < flipDur) {
-    /* tucked ball for the somersault — snappier than the other transitions so
+    /* tucked ball for the somersault and the landing roll — snappier than the other transitions so
        the tuck forms before the tumble picks up speed */
     smoothEuler(spine, 0.5, 0, 0, 22);
     smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
     smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
     smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
     smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
+  } else if (player.grounded || player.wallRun) {
+    /* on an aircraft the body's speed is the aircraft's; the legs only move
+       when you walk the hull */
+    const gait = player.riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 6 : spd;
+    const stride = Math.floor(runPhase / PI);
+    runPhase += dt * clamp(gait * 1.5, 0, 26);
+    const s = Math.sin(runPhase), c = Math.cos(runPhase);
+    const amp = clamp(gait / 9, 0, 1.1);
+    /* a foot comes down every half cycle of the run */
+    if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
+    /* sq: the knees take a landing, on top of whatever the run is doing */
+    const sq = landSq;
+    smoothEuler(spine, -0.12 - amp * 0.22 - sq * 0.3, 0, 0, k);
+    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16 - sq * 0.5, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16 + sq * 0.5, k);
+    smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
+    smoothEuler(hipL, -s * 0.85 * amp - sq * 0.75, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp - sq * 0.75, 0, 0, k);
+    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
+    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
@@ -258,8 +334,10 @@ function poseRig(dt, inp) {
   for (let a = 0; a < 2; a++) {
     const wi = armFor[a]; if (wi < 0) continue;
     const w = player.webs[wi];
-    sh[a].getWorldPosition(_d);
-    _d.copy(w.a).sub(_d).normalize();
+    /* not into _d itself: copy() would overwrite the shoulder before it was
+       subtracted, the direction came out zero, and the arm holding the line
+       simply hung at the body's side */
+    _d.copy(w.a).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
     aimAt(sh[a], _d, _pq);
     el[a].rotation.set(-0.12, 0, 0);
@@ -268,17 +346,10 @@ function poseRig(dt, inp) {
 
   for (let i = 0; i < 2; i++) {
     const w = player.webs[i];
-    strands[i].visible = splats[i].visible = w.on;
-    if (!w.on) continue;
-    el[armFor[0] === i ? 0 : 1].localToWorld(w.hand.set(0, -FORE - 0.05, 0));
-    _d.copy(w.a).sub(w.hand);
-    const L = _d.length();
-    strands[i].position.copy(w.hand);
-    strands[i].quaternion.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
-    strands[i].scale.set(1, L, 1);
-    splats[i].position.copy(w.a);
-    const th = clamp(w.tension / 9000, 0, 1);
-    strands[i].scale.x = strands[i].scale.z = 1 + th * 0.7;
+    if (w.on) el[armFor[0] === i ? 0 : 1].localToWorld(w.hand.set(0, -FORE - 0.05, 0));
+    splats[i].visible = drawStrand(i, w, dt);
+    if (w.on) splats[i].position.copy(w.a);
   }
+  strandMesh.instanceMatrix.needsUpdate = true;
 }
 

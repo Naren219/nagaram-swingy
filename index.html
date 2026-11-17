@@ -152,6 +152,12 @@
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
     background:#05070a;font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.8}
   #load.gone{display:none}
+  /* ---- in flight the readouts step back; they return faster than they left ---- */
+  #band,#tbar,#help,#mapwrap{transition:opacity .35s}
+  body.quiet #band,body.quiet #tbar,body.quiet #help,body.quiet #mapwrap{transition:opacity 1.6s}
+  body.quiet #band,body.quiet #tbar,body.quiet #help{opacity:0}
+  body.quiet #mapwrap{opacity:.4}
+  body.quiet.run #mapwrap{opacity:1}
   /* ---- photo mode: nothing between the eye and the city ---- */
   body.photo #hud,body.photo #pbtn{display:none}
 
@@ -233,6 +239,7 @@
       <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
       <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
+      <tr><td>gamepad</td><td>triggers fire the webs</td></tr>
     </table>
     <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
   </div>
@@ -1694,12 +1701,32 @@ const DRAG_AIR = 0.0042, DRAG_TUCK = 0.0024, DRAG_GLIDE = 0.0105, LIFT_K = 0.011
 const WEB_RANGE = 135, WEB_MAX = 140, WEB_MIN = 6;
 const REEL = 15, SUB = 1 / 120;
 const RELEASE_POP = 2.4;   // m/s added on an upward release, scaled by time on the line
+const LAND_AIR = 0.18;     // seconds clear of every surface before a touch counts as a landing
+/* A fast touchdown used to be the end of the run: ground friction took 35 m/s
+   to nothing in half a second. Come down faster than you can run and you roll
+   instead: for ROLL_FREE seconds the ground barely holds you, then its grip
+   eases back in until ROLL_END. Jump inside the window and the speed leaves
+   with you. The roll gives nothing: it only declines to take. */
+const ROLL_MIN = 13, ROLL_FREE = 0.35, ROLL_END = 0.95;
+const GRIP = 6.2, ROLL_GRIP = 0.5, SPRINT_V = 10;
+/* Walls did the same thing as the ground, sideways: touch one and you slid
+   down it at full gravity. Meet a wall while travelling along it at speed and
+   it now carries most of your weight for a moment — a wall-run, with no button,
+   in the spirit of the somersault. It only ever holds you up on the way DOWN:
+   a rising body gets nothing, so the wall cannot lift you and the run adds no
+   energy. WALL_T seconds per run; the ground, the water, a line, a cling or a
+   kick off the wall buys the next one. */
+const WALL_T = 1.3, WALL_MIN = 11;       // seconds of run · m/s along the wall to start one
+const WALL_CARRY = 0.62, WALL_SINK = 2.2, WALL_HOLD = 7;
+const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
 
 /* Physics announces what happened and stops there. It used to call the HUD,
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand) */
+     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
+     land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
+   The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
 function listen(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 function emit(type, a, b, c, d) {
@@ -1751,6 +1778,9 @@ const player = {
   p: V3(-46, 96, -230), v: V3(4, 0, 20),
   grounded: false, riding: null, rideLo: V3(), coyote: 0, clinging: false, inWater: false,
   depth: 0, wasWet: false,
+  touch: false, airT: 0,     // touching anything this substep · seconds since the last touch
+  roll: 9,                   // seconds since a rolling touchdown; past ROLL_END it is over
+  wallRun: false, wallT: WALL_T,   // on a wall right now · seconds of wall-run left
   cn: V3(0, 1, 0), contact: false, bank: 0, lastAccel: V3(),
   webs: [{ on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() },
          { on: false, a: V3(), len: 0, tgt: 0, rest: 40, tavg: 0, corr: 0, tension: 0, age: 0, hand: V3(), pl: null, lo: V3() }]
@@ -1835,14 +1865,14 @@ function solveContacts(p) {
         else if (ey <= ez) { const s = p.y < (BOXES[o + 1] + BOXES[o + 4]) / 2 ? -1 : 1; p.y += s * (ey + RAD); player.cn.set(0, s, 0); }
         else { const s = p.z < (BOXES[o + 2] + BOXES[o + 5]) / 2 ? -1 : 1; p.z += s * (ez + RAD); player.cn.set(0, 0, s); }
       }
-      player.contact = true;
+      player.contact = player.touch = true;
       if (player.cn.y > 0.6) player.grounded = true;
     }
   }
   if (p.y < RAD) {
     const surf = waterSurfaceAt(p.x, p.z);
-    if (surf === null) { p.y = RAD; player.grounded = true; player.contact = true; player.cn.set(0, 1, 0); }
-    else if (p.y < surf - SEABED) { p.y = surf - SEABED; player.contact = true; player.cn.set(0, 1, 0); }
+    if (surf === null) { p.y = RAD; player.grounded = true; player.contact = player.touch = true; player.cn.set(0, 1, 0); }
+    else if (p.y < surf - SEABED) { p.y = surf - SEABED; player.contact = player.touch = true; player.cn.set(0, 1, 0); }
   }
 }
 
@@ -1906,6 +1936,8 @@ function stepPhysics(h, inp) {
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
+    player.touch = true; player.airT = 0; player.roll = ROLL_END;
+    player.wallRun = false; player.wallT = WALL_T;
     player.lastAccel.set(0, 0, 0);
     if (inp.jump) {                       // step off, keeping the aircraft's speed
       player.riding = null;
@@ -1919,6 +1951,12 @@ function stepPhysics(h, inp) {
      substep. Clearing it first made the grounded branch permanently dead. */
   const onGround = player.grounded;
   player.grounded = false;
+  /* contact is re-tested on every solver pass and reads false again once a
+     pass has pushed you clear, so it cannot say whether you touched anything
+     this step. touch can: the contact solver only ever sets it. */
+  const wasTouch = player.touch;
+  player.touch = false;
+  player.wallRun = false;
   const surf = waterSurfaceAt(P.x, P.z);
   player.inWater = surf !== null && P.y < surf;
   player.depth = player.inWater ? surf - P.y : 0;
@@ -1973,8 +2011,21 @@ function stepPhysics(h, inp) {
   /* ---- control ---- */
   if (onGround) {
     const runA = inp.tuck ? 62 : 42;
-    ax += inp.mx * runA; az += inp.mz * runA;
-    ax -= V.x * 6.2; az -= V.z * 6.2;
+    let mx = inp.mx, mz = inp.mz, grip = GRIP;
+    if (player.roll < ROLL_END) {
+      grip = ROLL_GRIP + (GRIP - ROLL_GRIP) * sstep(ROLL_FREE, ROLL_END, player.roll);
+      player.roll += h;
+      /* While you are still faster than a sprint the legs can steer the roll
+         but not push it: with the ground's grip this low, running along your
+         own velocity would add 15 m/s for nothing. */
+      const vh = Math.hypot(V.x, V.z);
+      if (vh > SPRINT_V) {
+        const along = (mx * V.x + mz * V.z) / vh;
+        if (along > 0) { mx -= along * V.x / vh; mz -= along * V.z / vh; }
+      }
+    }
+    ax += mx * runA; az += mz * runA;
+    ax -= V.x * grip; az -= V.z * grip;
     if (inp.jump) takeOff();
   } else if (player.inWater) {
     ax += inp.mx * 15; az += inp.mz * 15;                 // swim
@@ -1990,7 +2041,25 @@ function stepPhysics(h, inp) {
   } else {
     /* Coyote time: a jump pressed just after running off an edge still counts.
        Only while falling and off the line, so it cannot stack on a real jump. */
-    if (inp.jump && player.coyote > 0 && V.y < 1 && !player.webs[0].on && !player.webs[1].on) takeOff();
+    const lines = player.webs[0].on || player.webs[1].on;
+    /* the wall you touched last step, if you are going along it fast enough.
+       Not on a line (the line is already carrying you), and not in a dive:
+       shift means down. */
+    const n = player.cn;
+    if (wasTouch && Math.abs(n.y) < 0.3 && player.wallT > 0 && !lines && !inp.tuck) {
+      const vn = V.x * n.x + V.z * n.z;
+      player.wallRun = Math.hypot(V.x - vn * n.x, V.z - vn * n.z) > WALL_MIN;
+    }
+    if (player.wallRun) {
+      player.wallT -= h;
+      if (V.y <= 0) { ay += G * WALL_CARRY; ay -= V.y * WALL_SINK; }
+      /* lean on the wall, or the next step finds you a hair clear of it */
+      ax -= n.x * WALL_HOLD; az -= n.z * WALL_HOLD;
+      if (inp.jump) {
+        V.x += n.x * WALL_KICK; V.z += n.z * WALL_KICK; V.y = Math.max(V.y, 0) + WALL_HOP;
+        player.wallRun = false; player.wallT = WALL_T;
+      }
+    } else if (inp.jump && player.coyote > 0 && V.y < 1 && !lines) takeOff();
     const air = inp.glide ? 15 : 11;
     ax += inp.mx * air; az += inp.mz * air;
     if (inp.tuck) { ax += inp.fwd.x * 16; ay += inp.fwd.y * 16; az += inp.fwd.z * 16; }
@@ -2006,6 +2075,7 @@ function stepPhysics(h, inp) {
   V.x += ax * h; V.y += ay * h; V.z += az * h;
   const vm = V.length();
   if (vm > 150) V.multiplyScalar(150 / vm);
+  const ux = V.x, uy = V.y, uz = V.z;     // the velocity you arrive with, before anything stops it
   P.x += V.x * h; P.y += V.y * h; P.z += V.z * h;
 
   /* ---- rope length control ---- */
@@ -2055,6 +2125,20 @@ function stepPhysics(h, inp) {
     if (w.a.distanceTo(P) > WEB_MAX * 1.25) w.on = false;
   }
   if (player.grounded) player.coyote = 0.16; else player.coyote -= h;
+  /* A landing is the first touch after time in the air, and how hard is the
+     speed you were closing on the surface at. Sliding along a wall or standing
+     on a roof touches every step and so announces nothing. */
+  if (!player.grounded) player.roll = ROLL_END;
+  if (player.grounded || player.inWater || player.clinging) player.wallT = WALL_T;
+  if (player.touch) {
+    if (player.airT > LAND_AIR && !player.inWater) {
+      const n = player.cn, hit = -(ux * n.x + uy * n.y + uz * n.z);
+      const rolling = player.grounded && Math.hypot(ux, uz) > ROLL_MIN;
+      if (rolling) player.roll = 0;
+      if (hit > 1.5 || rolling) emit('land', hit, n.y, rolling);
+    }
+    player.airT = 0;
+  } else player.airT += h;
 }
 
 /* The hulls move once per rendered frame, the player once per substep. On a
@@ -2147,7 +2231,7 @@ function fireWebAt(i, a) {
   w.tgt = w.len;
   w.rest = clamp(w.len * 0.72, 20, 68);
   w.tension = 0; w.tavg = 0; w.age = 0;
-  player.clinging = false;
+  player.clinging = false; player.wallT = WALL_T;
   emit('attach', i);
   return true;
 }
@@ -2156,6 +2240,7 @@ function releaseWeb(i) {
   const w = player.webs[i];
   if (!w.on) return;
   w.on = false;
+  emit('release', player.v.length(), w.age);
   /* The pop off the top of an arc is paid for by time spent on the line. Given
      unconditionally it was a free 2.4 m/s per click: re-firing ten times a
      second out-climbed gravity and beat any real swing. A tap now gets nothing
@@ -2374,10 +2459,61 @@ for (const m of rigParts) m.castShadow = true;
 
 /* web strands */
 const webMat = new THREE.MeshBasicMaterial({ color: 0xf2f4ef, transparent: true, opacity: 0.92 });
-const strands = [0, 1].map(() => {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat);
-  m.visible = false; m.frustumCulled = false; scene.add(m); return m;
-});
+/* Each line is STRAND_SEG short cylinders, not one rigid rod, so it can do the
+   two things a rope does that a rod cannot: leave the hand and travel to the
+   anchor, and hang in a curve when it is longer than the gap it spans. Pure
+   picture: the solver's line is a length, and stays one.
+   One instanced mesh for both lines; a segment not in use is scaled to nothing. */
+const STRAND_SEG = 12, SHOOT_V = 600;      // segments per line · m/s the strand travels at
+const strandMesh = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.035, 0.035, 1, 5).translate(0, 0.5, 0), webMat, STRAND_SEG * 2);
+strandMesh.frustumCulled = false; scene.add(strandMesh);
+const strandTip = [V3(), V3()];           // where each strand has got to
+const strandSag = [0, 0];                 // metres its middle hangs below the straight line
+const strandPts = new Float32Array((STRAND_SEG + 1) * 3);
+const ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
+for (let k = 0; k < STRAND_SEG * 2; k++) strandMesh.setMatrixAt(k, ZERO4);
+/* seconds for a strand to cross d metres: quick enough to be on the anchor
+   before the line takes weight, slow enough to be seen leaving */
+const shootTime = (d) => clamp(d / SHOOT_V, 0.05, 0.2);
+function drawStrand(i, w, dt) {
+  const { m, q, p, s } = scratch, base = i * STRAND_SEG;
+  if (!w.on) {
+    if (strandSag[i] !== -1) { for (let k = 0; k < STRAND_SEG; k++) strandMesh.setMatrixAt(base + k, ZERO4); strandSag[i] = -1; }
+    return false;
+  }
+  if (strandSag[i] < 0) strandSag[i] = 0;
+  _d.copy(w.a).sub(w.hand);
+  const d = _d.length(), f = clamp(w.age / shootTime(d), 0, 1);
+  _d.multiplyScalar(1 / d);
+  strandTip[i].copy(w.hand).addScaledVector(_d, d * f);
+  /* a rope of length L across a gap d hangs sqrt(3 d (L - d) / 8) at the
+     middle (the parabola a shallow catenary nearly is). Straight down, less
+     whatever part of "down" lies along the rope: a vertical line cannot sag. */
+  /* Slack is the solver's: its length less the gap from the BODY to the
+     anchor. Measured from the hand, an arm's reach up the line always looked
+     like a metre and a half of slack, and a taut line hung in a bow. */
+  const slack = f < 1 ? 0 : Math.max(0, w.len - player.p.distanceTo(w.a));
+  strandSag[i] = damp(strandSag[i], Math.min(Math.sqrt(0.375 * d * slack), 0.3 * d), 16, dt);
+  const sag = strandSag[i], gx = _d.y * _d.x, gy = _d.y * _d.y - 1, gz = _d.y * _d.z;
+  for (let k = 0; k <= STRAND_SEG; k++) {
+    const t = k / STRAND_SEG, along = d * f * t, hang = sag * 4 * t * (1 - t);
+    strandPts[k * 3] = w.hand.x + _d.x * along + gx * hang;
+    strandPts[k * 3 + 1] = w.hand.y + _d.y * along + gy * hang;
+    strandPts[k * 3 + 2] = w.hand.z + _d.z * along + gz * hang;
+  }
+  const th = 1 + clamp(w.tension / 9000, 0, 1) * 0.7;
+  for (let k = 0; k < STRAND_SEG; k++) {
+    const o = k * 3;
+    p.set(strandPts[o], strandPts[o + 1], strandPts[o + 2]);
+    _d.set(strandPts[o + 3], strandPts[o + 4], strandPts[o + 5]).sub(p);
+    const L = _d.length();
+    if (L < 1e-5) { strandMesh.setMatrixAt(base + k, ZERO4); continue; }
+    q.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
+    strandMesh.setMatrixAt(base + k, m.compose(p, q, s.set(th, L, th)));
+  }
+  return f >= 1;     // the splat belongs to a strand that has arrived
+}
 const splats = [0, 1].map(() => {
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), webMat);
   m.visible = false; scene.add(m); return m;
@@ -2405,8 +2541,17 @@ let runPhase = 0;
    smoothed base orientation. The base is kept SEPARATELY — feeding the flipped
    quaternion back through the orientation slerp corrupted the base and made
    the spin rate erratic. flipA is the applied angle in radians. */
-let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0;
-listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; });
+let flipT = 1e9, flipDur = 1, flipN = 1, flipA = 0, flipGround = false;
+listen('flip', (turns) => { flipN = turns; flipDur = turns > 1 ? 2.2 : 1.4; flipT = 0; flipGround = false; });
+/* A rolling touchdown is the same layer turned the other way and done on the
+   ground: one forward turn, over before the ground has its grip back. A hard
+   landing of any kind also sinks the hips for a moment (landSq, 0..1). */
+let landSq = 0;
+listen('land', (hit, ny, rolling) => {
+  if (ny > 0.6) landSq = Math.max(landSq, clamp(hit / 24, 0, 1));
+  /* a somersault still unwinding owns the layer; let it finish */
+  if (rolling && flipA === 0) { flipN = -1; flipDur = 0.5; flipT = 0; flipGround = true; }
+});
 const _fx = V3(1, 0, 0), _fq = new THREE.Quaternion();
 const rigBaseQ = new THREE.Quaternion();
 /* trapezoidal position profile: soft ramp in and out, constant tumble between.
@@ -2419,22 +2564,27 @@ function trapEase(p, r) {
 }
 
 let rigY = 0.44;
+const rigUp = V3(0, 1, 0);   // which way the head points: straight up, except leaning out from a wall being run
 function poseRig(dt, inp) {
   poseDt = dt;
   const V = player.v, spd = V.length();
   /* the collision sphere sits at the hips; lift the skeleton so the feet
      land on the ground rather than through it */
-  rigY = damp(rigY, player.grounded ? 0.44 : 0.06, 9, dt);
-  rig.position.copy(pRender); rig.position.y += rigY;
+  const rolling = flipGround && flipT < flipDur && player.grounded;
+  rigY = damp(rigY, rolling ? -0.22 : player.grounded ? 0.44 : 0.06, rolling ? 20 : 9, dt);
+  landSq = damp(landSq, 0, 7, dt);
+  rig.position.copy(pRender); rig.position.y += rigY - (player.grounded ? landSq * 0.26 : 0);
 
   /* orientation */
   if (spd > 3.5) _bz.copy(V).multiplyScalar(-1 / spd);
   else _bz.copy(inp.fwd).multiplyScalar(-1);
   if (player.grounded) { _bz.y = 0; if (_bz.lengthSq() < 1e-4) _bz.set(0, 0, 1); _bz.normalize(); }
   if (player.clinging) { _bz.copy(player.cn); }
-  const lat = player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
+  const lat = player.wallRun ? 0 : player.lastAccel.dot(_bx.copy(_bz).cross(YUP).normalize());
   player.bank = damp(player.bank, clamp(lat * 0.020, -0.85, 0.85), 6, dt);
-  _by.set(0, 1, 0);
+  /* on a wall the feet go to the wall: lean out until the legs just reach it */
+  if (player.wallRun) _by.set(player.cn.x * 0.7, 0.72, player.cn.z * 0.7).normalize(); else _by.set(0, 1, 0);
+  _by.copy(rigUp.lerp(_by, 1 - Math.exp(-12 * dt)).normalize());
   _bx.copy(_by).cross(_bz);
   if (_bx.lengthSq() < 1e-5) _bx.set(1, 0, 0);
   _bx.normalize(); _by.copy(_bz).cross(_bx).normalize();
@@ -2449,11 +2599,14 @@ function poseRig(dt, inp) {
      fresh line interrupts it — the applied angle then unwinds to the nearest
      full turn instead of snapping to identity. */
   if (flipT < flipDur || flipA !== 0) {
-    const interrupted = player.grounded || player.clinging || player.riding ||
-      player.inWater || player.webs[0].on || player.webs[1].on;
+    /* a somersault ends on anything solid or a fresh line; a roll ends by
+       leaving the ground */
+    const interrupted = player.clinging || player.riding || player.inWater || (flipGround
+      ? !player.grounded
+      : player.grounded || player.webs[0].on || player.webs[1].on);
     if (flipT < flipDur && !interrupted) {
       flipT += dt;
-      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, 0.22);
+      flipA = flipT >= flipDur ? 0 : TAU * flipN * trapEase(flipT / flipDur, flipGround ? 0.3 : 0.22);
     } else {
       flipT = flipDur;
       const turn = Math.round(flipA / TAU) * TAU;
@@ -2471,24 +2624,32 @@ function poseRig(dt, inp) {
     smoothEuler(elbowL, -1.1, 0, 0, k); smoothEuler(elbowR, -1.1, 0, 0, k);
     smoothEuler(hipL, -0.5, 0, -0.55, k); smoothEuler(hipR, -0.5, 0, 0.55, k);
     smoothEuler(kneeL, 1.5, 0, 0, k); smoothEuler(kneeR, 1.5, 0, 0, k);
-  } else if (player.grounded) {
-    runPhase += dt * clamp(spd * 1.5, 0, 26);
-    const s = Math.sin(runPhase), c = Math.cos(runPhase);
-    const amp = clamp(spd / 9, 0, 1.1);
-    smoothEuler(spine, -0.12 - amp * 0.22, 0, 0, k);
-    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16, k);
-    smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
-    smoothEuler(hipL, -s * 0.85 * amp, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp, 0, 0, k);
-    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
-    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp, 0, 0, k);
   } else if (flipT < flipDur) {
-    /* tucked ball for the somersault — snappier than the other transitions so
+    /* tucked ball for the somersault and the landing roll — snappier than the other transitions so
        the tuck forms before the tumble picks up speed */
     smoothEuler(spine, 0.5, 0, 0, 22);
     smoothEuler(shoulderL, 2.3, 0, -0.3, 22); smoothEuler(shoulderR, 2.3, 0, 0.3, 22);
     smoothEuler(elbowL, -2.0, 0, 0, 22); smoothEuler(elbowR, -2.0, 0, 0, 22);
     smoothEuler(hipL, -2.1, 0, -0.1, 22); smoothEuler(hipR, -2.1, 0, 0.1, 22);
     smoothEuler(kneeL, 2.4, 0, 0, 22); smoothEuler(kneeR, 2.4, 0, 0, 22);
+  } else if (player.grounded || player.wallRun) {
+    /* on an aircraft the body's speed is the aircraft's; the legs only move
+       when you walk the hull */
+    const gait = player.riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 6 : spd;
+    const stride = Math.floor(runPhase / PI);
+    runPhase += dt * clamp(gait * 1.5, 0, 26);
+    const s = Math.sin(runPhase), c = Math.cos(runPhase);
+    const amp = clamp(gait / 9, 0, 1.1);
+    /* a foot comes down every half cycle of the run */
+    if (amp > 0.25 && Math.floor(runPhase / PI) !== stride) emit('step', amp);
+    /* sq: the knees take a landing, on top of whatever the run is doing */
+    const sq = landSq;
+    smoothEuler(spine, -0.12 - amp * 0.22 - sq * 0.3, 0, 0, k);
+    smoothEuler(shoulderL, s * 0.9 * amp, 0, -0.16 - sq * 0.5, k); smoothEuler(shoulderR, -s * 0.9 * amp, 0, 0.16 + sq * 0.5, k);
+    smoothEuler(elbowL, -0.6 - amp * 0.4, 0, 0, k); smoothEuler(elbowR, -0.6 - amp * 0.4, 0, 0, k);
+    smoothEuler(hipL, -s * 0.85 * amp - sq * 0.75, 0, 0, k); smoothEuler(hipR, s * 0.85 * amp - sq * 0.75, 0, 0, k);
+    smoothEuler(kneeL, clamp(0.5 + c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
+    smoothEuler(kneeR, clamp(0.5 - c * 0.9, 0.05, 1.7) * amp + sq * 1.4, 0, 0, k);
   } else if (inp.glide) {
     smoothEuler(spine, 0.30, 0, 0, k);
     smoothEuler(shoulderL, 0.05, 0, -1.42, k); smoothEuler(shoulderR, 0.05, 0, 1.42, k);
@@ -2532,8 +2693,10 @@ function poseRig(dt, inp) {
   for (let a = 0; a < 2; a++) {
     const wi = armFor[a]; if (wi < 0) continue;
     const w = player.webs[wi];
-    sh[a].getWorldPosition(_d);
-    _d.copy(w.a).sub(_d).normalize();
+    /* not into _d itself: copy() would overwrite the shoulder before it was
+       subtracted, the direction came out zero, and the arm holding the line
+       simply hung at the body's side */
+    _d.copy(w.a).sub(sh[a].getWorldPosition(_sa)).normalize();
     sh[a].parent.getWorldQuaternion(_pq);
     aimAt(sh[a], _d, _pq);
     el[a].rotation.set(-0.12, 0, 0);
@@ -2542,20 +2705,129 @@ function poseRig(dt, inp) {
 
   for (let i = 0; i < 2; i++) {
     const w = player.webs[i];
-    strands[i].visible = splats[i].visible = w.on;
-    if (!w.on) continue;
-    el[armFor[0] === i ? 0 : 1].localToWorld(w.hand.set(0, -FORE - 0.05, 0));
-    _d.copy(w.a).sub(w.hand);
-    const L = _d.length();
-    strands[i].position.copy(w.hand);
-    strands[i].quaternion.setFromUnitVectors(YUP, _d.multiplyScalar(1 / L));
-    strands[i].scale.set(1, L, 1);
-    splats[i].position.copy(w.a);
-    const th = clamp(w.tension / 9000, 0, 1);
-    strands[i].scale.x = strands[i].scale.z = 1 + th * 0.7;
+    if (w.on) el[armFor[0] === i ? 0 : 1].localToWorld(w.hand.set(0, -FORE - 0.05, 0));
+    splats[i].visible = drawStrand(i, w, dt);
+    if (w.on) splats[i].position.copy(w.a);
   }
+  strandMesh.instanceMatrix.needsUpdate = true;
 }
 
+/* =====================================================================
+   SASH
+   A length of gold cloth off the back of the shoulders. It is there to be
+   read: it streams along the air going past, so speed, a dive, a glide, a
+   crosswind and a thermal all show on the character without a number.
+
+   It is simulated in the PLAYER'S frame: each point is an offset from where
+   the cloth is pinned, and the wind it feels is the air's velocity minus
+   yours. So a respawn cannot whip it, render interpolation cannot shake it,
+   and in photo mode — body frozen mid-flight, velocity still in hand — it
+   goes on streaming instead of falling limp.
+   ===================================================================== */
+const SASH_N = 9, SASH_SEG = 0.13;          // points, the first one pinned · metres between them
+const SASH_DRAG = 0.17, SASH_G = 0.6;       // how hard the air takes it · how much of gravity it feels
+const sashQ = new Float32Array(SASH_N * 3), sashPrev = new Float32Array(SASH_N * 3);
+for (let i = 0; i < SASH_N; i++) sashQ[i * 3 + 1] = sashPrev[i * 3 + 1] = -i * SASH_SEG;
+const sashGeo = new THREE.BufferGeometry();
+{
+  const col = new Float32Array(SASH_N * 6), idx = [];
+  const gold = new THREE.Color(ACCENT).convertSRGBToLinear(), band = new THREE.Color(TEAL).convertSRGBToLinear();
+  for (let i = 0; i < SASH_N; i++) {
+    const c = i === SASH_N - 2 ? band : gold;          // one teal band near the free end
+    for (let k = 0; k < 2; k++) { col[(i * 2 + k) * 3] = c.r; col[(i * 2 + k) * 3 + 1] = c.g; col[(i * 2 + k) * 3 + 2] = c.b; }
+    if (i) { const a = i * 2 - 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  }
+  sashGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SASH_N * 6), 3));
+  sashGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(SASH_N * 6), 3));
+  sashGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  sashGeo.setIndex(idx);
+}
+const sash = new THREE.Mesh(sashGeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+sash.frustumCulled = false; scene.add(sash);
+const sashPin = V3(), sashBack = V3(), sashSide = V3();
+let sashPh = 0;     // phase of the ripple: it runs faster the faster the air does
+
+function updateSash(dt) {
+  /* where it is pinned, and which way the body's back and side face */
+  spine.localToWorld(sashPin.set(-0.12, 0.57, 0.13));   // off the left shoulder blade
+  const e = rig.matrixWorld.elements;
+  sashSide.set(e[0], e[1], e[2]); sashBack.set(e[8], e[9], e[10]);
+  /* the air going past: the breeze and any thermal, less your own velocity */
+  const still = player.inWater, V = player.v;
+  const wx = (still ? 0 : WIND.x) - V.x, wz = (still ? 0 : WIND.z) - V.z;
+  const wy = (still ? 0 : thermalAt(player.p.x, player.p.y, player.p.z)) - V.y;
+  const ws = Math.sqrt(wx * wx + wy * wy + wz * wz);
+
+  /* a frame of no time (the first one can be) has no velocity to derive */
+  const n = dt > 1e-5 ? clamp(Math.ceil(dt * 120), 1, 8) : 0, h = dt / (n || 1), q = sashQ, pv = sashPrev;
+  sashPh += dt * (5 + ws * 0.32);
+  for (let s = 0; s < n; s++) {
+    for (let i = 1; i < SASH_N; i++) {
+      const o = i * 3;
+      let ux = (q[o] - pv[o]) / h, uy = (q[o + 1] - pv[o + 1]) / h, uz = (q[o + 2] - pv[o + 2]) / h;
+      /* Cloth does not stream straight: a ripple runs down it, bigger toward
+         the free end and in proportion to the air. The air is so much stronger
+         than the cloth's weight that each segment simply points down-wind, so
+         the ripple has to be a real fraction of the wind to bend it at all. */
+      const rip = ws * 0.5 * (0.25 + 0.75 * i / SASH_N), a = sashPh - i * 1.25, b = sashPh * 0.77 - i * 0.9;
+      const ax = wx + (sashSide.x * Math.sin(a) + sashBack.x * Math.cos(b) * 0.7) * rip;
+      const ay = wy + (sashSide.y * Math.sin(a) + sashBack.y * Math.cos(b) * 0.7) * rip;
+      const az = wz + (sashSide.z * Math.sin(a) + sashBack.z * Math.cos(b) * 0.7) * rip;
+      /* Quadratic drag toward the air's velocity, taken implicitly: stepped
+         forward it overshoots and explodes somewhere past 100 m/s. */
+      const rx = ax - ux, ry = ay - uy, rz = az - uz;
+      const k = SASH_DRAG * Math.sqrt(rx * rx + ry * ry + rz * rz) * h, f = k / (1 + k);
+      ux += rx * f; uy += ry * f - G * SASH_G * h; uz += rz * f;
+      pv[o] = q[o]; pv[o + 1] = q[o + 1]; pv[o + 2] = q[o + 2];
+      q[o] += ux * h; q[o + 1] += uy * h; q[o + 2] += uz * h;
+    }
+    /* Two shared passes let a pull travel both ways along the cloth. The last
+       pass is outward from the pin and exact: at 400 km/h the air moves a
+       point further in one step than a segment is long, and relaxation alone
+       left the cloth three times its length. */
+    for (let it = 0; it < 3; it++) {
+      const last = it === 2;
+      for (let i = 1; i < SASH_N; i++) {
+        const o = i * 3, m = o - 3;
+        /* it stays behind the plane of the back, not through the body */
+        const behind = q[o] * sashBack.x + q[o + 1] * sashBack.y + q[o + 2] * sashBack.z;
+        if (behind < 0) { q[o] -= sashBack.x * behind; q[o + 1] -= sashBack.y * behind; q[o + 2] -= sashBack.z * behind; }
+        const dx = q[o] - q[m], dy = q[o + 1] - q[m + 1], dz = q[o + 2] - q[m + 2];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, c = (d - SASH_SEG) / d;
+        /* the pin does not move; every other pair shares the correction */
+        const wA = last || i === 1 ? 0 : 0.5, wB = 1 - wA;
+        q[m] += dx * c * wA; q[m + 1] += dy * c * wA; q[m + 2] += dz * c * wA;
+        q[o] -= dx * c * wB; q[o + 1] -= dy * c * wB; q[o + 2] -= dz * c * wB;
+      }
+    }
+  }
+
+  /* a ribbon: at each point, half a width either side, square to the cloth */
+  const P = sashGeo.attributes.position.array, N = sashGeo.attributes.normal.array;
+  for (let i = 0; i < SASH_N; i++) {
+    const o = i * 3, a = Math.max(i - 1, 0) * 3, b = Math.min(i + 1, SASH_N - 1) * 3;
+    let tx = q[b] - q[a], ty = q[b + 1] - q[a + 1], tz = q[b + 2] - q[a + 2];
+    const tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+    /* across the cloth is the body's side axis, less whatever of it lies along
+       the cloth; streaming dead sideways, use the back axis instead */
+    let sd = sashSide, dot = sd.x * tx + sd.y * ty + sd.z * tz;
+    if (Math.abs(dot) > 0.94) { sd = sashBack; dot = sd.x * tx + sd.y * ty + sd.z * tz; }
+    let cx = sd.x - tx * dot, cy = sd.y - ty * dot, cz = sd.z - tz * dot;
+    const cl = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1, hw = 0.075 - 0.02 * (i / (SASH_N - 1));
+    cx /= cl; cy /= cl; cz /= cl;
+    let nx = ty * cz - tz * cy, ny = tz * cx - tx * cz, nz = tx * cy - ty * cx;
+    /* and it twists as it goes, more toward the free end and in faster air, so
+       it is never edge-on along its whole length from anywhere */
+    const tw = Math.sin(sashPh * 0.6 - i * 0.7) * 1.1 * (i / (SASH_N - 1)) * clamp(ws / 12, 0, 1), ct = Math.cos(tw), st = Math.sin(tw);
+    const wx2 = cx * ct + nx * st, wy2 = cy * ct + ny * st, wz2 = cz * ct + nz * st;
+    nx = nx * ct - cx * st; ny = ny * ct - cy * st; nz = nz * ct - cz * st;
+    const px = sashPin.x + q[o], py = sashPin.y + q[o + 1], pz = sashPin.z + q[o + 2], v = i * 6;
+    P[v] = px - wx2 * hw; P[v + 1] = py - wy2 * hw; P[v + 2] = pz - wz2 * hw;
+    P[v + 3] = px + wx2 * hw; P[v + 4] = py + wy2 * hw; P[v + 5] = pz + wz2 * hw;
+    N[v] = N[v + 3] = nx; N[v + 1] = N[v + 4] = ny; N[v + 2] = N[v + 5] = nz;
+  }
+  sashGeo.attributes.position.needsUpdate = true; sashGeo.attributes.normal.needsUpdate = true;
+}
 /* =====================================================================
    CAMERA
    ===================================================================== */
@@ -2577,6 +2849,9 @@ function updateCamDirs() {
 }
 const camVel = V3(0, 0, 0), camFwdS = V3(0, 0, 1), boomDir = V3(0, 0, 1), _lookT = V3(0, 0, 0);
 const GROUND_CLEAR = 1.25;
+/* the view sinks with a landing and comes back up: weight, without a shake */
+let camDip = 0;
+listen('land', (hit, ny) => { if (ny > 0.6) camDip = Math.max(camDip, clamp((hit - 4) / 30, 0, 1) * 0.8); });
 /* The boom carrying the camera is deliberately NOT the aim direction. Aiming
    near-vertical used to swing the boom under the street, where the floor clamp
    shoved the camera back up on top of the character. The boom pitch is limited
@@ -2590,8 +2865,9 @@ function updateCamera(dt) {
      amplified that noise into the view. The camera rides a smoothed copy. */
   camVel.lerp(player.v, 1 - Math.exp(-6.5 * dt));
   const V = camVel, spd = V.length();
+  camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05;
+  pivot.y += 1.05 - camDip;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   const bp = clamp(pitch, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
@@ -2618,7 +2894,9 @@ function updateCamera(dt) {
   /* rolling the horizon while free-falling makes the skyline harder to read —
      bank only when a line is actually loaded */
   const anyLine = player.webs[0].on || player.webs[1].on;
-  camRoll = damp(camRoll, anyLine ? player.bank * 0.55 : 0, anyLine ? 5 : 3.2, dt);
+  /* on a wall the view tips away from it, with the body */
+  const lean = player.wallRun ? 0.12 * (player.cn.x * camRight.x + player.cn.z * camRight.z) : 0;
+  camRoll = damp(camRoll, anyLine ? player.bank * 0.55 : lean, anyLine || lean ? 5 : 3.2, dt);
   camera.up.set(0, 1, 0).applyAxisAngle(camFwdS, camRoll);
   camera.lookAt(_lookT.copy(camPosS).addScaledVector(camFwdS, 140));
 
@@ -2636,7 +2914,7 @@ const locked = () => document.pointerLockElement === renderer.domElement || free
 const gate = document.getElementById('gate');
 const pbtn = document.getElementById('pbtn'), pauseEl = document.getElementById('pause');
 let paused = false, started = false;
-function setPaused(on) {
+function setPaused(on, byPad) {
   if (paused === on) return;
   paused = on;
   pauseEl.classList.toggle('on', on);
@@ -2646,7 +2924,9 @@ function setPaused(on) {
   for (const k of Object.keys(keys)) delete keys[k];
   if (windGain) windGain.gain.value = on ? 0 : windGain.gain.value;
   if (ambBus) ambBus.gain.value = on ? 0 : 1;
-  if (!on && !freeLook && !touchOn) {
+  /* a gamepad button is not a gesture the browser will grant the pointer for,
+     and a pad needs no pointer: resuming from one skips the request entirely */
+  if (!on && !freeLook && !touchOn && !byPad) {
     /* Browsers refuse a lock request for about a second after Esc. If it never
        lands, drop into cursor steering rather than leaving the player with no
        look control at all. */
@@ -2873,6 +3153,80 @@ try {
   });
 } catch (e) {}
 
+/* ---------------------------------------------------------------
+   GAMEPAD — two triggers for two webs is what this game wants to be
+   played on. Buttons write the same key states and edge flags the
+   keyboard and the touch controls do, so nothing downstream knows
+   or cares where a press came from; the sticks are the only new
+   input, and the loop reads them the way it reads the touch stick.
+     LT / RT webs · A jump, hold to glide · B or RB dive · LB zip
+     X cling, board · Y photo · start pause · back ring run
+     d-pad: up time of day · right next course · down leave run · left respawn
+   Nothing is polled until a pad has announced itself.
+   --------------------------------------------------------------- */
+const pad = { seen: false, dev: null, lx: 0, ly: 0, was: new Uint8Array(17), quiet: 0, hello: false };
+const PAD_DEAD = 0.16, PAD_LOOK = 3.1;       // stick dead zone · rad/s of turn at full deflection
+const PAD_HOLD = { 1: 'ShiftLeft', 5: 'ShiftRight', 4: 'KeyQ' };
+const PAD_TAP = { 3: 'KeyC', 8: 'KeyG', 12: 'KeyT', 13: 'KeyX', 14: 'KeyR', 15: 'KeyN' };
+addEventListener('gamepadconnected', () => { pad.seen = true; });
+const padAxis = (v) => { const a = Math.abs(v || 0); return a < PAD_DEAD ? 0 : Math.sign(v) * (a - PAD_DEAD) / (1 - PAD_DEAD); };
+function tapKey(code) {
+  dispatchEvent(new KeyboardEvent('keydown', { code }));
+  dispatchEvent(new KeyboardEvent('keyup', { code }));
+}
+function padButton(i, on) {
+  if (i === 9) { if (on && started) setPaused(!paused, true); return; }
+  if (paused || !started) return;
+  if (i === 6 || i === 7) {
+    const k = i - 6;
+    if (on && !photoMode) { held[k] = true; fireWebAt(k, aimPt); }
+    if (!on) { held[k] = false; releaseWeb(k); }
+  } else if (i === 0) { if (on) jumpEdge = true; keys['Space'] = on; }
+  else if (i === 2) { if (on) mountEdge = true; keys['KeyE'] = on; }
+  else if (PAD_HOLD[i]) keys[PAD_HOLD[i]] = on;
+  else if (on && PAD_TAP[i]) tapKey(PAD_TAP[i]);
+}
+function pollPad(dt) {
+  if (!pad.seen) return;
+  const list = navigator.getGamepads ? navigator.getGamepads() : null;
+  let gp = null;
+  if (list) for (let i = 0; i < list.length && !gp; i++) if (list[i] && list[i].connected && list[i].mapping === 'standard') gp = list[i];
+  pad.dev = gp;
+  if (!gp) { pad.lx = pad.ly = 0; return; }
+  const B = gp.buttons, n = Math.min(B.length, 17);
+  for (let i = 0; i < n; i++) {
+    /* triggers are analogue: a third of the way down is a press */
+    const on = B[i].pressed || B[i].value > 0.35 ? 1 : 0;
+    if (on !== pad.was[i]) {
+      pad.was[i] = on; padButton(i, !!on);
+      if (on && !pad.hello && started) { pad.hello = true; toast('gamepad · triggers fire the webs'); toastT = 3; }
+    }
+  }
+  if (paused || !started) { pad.lx = pad.ly = 0; return; }
+  pad.lx = padAxis(gp.axes[0]); pad.ly = padAxis(gp.axes[1]);
+  /* linear near the centre for aim, squared toward the rim for turning round */
+  const rx = padAxis(gp.axes[2]), ry = padAxis(gp.axes[3]), k = PAD_LOOK * (sens / 0.0034) * dt;
+  yaw += rx * (0.45 + 0.55 * Math.abs(rx)) * k;
+  pitch = clamp(pitch - ry * (0.45 + 0.55 * Math.abs(ry)) * k * 0.72, -PITCH_MAX, PITCH_MAX);
+  /* the line in the hands: a light buzz that grows with the load. A landing's
+     thump is left to finish first. */
+  pad.quiet -= dt;
+  if (pad.quiet <= 0) {
+    const tn = clamp(Math.max(player.webs[0].on ? player.webs[0].tension : 0, player.webs[1].on ? player.webs[1].tension : 0) / 9000, 0, 1);
+    if (tn > 0.3) { rumble(0, (tn - 0.3) * 0.75, 90); pad.quiet = 0.07; }
+  }
+}
+function rumble(strong, weak, ms) {
+  const a = pad.dev && pad.dev.vibrationActuator;
+  if (!a || !a.playEffect) return;
+  try {
+    const r = a.playEffect('dual-rumble', { duration: ms, strongMagnitude: clamp(strong, 0, 1), weakMagnitude: clamp(weak, 0, 1) });
+    if (r && r.catch) r.catch(() => {});
+  } catch (e) {}
+}
+listen('land', (hit) => { if (pad.dev) { rumble(clamp(hit / 28, 0.12, 1), 0.3, 80 + hit * 4); pad.quiet = 0.2; } });
+listen('attach', () => { if (pad.dev && pad.quiet <= 0) { rumble(0, 0.45, 45); pad.quiet = 0.06; } });
+
 /* ---- settings persistence ---- */
 const SAVE_KEY = 'nagaram.settings';
 function saveSettings() {
@@ -2911,7 +3265,7 @@ addEventListener('keydown', e => {
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
-    if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); saveSettings(); }
+    if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
     if (e.code === 'KeyP') { shadowsOn = !shadowsOn; sun.castShadow = shadowsOn; saveSettings(); }
     if (e.code === 'KeyR') respawn();
@@ -2981,6 +3335,7 @@ function initAmbience() {
   const og = AC.createGain(); og.gain.value = 0;
   o.connect(of); of.connect(og); og.connect(ambBus); o.start();
   beds.engineTone = { g: og, o, cur: 0 };
+  initMotion();
 }
 /* struck bell: inharmonic partials, each with its own decay */
 function bell(vol) {
@@ -3078,6 +3433,7 @@ function updateAudio(dt) {
   }
   if (beds.engineTone && beds.engineTone.o)
     beds.engineTone.o.frequency.value = 52 + eng * 14;
+  updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */
   tBell -= dt; tGull -= dt; tHonk -= dt;
@@ -3122,6 +3478,128 @@ function thwip() {
   s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.22);
 }
 
+
+/* ---------------------------------------------------------------
+   MOTION — what the body and the line sound like. The city had a
+   voice and the swing had none: a thwip, then wind. All of it is
+   driven by numbers the simulation already has (line tension, the
+   speed of a landing, how close a wall is going by), so the sound
+   cannot disagree with what the physics is doing.
+   --------------------------------------------------------------- */
+const lineV = { o1: null, o2: null, lfo: null, g: null, strain: null, lvl: 0, f: 92 };
+const passV = { g: null, f: null, pan: null, lvl: 0 };
+function initMotion() {
+  /* the line: a string under load. Two partials an octave apart so the note
+     survives small speakers, and a slow waver so it creaks instead of beeping. */
+  const g = AC.createGain(); g.gain.value = 0;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 620; f.Q.value = 0.7;
+  const o1 = AC.createOscillator(); o1.type = 'triangle'; o1.frequency.value = 92;
+  const o2 = AC.createOscillator(); o2.type = 'sawtooth'; o2.frequency.value = 184;
+  const g2 = AC.createGain(); g2.gain.value = 0.22;
+  const lfo = AC.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 6.3;
+  const lg = AC.createGain(); lg.gain.value = 1.4;
+  lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
+  o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(g); g.connect(ambBus);
+  o1.start(); o2.start(); lfo.start();
+  lineV.o1 = o1; lineV.o2 = o2; lineV.lfo = lfo; lineV.g = g;
+  lineV.strain = makeBed('bandpass', 1500, 2.6, noiseBuf);
+  /* air squeezed between you and whatever you are passing */
+  const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+  passV.f = AC.createBiquadFilter(); passV.f.type = 'bandpass'; passV.f.frequency.value = 800; passV.f.Q.value = 0.9;
+  passV.g = AC.createGain(); passV.g.gain.value = 0;
+  src.connect(passV.f); passV.f.connect(passV.g);
+  if (AC.createStereoPanner) { passV.pan = AC.createStereoPanner(); passV.g.connect(passV.pan); passV.pan.connect(ambBus); }
+  else passV.g.connect(ambBus);
+  src.start();
+}
+
+/* How close the world is going by, 0..1, and on which side. Three short rays
+   (either side of the direction of travel, and overhead) plus the street
+   itself, which is a plane and not a box. Nothing here needs the audio
+   context, so it can be measured without one. */
+const PASS_REACH = 11;
+const near = { l: 0, r: 0, up: 0, lvl: 0, pan: 0 };
+function proximity(p, v) {
+  const spd = v.length(), vh = Math.hypot(v.x, v.z);
+  near.l = near.r = near.up = near.lvl = near.pan = 0;
+  if (spd < 12 || player.riding || player.inWater) return near;
+  /* straight up or down there is no "beside": fall back to the camera's */
+  const sx = vh > 2 ? -v.z / vh : camRight.x, sz = vh > 2 ? v.x / vh : camRight.z;
+  let h = rayHit(p.x, p.y, p.z, sx, 0, sz, PASS_REACH); if (h) near.l = 1 - h.t / PASS_REACH;
+  h = rayHit(p.x, p.y, p.z, -sx, 0, -sz, PASS_REACH); if (h) near.r = 1 - h.t / PASS_REACH;
+  h = rayHit(p.x, p.y, p.z, 0, 1, 0, PASS_REACH * 0.7); if (h) near.up = 1 - h.t / (PASS_REACH * 0.7);
+  const low = player.grounded ? 0 : clamp(1 - (p.y - RAD) / 5, 0, 1);
+  const n = Math.max(near.l, near.r, near.up, low);
+  near.lvl = n * Math.sqrt(n) * sstep(12, 46, spd);
+  near.pan = clamp((near.l - near.r) * (sx * camRight.x + sz * camRight.z), -1, 1);
+  return near;
+}
+
+function updateMotionAudio(dt) {
+  if (!lineV.g) return;
+  const w0 = player.webs[0], w1 = player.webs[1];
+  const w = w0.tension > w1.tension ? w0 : w1;
+  const tn = clamp(w.tension / 9000, 0, 1);
+  /* a string's pitch goes with the root of its tension and falls with its
+     length: a long line groans, a short one winched tight sings */
+  const want = 92 * Math.sqrt(Math.max(w.tension, 400) / 1800) * clamp(Math.sqrt(42 / Math.max(w.len, WEB_MIN)), 0.7, 1.7);
+  lineV.f = damp(lineV.f, clamp(want, 60, 420), 9, dt);
+  lineV.lvl = damp(lineV.lvl, w.on ? tn * Math.sqrt(tn) * 0.15 : 0, w.on ? 9 : 22, dt);
+  lineV.o1.frequency.value = lineV.f; lineV.o2.frequency.value = lineV.f * 2.005;
+  lineV.g.gain.value = lineV.lvl;
+  const st = lineV.strain;
+  st.cur = damp(st.cur, w.on ? tn * tn * 0.05 : 0, 10, dt);
+  st.g.gain.value = st.cur; st.f.frequency.value = 900 + 1900 * tn;
+
+  const n = proximity(player.p, player.v);
+  /* arrives at once, leaves slowly: a wall going by is an event, not a hum */
+  passV.lvl = damp(passV.lvl, n.lvl, n.lvl > passV.lvl ? 16 : 3.2, dt);
+  passV.g.gain.value = passV.lvl * 0.30;
+  passV.f.frequency.value = 480 + clamp(player.v.length() * 20, 0, 1500);
+  if (passV.pan) passV.pan.pan.value = damp(passV.pan.pan.value, n.pan * 0.85, 10, dt);
+}
+
+/* a short burst of the shared noise through one filter; most one-shots are this */
+function noiseHit(type, f0, f1, sweep, q, vol, attack, dur) {
+  const t = AC.currentTime;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = type; if (q) f.Q.value = q;
+  f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + sweep);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0002), t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  /* start somewhere new in the buffer each time, or every hit is the same hit */
+  s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.04);
+}
+
+/* landing: the weight arriving (a falling sine) and the surface answering
+   (noise, duller on a roof or the street than against a wall) */
+listen('land', (hit, ny) => {
+  if (!AC) return;
+  const vol = clamp(hit / 26, 0.06, 1), t = AC.currentTime;
+  const o = AC.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(118, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.17);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5 * vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.27);
+  const wall = ny < 0.6;
+  noiseHit('lowpass', wall ? 1500 : 760, wall ? 380 : 170, 0.12, 0.7, 0.34 * vol, 0.006, 0.19);
+});
+listen('step', (amp) => {
+  if (!AC) return;
+  const f = 520 + Math.random() * 260;
+  noiseHit('lowpass', f, f * 0.45, 0.05, 0.8, 0.07 * clamp(amp, 0.3, 1.1), 0.004, 0.075);
+});
+/* letting go at speed: the line whips away. A tap, or a release at a
+   standstill, has nothing to whip. */
+listen('release', (spd, age) => {
+  if (!AC || spd < 14 || age < 0.3) return;
+  const vol = clamp((spd - 14) / 38, 0.12, 1);
+  noiseHit('bandpass', 620, 2100, 0.2, 1.3, 0.17 * vol, 0.03, 0.34);
+});
 /* ---- minimap ---- */
 const mapCan = document.getElementById('map'), mctx = mapCan.getContext('2d');
 const MAPR = 620;
@@ -3172,7 +3650,20 @@ let hudT = 0, aimOk = false, missFlash = 0;
 listen('miss', () => { missFlash = 0.22; });
 const held = [false, false];
 let aimPt = null;
+/* The readouts are for when you want them, and in flight you are looking at
+   the city. After QUIET_AFTER seconds on the move they fade out (the map only
+   dims, and not at all during a ring run); stop, board an aircraft or press H
+   and they are back. While they are away a new district announces itself. */
+const QUIET_AFTER = 4, QUIET_GO = 9, QUIET_STOP = 4;   // seconds · m/s that counts as moving · m/s that counts as stopped
+let flowT = 0, stillT = 0, hudQuiet = false;
+function updateQuiet(dt, spd) {
+  if (player.riding || spd < QUIET_STOP) { stillT += dt; if (stillT > 0.6) flowT = 0; }
+  else if (spd > QUIET_GO) { stillT = 0; flowT += dt; }
+  const q = flowT > QUIET_AFTER;
+  if (q !== hudQuiet) { hudQuiet = q; document.body.classList.toggle('quiet', q); }
+}
 function updateHUD(dt) {
+  updateQuiet(dt, player.v.length());
   hudT -= dt; if (hudT > 0) return; hudT = 0.07;
   const spd = player.v.length();
   elSpd.innerHTML = (spd * 3.6).toFixed(0) + '<small>km/h</small>';
@@ -3185,7 +3676,7 @@ function updateHUD(dt) {
     : '—';
   elBar.style.width = clamp(tn / 14000, 0, 1) * 100 + '%';
   const z = ZONE_NAME[player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z)] || ZONE_NAME.mid;
-  if (elZone.textContent !== z) elZone.textContent = z;
+  if (elZone.textContent !== z) { elZone.textContent = z; if (hudQuiet) toast(z); }
   elRush.style.opacity = clamp((spd - 26) / 76, 0, 0.9);
   cross.classList.toggle('web', on);
   cross.classList.toggle('lock', aimOk);
@@ -3529,6 +4020,7 @@ loadSettings();   // applyDay() runs on the first frame with whatever dayT survi
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, clock.getDelta());   // consumed even while paused, so
+  pollPad(dt);                                    // before the pause check: start is how a pad resumes
   if (resumeWait > 0 && !paused) {
     resumeWait -= dt;
     if (resumeWait <= 0 && document.pointerLockElement !== renderer.domElement) setFreeLook(true);
@@ -3550,6 +4042,7 @@ function frame() {
   let fb = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
   let rl = (keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0);
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
+  if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
   inp.mzRaw = fb;
   let mfx = 0, mfz = 0;
@@ -3638,6 +4131,7 @@ function frame() {
   lampGlow.material.color.setRGB(1, 0.95, 0.8).multiplyScalar(0.25 + nite * 0.75);
 
   if (!photoMode) poseRig(dt, inp);
+  updateSash(dt);   // in photo mode too: the body is frozen in flight, the cloth is not
   updateCamera(dt);
   if (aimMark.visible) aimMark.quaternion.copy(camera.quaternion);   // billboard after the camera settles
 

@@ -152,6 +152,12 @@
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
     background:#05070a;font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.8}
   #load.gone{display:none}
+  /* ---- in flight the readouts step back; they return faster than they left ---- */
+  #band,#tbar,#help,#mapwrap{transition:opacity .35s}
+  body.quiet #band,body.quiet #tbar,body.quiet #help,body.quiet #mapwrap{transition:opacity 1.6s}
+  body.quiet #band,body.quiet #tbar,body.quiet #help{opacity:0}
+  body.quiet #mapwrap{opacity:.4}
+  body.quiet.run #mapwrap{opacity:1}
   /* ---- photo mode: nothing between the eye and the city ---- */
   body.photo #hud,body.photo #pbtn{display:none}
 
@@ -233,6 +239,7 @@
       <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
       <tr><td>C</td><td>photo mode</td></tr>
       <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
+      <tr><td>gamepad</td><td>triggers fire the webs</td></tr>
     </table>
     <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
   </div>

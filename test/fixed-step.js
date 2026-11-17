@@ -365,7 +365,392 @@ async function lineBite(page, check) {
   check('a line that bites announces it once; a miss does not', bite.onMiss === 0 && bite.onHit === 1, JSON.stringify(bite));
 }
 
-const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite];
+async function motionEvents(page, check) {
+  /* what the sound of moving is hung on: a landing is announced once, with
+     the speed it happened at; so is a release; a foot comes down at a rate set
+     by ground speed and not by the display; and the rush of something going by
+     is there beside a wall at speed and nowhere else. Polarity: standing still
+     and open sky must both read nothing. */
+  const ev = await page.evaluate(() => {
+    const seen = { land: [], release: [], step: 0 };
+    listen('land', (hit, ny) => seen.land.push({ hit, ny }));
+    listen('release', (spd, age) => seen.release.push({ spd, age }));
+    listen('step', () => seen.step++);
+    const drop = (hz, h) => {
+      __reset(hz); seen.land.length = 0;
+      player.p.set(-350, 0.85 + h, -182); player.v.set(0, 0, 0); player.airT = 1;
+      __run(hz * 3);
+      return { n: seen.land.length, hit: seen.land[0] ? seen.land[0].hit : 0, ny: seen.land[0] ? seen.land[0].ny : 0 };
+    };
+    const d60 = drop(60, 12), d240 = drop(240, 12);
+    seen.land.length = 0; __run(240 * 2); const standing = seen.land.length;
+
+    /* a wall, met side-on in flight */
+    __reset();
+    const b = buildings.find(b => b.h > 70 && b.kind === 'glass');
+    seen.land.length = 0;
+    player.p.set(b.x + b.w / 2 + 6, b.h * 0.6, b.z); player.v.set(-14, 0, 0); player.airT = 1; __run(40);
+    const wall = seen.land[0] || { hit: 0, ny: 9 };
+
+    __reset(); seen.release.length = 0;
+    player.p.set(-46, 80, -230); player.v.set(0, 0, 25);
+    fireWebAt(0, { x: -46, y: 130, z: -200, pl: null }); __run(45); releaseWeb(0); releaseWeb(0);
+    const rel = { n: seen.release.length, age: seen.release[0] ? seen.release[0].age : 0 };
+
+    const walk = (hz) => {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); yaw = 0; pitch = 0; __run(hz);
+      seen.step = 0; __run(hz); const still = seen.step;
+      keys['KeyW'] = true; __run(hz * 3); keys['KeyW'] = false;
+      return { still, steps: seen.step };
+    };
+    const w60 = walk(60), w240 = walk(240);
+
+    /* beside a tower at 108 km/h, then the same flight in open sky, then slowly */
+    __reset(); yaw = 0; pitch = 0; updateCamDirs();
+    const P = new THREE.Vector3(b.x + b.w / 2 + 3.85, b.h * 0.6, b.z), fast = new THREE.Vector3(0, 0, 30);
+    player.grounded = false;
+    const beside = Object.assign({}, proximity(P, fast));
+    const sky = proximity(new THREE.Vector3(P.x, 420, P.z), fast).lvl;
+    const slow = proximity(P, new THREE.Vector3(0, 0, 6)).lvl;
+    yaw = Math.PI; updateCamDirs();
+    const flipped = proximity(P, fast).pan;
+    return { d60, d240, standing, wall, rel, w60, w240, beside, sky, slow, flipped, want: Math.sqrt(2 * G * 12) };
+  });
+  check('a landing is announced once, at the speed it happened',
+    ev.d60.n === 1 && ev.d240.n === 1 && Math.abs(ev.d60.hit - ev.want) < 2.5 && Math.abs(ev.d240.hit - ev.want) < 2.5 && ev.d60.ny > 0.9,
+    'a 12 m drop: ' + ev.d60.hit.toFixed(1) + ' m/s at 60 Hz, ' + ev.d240.hit.toFixed(1) + ' at 240 Hz (free fall ' + ev.want.toFixed(1) + ')');
+  check('standing on the street announces nothing', ev.standing === 0, ev.standing + ' landings in 2 s');
+  check('a wall met side-on is a landing too, and says it was a wall', ev.wall.hit > 10 && ev.wall.hit < 16 && Math.abs(ev.wall.ny) < 0.1,
+    ev.wall.hit.toFixed(1) + ' m/s, normal y ' + ev.wall.ny.toFixed(2));
+  check('a release is announced once, with its time on the line', ev.rel.n === 1 && Math.abs(ev.rel.age - 0.75) < 0.03,
+    ev.rel.n + ' event(s), ' + ev.rel.age.toFixed(2) + ' s');
+  check('footfalls follow ground speed, not the frame rate', ev.w60.still === 0 && ev.w240.still === 0 && ev.w60.steps > 6 && Math.abs(ev.w60.steps - ev.w240.steps) <= 1,
+    ev.w60.steps + ' steps in 3 s at 60 Hz, ' + ev.w240.steps + ' at 240 Hz');
+  check('the rush of a wall going by: there beside a tower at speed', ev.beside.lvl > 0.2 && ev.beside.l > 0.5 && ev.beside.r === 0,
+    'level ' + ev.beside.lvl.toFixed(2) + ', wall side ' + ev.beside.l.toFixed(2));
+  check('no rush in open sky or at walking pace', ev.sky === 0 && ev.slow === 0, 'sky ' + ev.sky + ', slow ' + ev.slow);
+  check('the rush is heard on the side the wall is on', ev.beside.pan > 0.5 && ev.flipped < -0.5,
+    'pan ' + ev.beside.pan.toFixed(2) + ' facing along the wall, ' + ev.flipped.toFixed(2) + ' facing back');
+}
+
+async function landing(page, check) {
+  /* a fast touchdown rolls: the ground declines to stop you for a moment, and
+     a jump inside that moment leaves with the speed. Polarity: on the old
+     ground (grip 6.2 from the first step) 30 m/s was 4.7 m/s after 0.3 s. It
+     must also give nothing away: running into the roll adds no speed, hopping
+     from roll to roll only loses it, and at a walk nothing has changed. */
+  const r = await page.evaluate(() => {
+    const hs = () => Math.hypot(player.v.x, player.v.z);
+    const touch = (hz, vx, held) => {
+      __reset(hz); yaw = -Math.PI / 2; pitch = 0;          // facing +x, along the road
+      player.p.set(-350, 2.2, -182); player.v.set(vx, -4, 0); player.airT = 1; player.roll = 9; player.grounded = false;
+      let f = 0; while (!player.grounded && f++ < hz) __run(1);
+      if (held) keys[held] = true;
+      return hs();
+    };
+    const after = (hz, vx, secs, held) => { touch(hz, vx, held); __run(Math.round(hz * secs)); const v = hs(); keys[held] = false; return v; };
+    const out = { at60: after(60, 30, 0.3), at240: after(240, 30, 0.3), rest: after(60, 30, 2.0), walk: after(60, 6, 0.3) };
+    /* the old ground, for the polarity: the same touchdown with the roll switched off */
+    touch(60, 30); player.roll = 9; __run(18); out.old = hs();
+    /* jump a quarter of a second in */
+    const v0 = touch(60, 30); __run(15); jumpEdge = true; __run(4);
+    out.jump = { v0, v: hs(), vy: player.v.y, up: !player.grounded };
+    /* run with it, as hard as the legs go, and watch for any gain */
+    touch(60, 30, 'KeyW'); keys['ShiftLeft'] = true; let top = 0;
+    for (let i = 0; i < 90; i++) { __run(1); top = Math.max(top, hs()); }
+    keys['KeyW'] = keys['ShiftLeft'] = false; out.pushed = top; out.sprint = hs();
+    /* hop from roll to roll */
+    touch(60, 30); const hops = [hs()];
+    for (let k = 0; k < 5; k++) {
+      __run(10); jumpEdge = true; __run(2);
+      let f = 0; while (!player.grounded && f++ < 400) __run(1);
+      hops.push(hs());
+    }
+    out.hops = hops; out.rollOver = player.roll;
+    return out;
+  });
+  check('a 108 km/h touchdown is still moving 0.3 s later', r.at60 > 24 && Math.abs(r.at60 - r.at240) < 0.5 && r.old < 7,
+    r.at60.toFixed(1) + ' m/s at 60 Hz, ' + r.at240.toFixed(1) + ' at 240 Hz (without the roll: ' + r.old.toFixed(1) + ')');
+  check('a jump out of the roll takes the speed with it', r.jump.up && r.jump.v > 0.8 * r.jump.v0 && r.jump.vy > 8,
+    r.jump.v.toFixed(1) + ' of ' + r.jump.v0.toFixed(1) + ' m/s, rising at ' + r.jump.vy.toFixed(1));
+  check('left alone, the roll ends and you stop', r.rest < 0.5, r.rest.toFixed(2) + ' m/s after 2 s');
+  check('at a walk the ground is as it was', r.walk < 1.5, r.walk.toFixed(2) + ' m/s 0.3 s after a 6 m/s touchdown');
+  check('running into the roll adds nothing', r.pushed <= 30.05 && r.sprint < 11 && r.sprint > 8,
+    'peak ' + r.pushed.toFixed(2) + ' m/s from a 30 m/s touchdown, settling to a ' + r.sprint.toFixed(1) + ' m/s sprint');
+  check('hopping from roll to roll only loses speed', r.hops.every((v, i, a) => i === 0 || v < a[i - 1]),
+    r.hops.map(v => v.toFixed(1)).join(' > ') + ' m/s');
+}
+
+async function wallRun(page, check) {
+  /* a wall met while travelling along it carries most of your weight for a
+     moment. Polarity: the same launch in open air is plain free fall. It must
+     not be a source of height or energy, must not happen head-on, slowly, on a
+     line or in a dive, and must run out. */
+  const r = await page.evaluate(() => {
+    const b = buildings.filter(b => b.kind === 'glass' && b.h > 90 && b.d > 44).sort((a, c) => c.h - a.h)[0];
+    const face = b.x + b.w / 2, z0 = b.z - b.d / 2 + 2, y0 = b.h * 0.75;
+    const E = () => 0.5 * player.v.lengthSq() + G * player.p.y;
+    const fly = (hz, o) => {
+      __reset(hz); yaw = 0; pitch = 0;
+      const air = o.air ? 400 : 0;                       // the same launch, clear of everything
+      player.p.set(face + RAD + 0.01 + air, y0 + air, z0); player.v.set(o.vx, o.vy || 0, o.vz);
+      player.grounded = false; player.wallT = WALL_T; player.airT = 0; player.touch = false;
+      if (o.line) fireWebAt(0, { x: face + 30, y: y0 + 60, z: z0 + 30, pl: null });
+      if (o.dive) keys['ShiftLeft'] = true;
+      const e0 = E(), out = { ran: 0, gain: -1e9, top: -1e9 }, n = Math.round(hz * (o.secs || 1));
+      for (let i = 0; i < n; i++) {
+        __run(1);
+        if (player.wallRun) out.ran++;
+        out.gain = Math.max(out.gain, E() - e0); out.top = Math.max(out.top, player.p.y - y0 - air);
+        if (o.kickAt === i) jumpEdge = true;
+      }
+      keys['ShiftLeft'] = false; releaseWeb(0);
+      out.drop = y0 + air - player.p.y; out.ran /= hz; out.vy = player.v.y; out.left = player.wallT;
+      out.off = (player.p.x - air - face - RAD); out.vOut = player.v.x;
+      return out;
+    };
+    return {
+      wall: fly(60, { vx: -2, vz: 22 }), wall240: fly(240, { vx: -2, vz: 22 }), free: fly(60, { vx: -2, vz: 22, air: true }),
+      headOn: fly(60, { vx: -22, vz: 3 }), slow: fly(60, { vx: -2, vz: 7 }),
+      line: fly(60, { vx: -2, vz: 22, line: true }), dive: fly(60, { vx: -2, vz: 22, dive: true }),
+      long: fly(60, { vx: -2, vz: 18, secs: 2.2 }),
+      rising: fly(60, { vx: -2, vy: 12, vz: 22 }), risingFree: fly(60, { vx: -2, vy: 12, vz: 22, air: true }),
+      kick: fly(60, { vx: -2, vz: 22, kickAt: 20, secs: 0.4 }), depth: b.d, h: b.h
+    };
+  });
+  check('a wall run along a tower face sinks a fraction of free fall', r.wall.ran > 0.9 && r.wall.drop < 0.45 * r.free.drop && r.free.drop > 10,
+    r.wall.drop.toFixed(1) + ' m lost in 1 s on the wall, ' + r.free.drop.toFixed(1) + ' m in open air');
+  check('the wall run is the same at 240 Hz', Math.abs(r.wall.drop - r.wall240.drop) < 0.3, r.wall.drop.toFixed(2) + ' vs ' + r.wall240.drop.toFixed(2) + ' m');
+  check('no wall run head-on, at a jog, on a line or in a dive', r.headOn.ran === 0 && r.slow.ran === 0 && r.line.ran === 0 && r.dive.ran === 0,
+    [r.headOn.ran, r.slow.ran, r.line.ran, r.dive.ran].join(' / ') + ' s');
+  check('the wall run runs out', r.long.ran > 1.2 && r.long.ran < 1.4 && r.long.vy < -12, r.long.ran.toFixed(2) + ' s on the wall, then falling at ' + r.long.vy.toFixed(1) + ' m/s');
+  check('the wall never lifts: no energy gained, no height beyond a plain throw',
+    r.wall.gain < 0.5 && r.rising.gain < 0.5 && r.rising.top < r.risingFree.top + 0.1,
+    'energy change at most ' + Math.max(r.wall.gain, r.rising.gain).toFixed(2) + ' J/kg, peak ' + r.rising.top.toFixed(2) + ' m on the wall vs ' + r.risingFree.top.toFixed(2) + ' m thrown');
+  check('a jump kicks off the wall and buys the next run', r.kick.vOut > 8 && r.kick.vy > 0 && r.kick.off > 0.3 && r.kick.left === 1.3,
+    r.kick.vOut.toFixed(1) + ' m/s off the wall, ' + r.kick.vy.toFixed(1) + ' up, ' + r.kick.left + ' s of wall in hand');
+}
+
+async function strandPicture(page, check) {
+  /* the drawn line: it leaves the hand and reaches the anchor in a time set
+     by distance, not by the display; it is dead straight while it carries
+     weight; and when it is longer than the gap it hangs by what a rope of that
+     length would. Polarity: a line switched off draws nothing at all. */
+  const r = await page.evaluate(() => {
+    const drawn = (i) => { let n = 0; const a = strandMesh.instanceMatrix.array; for (let k = 0; k < STRAND_SEG; k++) if (a[(i * STRAND_SEG + k) * 16 + 5] !== 0 || a[(i * STRAND_SEG + k) * 16 + 4] !== 0) n++; return n; };
+    const A = { x: -46, y: 260, z: -230, pl: null };
+    const arrive = (hz) => {
+      __reset(hz); assist = false; player.p.set(-46, 180, -230); player.v.set(0, 0, 0); player.grounded = false; __run(2);
+      fireWebAt(0, A);
+      let f = 0, early = splats[0].visible; const tip0 = strandTip[0].distanceTo(player.p);
+      do { __run(1); f++; if (splats[0].visible && strandTip[0].distanceTo(player.webs[0].a) > 0.5) early = true; }
+      while (f < hz && strandTip[0].distanceTo(player.webs[0].a) > 0.5);
+      const tip1 = f === 1 ? 0 : -1;   // one frame in, it must not be there yet
+      return { t: f / hz, early, tip0, tip1, splat: splats[0].visible };
+    };
+    const a60 = arrive(60), a144 = arrive(144), a240 = arrive(240);
+    /* hang on it until it is carrying you */
+    __run(240 * 4);
+    const w = player.webs[0];
+    const taut = { sag: strandSag[0], tension: w.tension, segs: drawn(0), other: drawn(1) };
+    /* and the arm holding it reaches for the anchor. Polarity: this read -0.94
+       while the aim was computed as anchor minus anchor. */
+    const arm = [[shoulderL, elbowL], [shoulderR, elbowR]].map(([sh, el]) => {
+      const s = sh.getWorldPosition(new THREE.Vector3()), h = el.localToWorld(new THREE.Vector3(0, -FORE - 0.05, 0));
+      return { reach: h.clone().sub(s).normalize().dot(w.a.clone().sub(s).normalize()), mine: h.distanceTo(w.hand) < 1e-6 };
+    }).find(a => a.mine);
+    taut.reach = arm ? arm.reach : -9;
+    /* now hold still off to one side, some 10 m nearer the anchor than the line is long */
+    for (let i = 0; i < 240; i++) { player.p.set(A.x + 60, A.y - 36, A.z); player.v.set(0, 0, 0); __run(1); }
+    const d = w.hand.distanceTo(w.a), loose = w.len - player.p.distanceTo(w.a);
+    const slack = { sag: strandSag[0], want: Math.min(Math.sqrt(0.375 * d * loose), 0.3 * d), len: w.len, d, loose };
+    slack.across = Math.hypot(w.a.x - w.hand.x, w.a.z - w.hand.z) / d;   // how much of "down" is across the line
+    /* the middle of the drawn line really is that far off the straight one */
+    const mid = new THREE.Vector3(), m4 = new THREE.Matrix4();
+    strandMesh.getMatrixAt(STRAND_SEG / 2, m4); mid.setFromMatrixPosition(m4);
+    const line = new THREE.Line3(w.hand.clone(), w.a.clone()), on = new THREE.Vector3();
+    line.closestPointToPoint(mid, true, on); slack.off = mid.distanceTo(on);
+    releaseWeb(0); __run(2); assist = true;
+    return { a60, a144, a240, taut, slack, want: shootTime(80), gone: drawn(0), splatGone: !splats[0].visible };
+  });
+  const ts = [r.a60, r.a144, r.a240];
+  check('the strand reaches an anchor 80 m off in the same time at 60/144/240 Hz',
+    /* the hand is an arm's reach up the line, so the span is a little under 80 m */
+    ts.every(a => a.t >= r.want - 0.006 && a.t < r.want + 0.03 && a.tip1 === -1 && !a.early && a.splat),
+    ts.map(a => a.t.toFixed(3)).join(' / ') + ' s (travel time for 80 m: ' + r.want.toFixed(3) + ' s)');
+  check('the arm on the line reaches for the anchor', r.taut.reach > 0.95, 'hand is ' + r.taut.reach.toFixed(3) + ' along the direction to it');
+  check('a line carrying weight is drawn straight, all of it', r.taut.tension > 1200 && r.taut.sag < 0.02 && r.taut.segs === 12 && r.taut.other === 0,
+    'sag ' + r.taut.sag.toFixed(3) + ' m at ' + (r.taut.tension / 1000).toFixed(1) + ' kN, ' + r.taut.segs + ' segments');
+  check('a slack line hangs like a rope of its length', r.slack.want > 3 && Math.abs(r.slack.sag - r.slack.want) < 0.02 * r.slack.want &&
+    Math.abs(r.slack.off - r.slack.sag * r.slack.across) < 0.05 * r.slack.sag,
+    'sag ' + r.slack.sag.toFixed(1) + ' m for ' + r.slack.loose.toFixed(1) + ' m of slack over ' + r.slack.d.toFixed(0) + ' m (rope: ' + r.slack.want.toFixed(1) + '), drawn ' + r.slack.off.toFixed(1) + ' m off the chord');
+  check('a released line draws nothing', r.gone === 0 && r.splatGone, r.gone + ' segments');
+}
+
+async function sashCloth(page, check) {
+  /* the sash is there to show the air going past, so that is what is
+     measured: it hangs when you stand, streams dead astern in flight (in
+     photo mode too), keeps its length, stays behind the back, and does the
+     same thing at any frame rate. Polarity: standing and flying must differ. */
+  const r = await page.evaluate(() => {
+    const end = () => { const o = (SASH_N - 1) * 3, v = new THREE.Vector3(sashQ[o], sashQ[o + 1], sashQ[o + 2]); return v.normalize(); };
+    const shape = () => {
+      let stretch = 0, front = 0, ok = true, bend = 0;
+      const tip = new THREE.Vector3(sashQ[SASH_N * 3 - 3], sashQ[SASH_N * 3 - 2], sashQ[SASH_N * 3 - 1]), chord = new THREE.Line3(new THREE.Vector3(), tip), on = new THREE.Vector3(), pt = new THREE.Vector3();
+      for (let i = 1; i < SASH_N; i++) {
+        bend = Math.max(bend, chord.closestPointToPoint(pt.set(sashQ[i * 3], sashQ[i * 3 + 1], sashQ[i * 3 + 2]), true, on).distanceTo(pt));
+        const o = i * 3, d = Math.hypot(sashQ[o] - sashQ[o - 3], sashQ[o + 1] - sashQ[o - 2], sashQ[o + 2] - sashQ[o - 1]);
+        stretch = Math.max(stretch, Math.abs(d / SASH_SEG - 1));
+        front = Math.min(front, sashQ[o] * sashBack.x + sashQ[o + 1] * sashBack.y + sashQ[o + 2] * sashBack.z);
+        ok = ok && isFinite(d);
+      }
+      return { stretch, front, ok, bend };
+    };
+    const fly = (hz, vx, vy, vz, secs) => {
+      __reset(hz); yaw = 0; pitch = 0;
+      let worst = { stretch: 0, front: 0, ok: true, bend: 0 };
+      for (let i = 0; i < hz * secs; i++) {
+        player.p.set(-46, 300, -230); player.v.set(vx, vy, vz); player.grounded = false; __run(1);
+        if (i > hz) { const s = shape(); worst = { stretch: Math.max(worst.stretch, s.stretch), front: Math.min(worst.front, s.front), ok: worst.ok && s.ok, bend: Math.max(worst.bend, s.bend) }; }
+      }
+      const e = end(), v = new THREE.Vector3(vx, vy, vz).normalize();
+      return { astern: -e.dot(v), e, worst };
+    };
+    __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(240);
+    const rest = { down: -end().y, shape: shape() };
+    const f60 = fly(60, 0, 0, 34, 3), f30 = fly(30, 0, 0, 34, 3), f240 = fly(240, 0, 0, 34, 3);
+    const dive = fly(60, 0, -45, 8, 3), fast = fly(60, 0, -90, 110, 2);
+    /* frozen for a photograph in the middle of that flight */
+    fly(60, 0, 0, 34, 2); setPhoto(true); __run(120); const photo = -end().dot(new THREE.Vector3(0, 0, 1)); setPhoto(false);
+    respawn(); __run(3); const jumped = shape();
+    return { rest, f60, dive, fast, photo, jumped, rates: Math.min(f60.e.dot(f30.e), f60.e.dot(f240.e)), verts: sashGeo.attributes.position.count };
+  });
+  check('standing, the sash hangs; in flight it streams dead astern', r.rest.down > 0.8 && r.f60.astern > 0.9 && r.dive.astern > 0.9,
+    'hanging ' + r.rest.down.toFixed(2) + ', astern ' + r.f60.astern.toFixed(2) + ' level and ' + r.dive.astern.toFixed(2) + ' in a dive');
+  check('the sash keeps its length and stays behind the back, even at 500 km/h',
+    Math.max(r.rest.shape.stretch, r.f60.worst.stretch, r.dive.worst.stretch, r.fast.worst.stretch) < 0.06 &&
+    Math.min(r.rest.shape.front, r.f60.worst.front, r.fast.worst.front) > -0.01 && r.fast.worst.ok && r.fast.astern > 0.9,
+    'worst stretch ' + (Math.max(r.f60.worst.stretch, r.dive.worst.stretch, r.fast.worst.stretch) * 100).toFixed(1) + '%, ' + (-Math.min(r.f60.worst.front, r.fast.worst.front) * 100).toFixed(1) + ' cm through the back');
+  check('streaming, the sash ripples: it is cloth, not a stick', r.f60.worst.bend > 0.03 && r.f60.worst.bend < 0.3,
+    'up to ' + (r.f60.worst.bend * 100).toFixed(1) + ' cm off straight over ' + (0.13 * 8 * 100).toFixed(0) + ' cm');
+  check('the sash streams the same way at 30, 60 and 240 Hz', r.rates > 0.9, 'directions agree to ' + r.rates.toFixed(3));
+  check('frozen for a photo mid-flight, the sash still streams', r.photo > 0.9, 'astern ' + r.photo.toFixed(2));
+  check('a respawn does not whip the sash', r.jumped.ok && r.jumped.stretch < 0.06, 'stretch ' + (r.jumped.stretch * 100).toFixed(1) + '% three frames after');
+}
+
+async function gamepad(page, check) {
+  /* a pad drives the same game: a trigger is a held web, A is one jump at any
+     frame rate, the sticks walk and turn on real time, start pauses and
+     resumes without asking for the pointer, and a landing is felt.
+     Polarity: with no pad announced, none of it is polled. */
+  const r = await page.evaluate(() => {
+    const btn = () => ({ pressed: false, value: 0 });
+    const fake = { connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn), felt: [],
+      vibrationActuator: { playEffect(type, o) { fake.felt.push(o); return Promise.resolve(); } } };
+    let polled = 0;
+    Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { polled++; return [null, fake]; } });
+    const press = (i, on) => { fake.buttons[i].pressed = on; fake.buttons[i].value = on ? 1 : 0; };
+    __reset(); __run(30); const unannounced = polled;
+    dispatchEvent(new Event('gamepadconnected')); started = true;
+
+    /* right trigger: one line, held as long as the trigger is */
+    let bites = 0; listen('attach', () => bites++);
+    const tw = buildings.filter(b => b.kind === 'glass' && b.h > 90).sort((a, c) => c.h - a.h)[0];
+    player.p.set(tw.x + tw.w / 2 + 40, tw.h * 0.5, tw.z); player.v.set(0, 0, 0); player.grounded = false;
+    yaw = Math.PI / 2; pitch = 0.3; __run(3);                    // facing the tower, looking up its face
+    const aimed = !!aimPt;
+    fake.buttons[7].value = 0.6; __run(30);                      // an analogue trigger, most of the way down
+    const web = { on: player.webs[1].on, held: held[1], other: player.webs[0].on, bites };
+    fake.buttons[7].value = 0; __run(2); web.off = !player.webs[1].on && !held[1];
+
+    const hop = (hz) => {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(hz);
+      press(0, true); __run(Math.ceil(hz / 10)); const vy = player.v.y; __run(Math.ceil(hz / 5));
+      const glide = inp.glide; press(0, false); __run(2);
+      return { vy, glide, after: inp.glide };
+    };
+    const j60 = hop(60), j240 = hop(240);
+
+    const walk = (x, y) => {
+      __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); yaw = 0; pitch = 0; __run(40);
+      fake.axes[0] = x; fake.axes[1] = y; __run(90); fake.axes[0] = fake.axes[1] = 0;
+      return { vx: player.v.x, vz: player.v.z };
+    };
+    const fwd = walk(0, -1), drift = walk(0.1, -0.1);
+
+    const turn = (hz) => { __reset(hz); yaw = 0; pitch = 0; fake.axes[2] = 1; fake.axes[3] = -0.5; __run(hz); fake.axes[2] = fake.axes[3] = 0; return { yaw, pitch }; };
+    const t60 = turn(60), t240 = turn(240);
+
+    /* a landing, felt */
+    __reset(); fake.felt.length = 0;
+    player.p.set(-350, 12, -182); player.v.set(0, 0, 0); player.grounded = false; player.airT = 1; __run(90);
+    const thump = fake.felt.reduce((m, o) => Math.max(m, o.strongMagnitude), 0);
+
+    /* start: pause, and everything else goes dead; start again: back, with no pointer asked for */
+    __reset(); const asked = []; const realLock = renderer.domElement.requestPointerLock;
+    renderer.domElement.requestPointerLock = function () { asked.push(1); };
+    press(9, true); __run(2); press(9, false); __run(2); const pausedNow = paused;
+    press(0, true); fake.axes[2] = 1; const y0 = yaw; __run(10); const deadJump = jumpEdge, deadLook = yaw === y0; press(0, false); fake.axes[2] = 0; __run(2);
+    press(9, true); __run(2); press(9, false); __run(60);
+    const resumed = !paused, lockAsked = asked.length, cursorMode = freeLook;
+    renderer.domElement.requestPointerLock = realLock;
+    fake.connected = false; __run(2);
+    return { unannounced, aimed, web, j60, j240, fwd, drift, t60, t240, thump, pausedNow, deadJump, deadLook, resumed, lockAsked, cursorMode, want: PAD_LOOK * sens / 0.0034 };
+  });
+  check('gamepad: nothing is polled until a pad announces itself', r.unannounced === 0, r.unannounced + ' polls in 30 frames');
+  check('gamepad: a trigger is one line, held while the trigger is', r.aimed && r.web.on && r.web.held && !r.web.other && r.web.bites === 1 && r.web.off, JSON.stringify(r.web));
+  check('gamepad: A is one jump at 60 and 240 Hz, and held in the air it glides',
+    r.j60.vy > 12 && r.j60.vy < 16 && r.j240.vy > 12 && r.j240.vy < 16 && r.j60.glide && r.j240.glide && !r.j60.after,
+    'vy ' + r.j60.vy.toFixed(1) + ' / ' + r.j240.vy.toFixed(1) + ' m/s after 0.1 s');
+  check('gamepad: the left stick walks, and a stick at rest in its dead zone does not', r.fwd.vz > 5 && Math.abs(r.fwd.vx) < 0.5 && Math.hypot(r.drift.vx, r.drift.vz) < 0.05,
+    'forward ' + r.fwd.vz.toFixed(1) + ' m/s, drift ' + Math.hypot(r.drift.vx, r.drift.vz).toFixed(3));
+  check('gamepad: the right stick turns on real time, not frames', Math.abs(r.t60.yaw - r.want) < 0.02 && Math.abs(r.t60.yaw - r.t240.yaw) < 0.02 && r.t60.pitch > 0.3 && Math.abs(r.t60.pitch - r.t240.pitch) < 0.02,
+    'a second at full stick: ' + r.t60.yaw.toFixed(3) + ' rad at 60 Hz, ' + r.t240.yaw.toFixed(3) + ' at 240 Hz');
+  check('gamepad: a landing is felt', r.thump > 0.4, 'strong motor at ' + r.thump.toFixed(2) + ' for a 12 m drop');
+  check('gamepad: start pauses, a paused pad does nothing, start resumes without asking for the pointer',
+    r.pausedNow && !r.deadJump && r.deadLook && r.resumed && r.lockAsked === 0 && !r.cursorMode,
+    JSON.stringify({ paused: r.pausedNow, resumed: r.resumed, lockAsked: r.lockAsked, cursorMode: r.cursorMode }));
+}
+
+async function quietHud(page, check) {
+  /* the readouts leave after four seconds on the move and come back when you
+     stop. Polarity: three seconds in they are still there. A roll across a
+     roof is not stopping; riding an aircraft is. */
+  const r = await page.evaluate(() => {
+    const st = document.createElement('style'); st.textContent = '#band,#tbar,#help,#mapwrap{transition:none !important}'; document.head.appendChild(st);
+    const op = (id) => +getComputedStyle(document.getElementById(id)).opacity;
+    const quiet = () => document.body.classList.contains('quiet');
+    const hold = (secs, x, vz, z) => { for (let i = 0; i < 60 * secs; i++) { player.p.set(x, 300, z || -230); player.v.set(0, 0, vz); player.grounded = false; __run(1); } };
+    __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(120);
+    const out = { start: quiet(), band0: op('band') };
+    hold(3, -46, 30); out.at3 = quiet();
+    hold(1.5, -46, 30); out.at45 = quiet(); out.band = op('band'); out.tbar = op('tbar'); out.map = op('mapwrap');
+    /* a new district, while the band that names it is away */
+    toastEl.textContent = ''; hold(0.3, 300, 30, 150); out.zone = elZone.textContent; out.said = toastEl.textContent;
+    document.body.classList.add('run'); out.mapRun = op('mapwrap'); document.body.classList.remove('run');
+    /* down onto the street at speed, roll, and off again: never stopped */
+    player.p.set(-350, 2.2, -182); player.v.set(26, -4, 0); player.grounded = false; player.airT = 1;
+    __run(20); jumpEdge = true; __run(20); out.afterRoll = quiet();
+    tapKey('KeyH'); __run(2); out.afterH = quiet(); tapKey('KeyH');
+    hold(4.5, -46, 30); out.again = quiet();
+    player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(30); out.justStopped = quiet(); __run(40); out.stopped = quiet(); out.bandBack = op('band');
+    hold(4.5, -46, 30); const pl = planes[0];
+    player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(2); mountEdge = true; __run(60); out.riding = !!player.riding; out.aboard = quiet();
+    player.riding = null; st.remove();
+    return out;
+  });
+  check('the readouts are there at a standstill and three seconds into a flight', !r.start && r.band0 === 1 && !r.at3);
+  check('after four seconds on the move they are gone, and the map only dims', r.at45 && r.band === 0 && r.tbar === 0 && r.map > 0.2 && r.map < 0.6,
+    'band ' + r.band + ', map ' + r.map);
+  check('a district entered while they are away announces itself', r.zone.length > 3 && r.said === r.zone, '"' + r.said + '"');
+  check('in a ring run the map stays', r.mapRun === 1, 'opacity ' + r.mapRun);
+  check('a roll across the ground is not a stop; H, a real stop and boarding an aircraft are',
+    r.afterRoll && !r.afterH && r.again && r.justStopped && !r.stopped && r.bandBack === 1 && r.riding && !r.aboard,
+    JSON.stringify({ afterRoll: r.afterRoll, afterH: r.afterH, again: r.again, stopped: r.stopped, aboard: r.aboard }));
+}
+
+const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
@@ -384,10 +769,22 @@ module.exports = async function fixedStep({ newPage, BASE, check }) {
     };
   });
   await page.waitForTimeout(150);   // let the one already-queued rAF callback drain
+  /* ONLY=motionEvents,webEnergy runs just those; the sections are independent */
+  const only = (process.env.ONLY || '').split(',').filter(Boolean);
   for (const section of SECTIONS) {
+    if (only.length && !only.includes(section.name)) continue;
     await page.evaluate(() => __reset());
     await section(page, check);
   }
   check('fixed-step console clean', page.errors.length === 0, page.errors.join(' | ') || 'no errors');
   await ctx.close();
 };
+
+/* run directly for this pass alone:  node test/fixed-step.js */
+if (require.main === module) {
+  (async () => {
+    const suite = await require('./harness').start();
+    await module.exports(suite);
+    await suite.finish();
+  })().catch(e => { console.error('FIXED-STEP CRASHED:', e); process.exit(1); });
+}

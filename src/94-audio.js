@@ -44,6 +44,7 @@ function initAmbience() {
   const og = AC.createGain(); og.gain.value = 0;
   o.connect(of); of.connect(og); og.connect(ambBus); o.start();
   beds.engineTone = { g: og, o, cur: 0 };
+  initMotion();
 }
 /* struck bell: inharmonic partials, each with its own decay */
 function bell(vol) {
@@ -141,6 +142,7 @@ function updateAudio(dt) {
   }
   if (beds.engineTone && beds.engineTone.o)
     beds.engineTone.o.frequency.value = 52 + eng * 14;
+  updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */
   tBell -= dt; tGull -= dt; tHonk -= dt;
@@ -185,3 +187,125 @@ function thwip() {
   s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.22);
 }
 
+
+/* ---------------------------------------------------------------
+   MOTION — what the body and the line sound like. The city had a
+   voice and the swing had none: a thwip, then wind. All of it is
+   driven by numbers the simulation already has (line tension, the
+   speed of a landing, how close a wall is going by), so the sound
+   cannot disagree with what the physics is doing.
+   --------------------------------------------------------------- */
+const lineV = { o1: null, o2: null, lfo: null, g: null, strain: null, lvl: 0, f: 92 };
+const passV = { g: null, f: null, pan: null, lvl: 0 };
+function initMotion() {
+  /* the line: a string under load. Two partials an octave apart so the note
+     survives small speakers, and a slow waver so it creaks instead of beeping. */
+  const g = AC.createGain(); g.gain.value = 0;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 620; f.Q.value = 0.7;
+  const o1 = AC.createOscillator(); o1.type = 'triangle'; o1.frequency.value = 92;
+  const o2 = AC.createOscillator(); o2.type = 'sawtooth'; o2.frequency.value = 184;
+  const g2 = AC.createGain(); g2.gain.value = 0.22;
+  const lfo = AC.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 6.3;
+  const lg = AC.createGain(); lg.gain.value = 1.4;
+  lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
+  o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(g); g.connect(ambBus);
+  o1.start(); o2.start(); lfo.start();
+  lineV.o1 = o1; lineV.o2 = o2; lineV.lfo = lfo; lineV.g = g;
+  lineV.strain = makeBed('bandpass', 1500, 2.6, noiseBuf);
+  /* air squeezed between you and whatever you are passing */
+  const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+  passV.f = AC.createBiquadFilter(); passV.f.type = 'bandpass'; passV.f.frequency.value = 800; passV.f.Q.value = 0.9;
+  passV.g = AC.createGain(); passV.g.gain.value = 0;
+  src.connect(passV.f); passV.f.connect(passV.g);
+  if (AC.createStereoPanner) { passV.pan = AC.createStereoPanner(); passV.g.connect(passV.pan); passV.pan.connect(ambBus); }
+  else passV.g.connect(ambBus);
+  src.start();
+}
+
+/* How close the world is going by, 0..1, and on which side. Three short rays
+   (either side of the direction of travel, and overhead) plus the street
+   itself, which is a plane and not a box. Nothing here needs the audio
+   context, so it can be measured without one. */
+const PASS_REACH = 11;
+const near = { l: 0, r: 0, up: 0, lvl: 0, pan: 0 };
+function proximity(p, v) {
+  const spd = v.length(), vh = Math.hypot(v.x, v.z);
+  near.l = near.r = near.up = near.lvl = near.pan = 0;
+  if (spd < 12 || player.riding || player.inWater) return near;
+  /* straight up or down there is no "beside": fall back to the camera's */
+  const sx = vh > 2 ? -v.z / vh : camRight.x, sz = vh > 2 ? v.x / vh : camRight.z;
+  let h = rayHit(p.x, p.y, p.z, sx, 0, sz, PASS_REACH); if (h) near.l = 1 - h.t / PASS_REACH;
+  h = rayHit(p.x, p.y, p.z, -sx, 0, -sz, PASS_REACH); if (h) near.r = 1 - h.t / PASS_REACH;
+  h = rayHit(p.x, p.y, p.z, 0, 1, 0, PASS_REACH * 0.7); if (h) near.up = 1 - h.t / (PASS_REACH * 0.7);
+  const low = player.grounded ? 0 : clamp(1 - (p.y - RAD) / 5, 0, 1);
+  const n = Math.max(near.l, near.r, near.up, low);
+  near.lvl = n * Math.sqrt(n) * sstep(12, 46, spd);
+  near.pan = clamp((near.l - near.r) * (sx * camRight.x + sz * camRight.z), -1, 1);
+  return near;
+}
+
+function updateMotionAudio(dt) {
+  if (!lineV.g) return;
+  const w0 = player.webs[0], w1 = player.webs[1];
+  const w = w0.tension > w1.tension ? w0 : w1;
+  const tn = clamp(w.tension / 9000, 0, 1);
+  /* a string's pitch goes with the root of its tension and falls with its
+     length: a long line groans, a short one winched tight sings */
+  const want = 92 * Math.sqrt(Math.max(w.tension, 400) / 1800) * clamp(Math.sqrt(42 / Math.max(w.len, WEB_MIN)), 0.7, 1.7);
+  lineV.f = damp(lineV.f, clamp(want, 60, 420), 9, dt);
+  lineV.lvl = damp(lineV.lvl, w.on ? tn * Math.sqrt(tn) * 0.15 : 0, w.on ? 9 : 22, dt);
+  lineV.o1.frequency.value = lineV.f; lineV.o2.frequency.value = lineV.f * 2.005;
+  lineV.g.gain.value = lineV.lvl;
+  const st = lineV.strain;
+  st.cur = damp(st.cur, w.on ? tn * tn * 0.05 : 0, 10, dt);
+  st.g.gain.value = st.cur; st.f.frequency.value = 900 + 1900 * tn;
+
+  const n = proximity(player.p, player.v);
+  /* arrives at once, leaves slowly: a wall going by is an event, not a hum */
+  passV.lvl = damp(passV.lvl, n.lvl, n.lvl > passV.lvl ? 16 : 3.2, dt);
+  passV.g.gain.value = passV.lvl * 0.30;
+  passV.f.frequency.value = 480 + clamp(player.v.length() * 20, 0, 1500);
+  if (passV.pan) passV.pan.pan.value = damp(passV.pan.pan.value, n.pan * 0.85, 10, dt);
+}
+
+/* a short burst of the shared noise through one filter; most one-shots are this */
+function noiseHit(type, f0, f1, sweep, q, vol, attack, dur) {
+  const t = AC.currentTime;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = type; if (q) f.Q.value = q;
+  f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + sweep);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0002), t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  /* start somewhere new in the buffer each time, or every hit is the same hit */
+  s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.04);
+}
+
+/* landing: the weight arriving (a falling sine) and the surface answering
+   (noise, duller on a roof or the street than against a wall) */
+listen('land', (hit, ny) => {
+  if (!AC) return;
+  const vol = clamp(hit / 26, 0.06, 1), t = AC.currentTime;
+  const o = AC.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(118, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.17);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5 * vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.27);
+  const wall = ny < 0.6;
+  noiseHit('lowpass', wall ? 1500 : 760, wall ? 380 : 170, 0.12, 0.7, 0.34 * vol, 0.006, 0.19);
+});
+listen('step', (amp) => {
+  if (!AC) return;
+  const f = 520 + Math.random() * 260;
+  noiseHit('lowpass', f, f * 0.45, 0.05, 0.8, 0.07 * clamp(amp, 0.3, 1.1), 0.004, 0.075);
+});
+/* letting go at speed: the line whips away. A tap, or a release at a
+   standstill, has nothing to whip. */
+listen('release', (spd, age) => {
+  if (!AC || spd < 14 || age < 0.3) return;
+  const vol = clamp((spd - 14) / 38, 0.12, 1);
+  noiseHit('bandpass', 620, 2100, 0.2, 1.3, 0.17 * vol, 0.03, 0.34);
+});
