@@ -37,9 +37,8 @@ for (const t of THERMALS) {
   haze.frustumCulled = false;
   scene.add(haze);
 }
-const _moteS = V3();
 function updateMotes(t) {
-  const m = _propM, q = _propQ, e = _propE, v = _propP;   // scratch shared with updateProps
+  const { m, q, e, p: v, s: size } = scratch;
   for (let i = 0; i < motes.length; i++) {
     const o = motes[i];
     const p = (o.ph + (t / MOTE_CYCLE) * o.rise) % 1;
@@ -52,7 +51,7 @@ function updateMotes(t) {
     e.set(t * o.spin, swirl, Math.sin(t * o.spin * 0.7) * 0.9);
     /* fade in at the bottom and out at the top instead of popping */
     const s = 1.9 * sstep(0, 0.06, p) * (1 - sstep(0.74, 1, p));
-    m.compose(v, q.setFromEuler(e), _moteS.set(s, s, s));
+    m.compose(v, q.setFromEuler(e), size.set(s, s, s));
     moteMesh.setMatrixAt(i, m);
   }
   moteMesh.instanceMatrix.needsUpdate = true;

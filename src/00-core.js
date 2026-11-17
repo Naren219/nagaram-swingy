@@ -43,12 +43,11 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.35, 5200);
 
-let pauseDirty = true;   // a paused game draws one frame, then only when this is set
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
-  pauseDirty = true;     // setSize cleared the canvas
+  if (paused) renderer.render(scene, camera);   // setSize cleared the canvas, and the loop is not drawing
 });
 
 /* ------------------------------------------------------------- sky */

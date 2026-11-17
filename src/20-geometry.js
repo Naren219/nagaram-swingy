@@ -36,6 +36,12 @@ const M4 = (x, y, z, sx, sy, sz, ry) => new THREE.Matrix4().compose(
   V3(x, y, z),
   new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry || 0, 0)),
   V3(sx === undefined ? 1 : sx, sy === undefined ? 1 : sy, sz === undefined ? 1 : sz));
+/* Scratch for per-frame code that composes instance matrices, so none of it
+   allocates. One set for every file: all of src/ is a single scope, and
+   private sets kept colliding by name. Use it and let go: nothing in here
+   survives a call to another function that might use it too. */
+const scratch = { m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: V3(), s: V3() };
+const UNIT = V3(1, 1, 1), YUP = V3(0, 1, 0);   // constants: never written to
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const BOXB = BOX.clone().translate(0, 0.5, 0);   // base at y=0
 const CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0);

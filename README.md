@@ -88,7 +88,7 @@ The build itself is one Node script doing an ordered concatenation — no bundle
 
 ### Testing
 
-`npm test` drives the real built page in headless Chromium and asserts against measurements — 107 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
+`npm test` drives the real built page in headless Chromium and asserts against measurements — 110 checks across a desktop pass, a landscape-touch pass, a portrait pass, and a fixed-step pass, covering physics stability, the lighting blend, photo mode, settings round-tripping through a reload, aircraft boarding, gopuram passability, thermal climb rates, water entry and skimming, the somersault's rate profile, and every touch control.
 
 The fixed-step pass takes the loop away from `requestAnimationFrame` and the GPU and runs frames synchronously on a chosen `dt`. That is how to test anything refresh-rate dependent (it simulates a 240 Hz display exactly) or anything about energy, and it needs no wall-clock waits: input edges at 60/144/240 Hz, web-tapping as an energy source, rig pose speed against frame rate, the open ground at the maidan and the tank, the vegetation triangle budget, hull pinning, coyote time, what a paused game draws, and ring runs flown on rails (the clock must read length ÷ speed at any frame rate).
 
@@ -140,13 +140,14 @@ Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extra
 - **Physics is position-based dynamics at a fixed 120 Hz.** The web is a hard distance constraint, not a spring, and velocity is *derived from the position delta* after the constraint solve — never integrated forward. Do not convert it to a conventional integrator; energy conservation, taut-rope behavior, and aircraft towing all depend on it.
 - **Render interpolation is load-bearing.** The camera, rig, and shadow frustum read `pRender` (interpolated between substeps), never `player.p`. Removing it causes visible judder on any non-60 Hz display.
 - `updatePlanes(dt)` must run **before** the physics loop, or riders and latched anchors lag the hull by a frame. `pinToPlanes()` then re-pins them **after** it, every frame: the hulls move per frame and the player per substep, so above 120 Hz a frame with no substep would draw them 14 cm off the airframe.
-- **Per-frame code allocates nothing it can avoid.** `updateTraffic` writes instance matrices directly, and the update functions share module-level scratch objects. All of `src/` is one global scope, so a new scratch name must be unique across every file.
-- **A paused game draws one frame** (`pauseDirty`), then nothing until a resize. Anything that changes the picture while paused must set the flag.
+- **Per-frame code allocates nothing it can avoid.** `updateTraffic` writes instance matrices directly, and anything that composes a matrix per frame borrows the one `scratch` set in `20-geometry.js`. Do not add private scratch objects: all of `src/` is one global scope and they collide by name.
+- **A paused game draws nothing in the loop.** `setPaused(true)` and a resize each put up one frame themselves. Anything else that changes the picture while paused must draw it too.
 - **Input edges (jump, board) are cleared by the physics step that consumes them**, not by the frame that read them. Above 120 Hz some frames run no substep at all, and clearing per frame drops the press.
 - **The release pop is scaled by time on the line** (`w.age`). Granted unconditionally, tapping the web button is a free energy source that out-climbs gravity.
 - The maidan and the temple tank are reserved by `onOpenGround()`. Anything new that places things in the world (buildings, lanes, props) must ask it.
 - **Vegetation is batched per ground cell and frustum-culled** (`vegBatches`). r128 turns culling off on every `InstancedMesh`; one un-culled, shadow-casting batch of plants was 85% of the frame. A batch's instances must stay inside its geometry's bounding sphere.
-- **Physics announces, it does not act.** `80-physics.js` calls `emit('splash', …)` and the HUD, rig and effects `listen()`; it must not reach into the DOM, the rig or the audio itself.
+- **Physics announces, it does not act.** `80-physics.js` calls `emit('splash', …)` and the HUD, rig, audio and effects `listen()`; it must not reach into the DOM, the rig or the audio itself. An event with no listener is dead weight: add one when something needs it.
 - **A course never touches the world's random stream.** `buildCourse()` has its own generator, so the city is identical whether or not a run was ever started.
-- The smoke suite's fixed-step pass defines a global `run(n)`. Nothing in `src/` may be named `run`.
+- **A saved best belongs to the rings it was flown through.** Saves carry `courseSig()`, a fingerprint of the ring positions, and `bestFor()` is the only place a save is read. Change the generator, its constants or the city and old times quietly stop counting, which is the point.
+- **Everything a run shows follows from `run.state`, in `syncRunView()`.** Do not show, hide or label run UI anywhere else.
 - The character is an original design (navy/gold/teal). It is **not** Spider-Man and must not become him.

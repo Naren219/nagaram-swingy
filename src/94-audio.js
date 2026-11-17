@@ -173,6 +173,7 @@ function splashSound(vol) {
   s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.56);
 }
 
+listen('attach', thwip);
 function thwip() {
   if (!AC) return;
   const s = AC.createBufferSource(); s.buffer = noiseBuf;
