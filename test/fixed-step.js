@@ -577,8 +577,59 @@ async function strandPicture(page, check) {
   check('a released line draws nothing', r.gone === 0 && r.splatGone, r.gone + ' segments');
 }
 
+async function sashCloth(page, check) {
+  /* the sash is there to show the air going past, so that is what is
+     measured: it hangs when you stand, streams dead astern in flight (in
+     photo mode too), keeps its length, stays behind the back, and does the
+     same thing at any frame rate. Polarity: standing and flying must differ. */
+  const r = await page.evaluate(() => {
+    const end = () => { const o = (SASH_N - 1) * 3, v = new THREE.Vector3(sashQ[o], sashQ[o + 1], sashQ[o + 2]); return v.normalize(); };
+    const shape = () => {
+      let stretch = 0, front = 0, ok = true, bend = 0;
+      const tip = new THREE.Vector3(sashQ[SASH_N * 3 - 3], sashQ[SASH_N * 3 - 2], sashQ[SASH_N * 3 - 1]), chord = new THREE.Line3(new THREE.Vector3(), tip), on = new THREE.Vector3(), pt = new THREE.Vector3();
+      for (let i = 1; i < SASH_N; i++) {
+        bend = Math.max(bend, chord.closestPointToPoint(pt.set(sashQ[i * 3], sashQ[i * 3 + 1], sashQ[i * 3 + 2]), true, on).distanceTo(pt));
+        const o = i * 3, d = Math.hypot(sashQ[o] - sashQ[o - 3], sashQ[o + 1] - sashQ[o - 2], sashQ[o + 2] - sashQ[o - 1]);
+        stretch = Math.max(stretch, Math.abs(d / SASH_SEG - 1));
+        front = Math.min(front, sashQ[o] * sashBack.x + sashQ[o + 1] * sashBack.y + sashQ[o + 2] * sashBack.z);
+        ok = ok && isFinite(d);
+      }
+      return { stretch, front, ok, bend };
+    };
+    const fly = (hz, vx, vy, vz, secs) => {
+      __reset(hz); yaw = 0; pitch = 0;
+      let worst = { stretch: 0, front: 0, ok: true, bend: 0 };
+      for (let i = 0; i < hz * secs; i++) {
+        player.p.set(-46, 300, -230); player.v.set(vx, vy, vz); player.grounded = false; __run(1);
+        if (i > hz) { const s = shape(); worst = { stretch: Math.max(worst.stretch, s.stretch), front: Math.min(worst.front, s.front), ok: worst.ok && s.ok, bend: Math.max(worst.bend, s.bend) }; }
+      }
+      const e = end(), v = new THREE.Vector3(vx, vy, vz).normalize();
+      return { astern: -e.dot(v), e, worst };
+    };
+    __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(240);
+    const rest = { down: -end().y, shape: shape() };
+    const f60 = fly(60, 0, 0, 34, 3), f30 = fly(30, 0, 0, 34, 3), f240 = fly(240, 0, 0, 34, 3);
+    const dive = fly(60, 0, -45, 8, 3), fast = fly(60, 0, -90, 110, 2);
+    /* frozen for a photograph in the middle of that flight */
+    fly(60, 0, 0, 34, 2); setPhoto(true); __run(120); const photo = -end().dot(new THREE.Vector3(0, 0, 1)); setPhoto(false);
+    respawn(); __run(3); const jumped = shape();
+    return { rest, f60, dive, fast, photo, jumped, rates: Math.min(f60.e.dot(f30.e), f60.e.dot(f240.e)), verts: sashGeo.attributes.position.count };
+  });
+  check('standing, the sash hangs; in flight it streams dead astern', r.rest.down > 0.8 && r.f60.astern > 0.9 && r.dive.astern > 0.9,
+    'hanging ' + r.rest.down.toFixed(2) + ', astern ' + r.f60.astern.toFixed(2) + ' level and ' + r.dive.astern.toFixed(2) + ' in a dive');
+  check('the sash keeps its length and stays behind the back, even at 500 km/h',
+    Math.max(r.rest.shape.stretch, r.f60.worst.stretch, r.dive.worst.stretch, r.fast.worst.stretch) < 0.06 &&
+    Math.min(r.rest.shape.front, r.f60.worst.front, r.fast.worst.front) > -0.01 && r.fast.worst.ok && r.fast.astern > 0.9,
+    'worst stretch ' + (Math.max(r.f60.worst.stretch, r.dive.worst.stretch, r.fast.worst.stretch) * 100).toFixed(1) + '%, ' + (-Math.min(r.f60.worst.front, r.fast.worst.front) * 100).toFixed(1) + ' cm through the back');
+  check('streaming, the sash ripples: it is cloth, not a stick', r.f60.worst.bend > 0.03 && r.f60.worst.bend < 0.3,
+    'up to ' + (r.f60.worst.bend * 100).toFixed(1) + ' cm off straight over ' + (0.13 * 8 * 100).toFixed(0) + ' cm');
+  check('the sash streams the same way at 30, 60 and 240 Hz', r.rates > 0.9, 'directions agree to ' + r.rates.toFixed(3));
+  check('frozen for a photo mid-flight, the sash still streams', r.photo > 0.9, 'astern ' + r.photo.toFixed(2));
+  check('a respawn does not whip the sash', r.jumped.ok && r.jumped.stretch < 0.06, 'stretch ' + (r.jumped.stretch * 100).toFixed(1) + '% three frames after');
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture];
+  motionEvents, landing, wallRun, strandPicture, sashCloth];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

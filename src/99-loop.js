@@ -122,6 +122,7 @@ function frame() {
   lampGlow.material.color.setRGB(1, 0.95, 0.8).multiplyScalar(0.25 + nite * 0.75);
 
   if (!photoMode) poseRig(dt, inp);
+  updateSash(dt);   // in photo mode too: the body is frozen in flight, the cloth is not
   updateCamera(dt);
   if (aimMark.visible) aimMark.quaternion.copy(camera.quaternion);   // billboard after the camera settles
 
