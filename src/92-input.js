@@ -7,7 +7,7 @@ const locked = () => document.pointerLockElement === renderer.domElement || free
 const gate = document.getElementById('gate');
 const pbtn = document.getElementById('pbtn'), pauseEl = document.getElementById('pause');
 let paused = false, started = false;
-function setPaused(on) {
+function setPaused(on, byPad) {
   if (paused === on) return;
   paused = on;
   pauseEl.classList.toggle('on', on);
@@ -17,7 +17,9 @@ function setPaused(on) {
   for (const k of Object.keys(keys)) delete keys[k];
   if (windGain) windGain.gain.value = on ? 0 : windGain.gain.value;
   if (ambBus) ambBus.gain.value = on ? 0 : 1;
-  if (!on && !freeLook && !touchOn) {
+  /* a gamepad button is not a gesture the browser will grant the pointer for,
+     and a pad needs no pointer: resuming from one skips the request entirely */
+  if (!on && !freeLook && !touchOn && !byPad) {
     /* Browsers refuse a lock request for about a second after Esc. If it never
        lands, drop into cursor steering rather than leaving the player with no
        look control at all. */
@@ -243,6 +245,80 @@ try {
     if (ev.matches && touchOn && started) setPaused(true);
   });
 } catch (e) {}
+
+/* ---------------------------------------------------------------
+   GAMEPAD — two triggers for two webs is what this game wants to be
+   played on. Buttons write the same key states and edge flags the
+   keyboard and the touch controls do, so nothing downstream knows
+   or cares where a press came from; the sticks are the only new
+   input, and the loop reads them the way it reads the touch stick.
+     LT / RT webs · A jump, hold to glide · B or RB dive · LB zip
+     X cling, board · Y photo · start pause · back ring run
+     d-pad: up time of day · right next course · down leave run · left respawn
+   Nothing is polled until a pad has announced itself.
+   --------------------------------------------------------------- */
+const pad = { seen: false, dev: null, lx: 0, ly: 0, was: new Uint8Array(17), quiet: 0, hello: false };
+const PAD_DEAD = 0.16, PAD_LOOK = 3.1;       // stick dead zone · rad/s of turn at full deflection
+const PAD_HOLD = { 1: 'ShiftLeft', 5: 'ShiftRight', 4: 'KeyQ' };
+const PAD_TAP = { 3: 'KeyC', 8: 'KeyG', 12: 'KeyT', 13: 'KeyX', 14: 'KeyR', 15: 'KeyN' };
+addEventListener('gamepadconnected', () => { pad.seen = true; });
+const padAxis = (v) => { const a = Math.abs(v || 0); return a < PAD_DEAD ? 0 : Math.sign(v) * (a - PAD_DEAD) / (1 - PAD_DEAD); };
+function tapKey(code) {
+  dispatchEvent(new KeyboardEvent('keydown', { code }));
+  dispatchEvent(new KeyboardEvent('keyup', { code }));
+}
+function padButton(i, on) {
+  if (i === 9) { if (on && started) setPaused(!paused, true); return; }
+  if (paused || !started) return;
+  if (i === 6 || i === 7) {
+    const k = i - 6;
+    if (on && !photoMode) { held[k] = true; fireWebAt(k, aimPt); }
+    if (!on) { held[k] = false; releaseWeb(k); }
+  } else if (i === 0) { if (on) jumpEdge = true; keys['Space'] = on; }
+  else if (i === 2) { if (on) mountEdge = true; keys['KeyE'] = on; }
+  else if (PAD_HOLD[i]) keys[PAD_HOLD[i]] = on;
+  else if (on && PAD_TAP[i]) tapKey(PAD_TAP[i]);
+}
+function pollPad(dt) {
+  if (!pad.seen) return;
+  const list = navigator.getGamepads ? navigator.getGamepads() : null;
+  let gp = null;
+  if (list) for (let i = 0; i < list.length && !gp; i++) if (list[i] && list[i].connected && list[i].mapping === 'standard') gp = list[i];
+  pad.dev = gp;
+  if (!gp) { pad.lx = pad.ly = 0; return; }
+  const B = gp.buttons, n = Math.min(B.length, 17);
+  for (let i = 0; i < n; i++) {
+    /* triggers are analogue: a third of the way down is a press */
+    const on = B[i].pressed || B[i].value > 0.35 ? 1 : 0;
+    if (on !== pad.was[i]) {
+      pad.was[i] = on; padButton(i, !!on);
+      if (on && !pad.hello && started) { pad.hello = true; toast('gamepad · triggers fire the webs'); toastT = 3; }
+    }
+  }
+  if (paused || !started) { pad.lx = pad.ly = 0; return; }
+  pad.lx = padAxis(gp.axes[0]); pad.ly = padAxis(gp.axes[1]);
+  /* linear near the centre for aim, squared toward the rim for turning round */
+  const rx = padAxis(gp.axes[2]), ry = padAxis(gp.axes[3]), k = PAD_LOOK * (sens / 0.0034) * dt;
+  yaw += rx * (0.45 + 0.55 * Math.abs(rx)) * k;
+  pitch = clamp(pitch - ry * (0.45 + 0.55 * Math.abs(ry)) * k * 0.72, -PITCH_MAX, PITCH_MAX);
+  /* the line in the hands: a light buzz that grows with the load. A landing's
+     thump is left to finish first. */
+  pad.quiet -= dt;
+  if (pad.quiet <= 0) {
+    const tn = clamp(Math.max(player.webs[0].on ? player.webs[0].tension : 0, player.webs[1].on ? player.webs[1].tension : 0) / 9000, 0, 1);
+    if (tn > 0.3) { rumble(0, (tn - 0.3) * 0.75, 90); pad.quiet = 0.07; }
+  }
+}
+function rumble(strong, weak, ms) {
+  const a = pad.dev && pad.dev.vibrationActuator;
+  if (!a || !a.playEffect) return;
+  try {
+    const r = a.playEffect('dual-rumble', { duration: ms, strongMagnitude: clamp(strong, 0, 1), weakMagnitude: clamp(weak, 0, 1) });
+    if (r && r.catch) r.catch(() => {});
+  } catch (e) {}
+}
+listen('land', (hit) => { if (pad.dev) { rumble(clamp(hit / 28, 0.12, 1), 0.3, 80 + hit * 4); pad.quiet = 0.2; } });
+listen('attach', () => { if (pad.dev && pad.quiet <= 0) { rumble(0, 0.45, 45); pad.quiet = 0.06; } });
 
 /* ---- settings persistence ---- */
 const SAVE_KEY = 'nagaram.settings';

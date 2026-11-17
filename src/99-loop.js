@@ -13,6 +13,7 @@ loadSettings();   // applyDay() runs on the first frame with whatever dayT survi
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, clock.getDelta());   // consumed even while paused, so
+  pollPad(dt);                                    // before the pause check: start is how a pad resumes
   if (resumeWait > 0 && !paused) {
     resumeWait -= dt;
     if (resumeWait <= 0 && document.pointerLockElement !== renderer.domElement) setFreeLook(true);
@@ -34,6 +35,7 @@ function frame() {
   let fb = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
   let rl = (keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0);
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
+  if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
   inp.mzRaw = fb;
   let mfx = 0, mfz = 0;

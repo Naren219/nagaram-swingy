@@ -628,8 +628,82 @@ async function sashCloth(page, check) {
   check('a respawn does not whip the sash', r.jumped.ok && r.jumped.stretch < 0.06, 'stretch ' + (r.jumped.stretch * 100).toFixed(1) + '% three frames after');
 }
 
+async function gamepad(page, check) {
+  /* a pad drives the same game: a trigger is a held web, A is one jump at any
+     frame rate, the sticks walk and turn on real time, start pauses and
+     resumes without asking for the pointer, and a landing is felt.
+     Polarity: with no pad announced, none of it is polled. */
+  const r = await page.evaluate(() => {
+    const btn = () => ({ pressed: false, value: 0 });
+    const fake = { connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn), felt: [],
+      vibrationActuator: { playEffect(type, o) { fake.felt.push(o); return Promise.resolve(); } } };
+    let polled = 0;
+    Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { polled++; return [null, fake]; } });
+    const press = (i, on) => { fake.buttons[i].pressed = on; fake.buttons[i].value = on ? 1 : 0; };
+    __reset(); __run(30); const unannounced = polled;
+    dispatchEvent(new Event('gamepadconnected')); started = true;
+
+    /* right trigger: one line, held as long as the trigger is */
+    let bites = 0; listen('attach', () => bites++);
+    const tw = buildings.filter(b => b.kind === 'glass' && b.h > 90).sort((a, c) => c.h - a.h)[0];
+    player.p.set(tw.x + tw.w / 2 + 40, tw.h * 0.5, tw.z); player.v.set(0, 0, 0); player.grounded = false;
+    yaw = Math.PI / 2; pitch = 0.3; __run(3);                    // facing the tower, looking up its face
+    const aimed = !!aimPt;
+    fake.buttons[7].value = 0.6; __run(30);                      // an analogue trigger, most of the way down
+    const web = { on: player.webs[1].on, held: held[1], other: player.webs[0].on, bites };
+    fake.buttons[7].value = 0; __run(2); web.off = !player.webs[1].on && !held[1];
+
+    const hop = (hz) => {
+      __reset(hz); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); __run(hz);
+      press(0, true); __run(Math.ceil(hz / 10)); const vy = player.v.y; __run(Math.ceil(hz / 5));
+      const glide = inp.glide; press(0, false); __run(2);
+      return { vy, glide, after: inp.glide };
+    };
+    const j60 = hop(60), j240 = hop(240);
+
+    const walk = (x, y) => {
+      __reset(); player.p.set(-350, 0.85, -182); player.v.set(0, 0, 0); yaw = 0; pitch = 0; __run(40);
+      fake.axes[0] = x; fake.axes[1] = y; __run(90); fake.axes[0] = fake.axes[1] = 0;
+      return { vx: player.v.x, vz: player.v.z };
+    };
+    const fwd = walk(0, -1), drift = walk(0.1, -0.1);
+
+    const turn = (hz) => { __reset(hz); yaw = 0; pitch = 0; fake.axes[2] = 1; fake.axes[3] = -0.5; __run(hz); fake.axes[2] = fake.axes[3] = 0; return { yaw, pitch }; };
+    const t60 = turn(60), t240 = turn(240);
+
+    /* a landing, felt */
+    __reset(); fake.felt.length = 0;
+    player.p.set(-350, 12, -182); player.v.set(0, 0, 0); player.grounded = false; player.airT = 1; __run(90);
+    const thump = fake.felt.reduce((m, o) => Math.max(m, o.strongMagnitude), 0);
+
+    /* start: pause, and everything else goes dead; start again: back, with no pointer asked for */
+    __reset(); const asked = []; const realLock = renderer.domElement.requestPointerLock;
+    renderer.domElement.requestPointerLock = function () { asked.push(1); };
+    press(9, true); __run(2); press(9, false); __run(2); const pausedNow = paused;
+    press(0, true); fake.axes[2] = 1; const y0 = yaw; __run(10); const deadJump = jumpEdge, deadLook = yaw === y0; press(0, false); fake.axes[2] = 0; __run(2);
+    press(9, true); __run(2); press(9, false); __run(60);
+    const resumed = !paused, lockAsked = asked.length, cursorMode = freeLook;
+    renderer.domElement.requestPointerLock = realLock;
+    fake.connected = false; __run(2);
+    return { unannounced, aimed, web, j60, j240, fwd, drift, t60, t240, thump, pausedNow, deadJump, deadLook, resumed, lockAsked, cursorMode, want: PAD_LOOK * sens / 0.0034 };
+  });
+  check('gamepad: nothing is polled until a pad announces itself', r.unannounced === 0, r.unannounced + ' polls in 30 frames');
+  check('gamepad: a trigger is one line, held while the trigger is', r.aimed && r.web.on && r.web.held && !r.web.other && r.web.bites === 1 && r.web.off, JSON.stringify(r.web));
+  check('gamepad: A is one jump at 60 and 240 Hz, and held in the air it glides',
+    r.j60.vy > 12 && r.j60.vy < 16 && r.j240.vy > 12 && r.j240.vy < 16 && r.j60.glide && r.j240.glide && !r.j60.after,
+    'vy ' + r.j60.vy.toFixed(1) + ' / ' + r.j240.vy.toFixed(1) + ' m/s after 0.1 s');
+  check('gamepad: the left stick walks, and a stick at rest in its dead zone does not', r.fwd.vz > 5 && Math.abs(r.fwd.vx) < 0.5 && Math.hypot(r.drift.vx, r.drift.vz) < 0.05,
+    'forward ' + r.fwd.vz.toFixed(1) + ' m/s, drift ' + Math.hypot(r.drift.vx, r.drift.vz).toFixed(3));
+  check('gamepad: the right stick turns on real time, not frames', Math.abs(r.t60.yaw - r.want) < 0.02 && Math.abs(r.t60.yaw - r.t240.yaw) < 0.02 && r.t60.pitch > 0.3 && Math.abs(r.t60.pitch - r.t240.pitch) < 0.02,
+    'a second at full stick: ' + r.t60.yaw.toFixed(3) + ' rad at 60 Hz, ' + r.t240.yaw.toFixed(3) + ' at 240 Hz');
+  check('gamepad: a landing is felt', r.thump > 0.4, 'strong motor at ' + r.thump.toFixed(2) + ' for a 12 m drop');
+  check('gamepad: start pauses, a paused pad does nothing, start resumes without asking for the pointer',
+    r.pausedNow && !r.deadJump && r.deadLook && r.resumed && r.lockAsked === 0 && !r.cursorMode,
+    JSON.stringify({ paused: r.pausedNow, resumed: r.resumed, lockAsked: r.lockAsked, cursorMode: r.cursorMode }));
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});
