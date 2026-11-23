@@ -19,7 +19,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | Shift | tuck & dive |
 | Q | zip to anchor |
 | E | cling to wall · board whatever is in reach: an aircraft, the train, a boat, a crane jib, a car of the wheel |
-| E aboard an aircraft | take its controls (again to hand back): A / D turn and bank · W / S climb and dive |
+| E aboard an aircraft | take its controls (again to hand back): A / D turn and bank · W / S climb and dive · Shift boost |
 | T / F / M | skip time of day · swing assist · mute |
 | G / N / X | ring run: start or restart · next course · leave |
 | B | **trial:** the line bends round corners (off by default) |
@@ -33,7 +33,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 
 **Things that notice you.** Pigeons roost on the rooftops and gulls on the sand. Arrive at speed, walk into them or put a web down beside them and the flock goes up, wheels over the place it left and settles back on it. A web that lands on a gopuram rings it.
 
-**Flying an aircraft.** Aboard one, press E again (on touch, the button reads **Fly**) and you have its controls: you go forward to the cockpit and the view drops back behind the tail. A/D (or the stick) turn it, banking into the turn; W/S put the nose up and down. It keeps its own cruising speed. It will not fly into the city — it watches the roofs under and ahead of it and pulls up — and past the edge of the map it turns itself home. Press E again, jump off, or fire a web and the autopilot takes over from wherever you left it, on a new circuit through that point.
+**Flying an aircraft.** Aboard one, press E again (on touch, the button reads **Fly**) and you have its controls: you go forward to the cockpit and the view drops back behind the tail. A/D (or the stick) turn it, banking into the turn; W/S put the nose up and down. It cruises at its own speed; Shift (on touch, the Dive button becomes **Boost**; on a pad, dive) lights the boosters in the back of its engines and takes it up to about 140 km/h faster. Let go and they burn down gently, even if you hand it back mid-boost. It will not fly into the city — it watches the roofs under and ahead of it and pulls up — and past the edge of the map it turns itself home. Press E again, jump off, or fire a web and the autopilot takes over from wherever you left it, on a new circuit through that point.
 
 **The metro.** An elevated line runs north–south up the gap between the blocks east of the temple, from south of the river to the north blocks, with a three-car train shuttling along it. The viaduct is solid: land on the deck, hang from its underside, fly between its piers. The train is a carrier like the aircraft, only low and fast: latch it and it tows you down the street, or press E to ride its roof.
 

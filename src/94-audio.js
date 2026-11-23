@@ -114,7 +114,8 @@ function updateAudio(dt) {
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
     else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
+  let thrust = 0;                                 // the boosters of the aircraft you are on (89-pilot.js)
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') { eng = 1; thrust = player.riding.boost; } }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -122,9 +123,9 @@ function updateAudio(dt) {
     traffic: trafficN * alt * 0.20 * (1 - night * 0.55),
     bazaar: bazaarN * alt * 0.085 * (1 - night * 0.75),
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
-    engine: eng * 0.16,
+    engine: eng * 0.16 + thrust * 0.14,
     rail: rail * rail * 0.26,
-    engineTone: eng * eng * 0.055,
+    engineTone: eng * eng * 0.055 + thrust * 0.04,
     rain: rainHere * 0.34
   };
   const k = 1 - Math.exp(-2.2 * dt);
@@ -134,7 +135,7 @@ function updateAudio(dt) {
     b.g.gain.value = b.cur;
   }
   if (beds.engineTone && beds.engineTone.o)
-    beds.engineTone.o.frequency.value = 52 + eng * 14;
+    beds.engineTone.o.frequency.value = 52 + eng * 14 + thrust * 26;
   updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */

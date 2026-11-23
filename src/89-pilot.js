@@ -4,7 +4,8 @@
    Aboard an aircraft, E takes its controls: you go forward to the cockpit,
    the view drops back to frame the whole airframe, and A/D turn it (it banks
    into the turn) while W/S put the nose up and down. E again hands it back.
-   The aircraft keeps its own cruising speed; you only choose where it goes.
+   It flies at its own cruising speed, and Shift lights the boosters in the
+   back of its engines for more (PLANE_BOOST, 75-traffic.js).
 
    Two things it will not let you do. It will not fly into the city: it
    looks down under itself and ahead of itself, and pulls up over whatever is
@@ -37,13 +38,15 @@ let pilotEdgeSaid = false;
 listen('helm', (pl) => {
   if (pl.flown) { handBack(pl); toast('Autopilot has it'); return; }
   takeControls(pl);
-  toast(touchOn ? 'You have the controls · stick to steer · Let go to hand it back'
-                : 'You have the controls · A/D turn · W/S climb and dive · E to let go');
+  toast(touchOn ? 'You have the controls · stick to steer · Boost to speed up · Let go to hand it back'
+                : 'You have the controls · A/D turn · W/S climb and dive · Shift boost · E to let go');
   toastT = 3.5;
 });
+const tuckBtn = document.getElementById('tTuck');
 function takeControls(pl) {
   pl.flown = true; pl.step = flyByHand; pl.turnRate = 0;
   pilotEdgeSaid = false;
+  tuckBtn.textContent = 'Boost';
 }
 
 /* Aboard a hull being flown, the stick is the hull's (flyByHand reads
@@ -68,7 +71,9 @@ function flyByHand(pl, dt) {
   /* the hands have to be aboard to be on the controls */
   if (player.riding !== pl) { handBack(pl); flyPlane(pl, dt); return; }
   const turn = clamp(inp.rlRaw, -1, 1), climb = clamp(inp.mzRaw, -1, 1);
-  const spd = pl.cruise, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+  /* the dive key (Shift, the Boost button, the pad's dive) lights the boosters */
+  pl.boost = damp(pl.boost, inp.tuck ? 1 : 0, inp.tuck ? 2.6 : PLANE_BOOST_FALL, dt);
+  const spd = pl.cruise + pl.boost * PLANE_BOOST, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
 
   /* D turns right, which is the heading angle going DOWN (75-traffic.js:
      the nose points along (sin yaw, cos yaw)) */
@@ -106,6 +111,7 @@ function flyByHand(pl, dt) {
 /* back to a circuit: through here, along the nose, at its old size */
 function handBack(pl) {
   pl.flown = false; pl.step = flyPlane;
+  tuckBtn.textContent = 'Dive';
   const s = Math.sign(pl.w), hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
   /* flyPlane's nose is along w·(−sin ph, cos ph), so sin ph = −s·hx, cos ph = s·hz */
   pl.ph = Math.atan2(-s * hx, s * hz);
@@ -118,7 +124,7 @@ function handBack(pl) {
 
 /* the chase view: the camera follows the nose, a little above it, unless you
    have just looked somewhere yourself, and comes back to it a moment after */
-const PILOT_VIEW_PITCH = -0.16;
+const PILOT_VIEW_PITCH = -0.2;
 let pilotLookYaw = 0, pilotLookPitch = 0, pilotLookIdle = 0;
 function pilotCamera(dt) {
   const flown = !!(player.riding && player.riding.flown);

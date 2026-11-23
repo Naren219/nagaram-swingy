@@ -1345,6 +1345,27 @@ async function piloting(page, check) {
     /* at the edge it turns itself home */
     pl.p.set(1000, 250, 0); pl.yaw = Math.PI / 2; pl.turnRate = 0; pl.pitch = 0; __run(2);
     const d0 = Math.hypot(pl.p.x, pl.p.z); __run(60 * 20); out.home = Math.hypot(pl.p.x, pl.p.z) - d0;
+    /* the boosters: Shift adds PLANE_BOOST at full thrust and lights the
+       flames; let go, they burn down. Polarity: without them Shift did nothing aboard. */
+    pl.p.set(0, 250, 0); pl.yaw = 0; pl.turnRate = 0; pl.pitch = 0; pl.boost = 0; __run(30);
+    const speed = () => Math.hypot(pl.v.x, pl.v.z);
+    out.boostAdd = PLANE_BOOST; out.boost = { cruise: pl.cruise, before: speed(), dark: !pl.flames[0].visible };
+    keys['ShiftLeft'] = true; __run(120);
+    out.boost.full = speed(); out.boost.lit = pl.flames[0].visible && pl.flames[1].visible; out.boost.len = pl.flames[0].scale.z;
+    keys['ShiftLeft'] = false; __run(240); out.boost.after = speed();
+    /* boosting at the tallest tower, it still pulls up in time */
+    pl.yaw = 0; pl.turnRate = 0; pl.pitch = -0.3; pl.boost = 1;
+    pl.p.set(tall.x, tall.h + PLANE_HY + 30, tall.z - (pl.cruise + PLANE_BOOST) * 3); __run(1);
+    let worstB = 1e9; keys['ShiftLeft'] = keys['KeyS'] = true;
+    for (let i = 0; i < 480; i++) { __run(1); worstB = Math.min(worstB, pl.p.y - PLANE_HY - solidTop(pl.p.x, pl.p.z)); }
+    keys['ShiftLeft'] = keys['KeyS'] = false; out.boost.clear = worstB;
+    /* handed back at full boost, it slows down the circuit rather than snapping to it */
+    pl.p.set(0, 200, 0); pl.pitch = 0; keys['ShiftLeft'] = true; __run(150); keys['ShiftLeft'] = false;
+    { const st = () => { const a = pl.p.clone(); __run(1); return pl.p.distanceTo(a); };
+      let prev = st(); mountEdge = true; let worstRatio = 1;
+      for (let i = 0; i < 300; i++) { const d = st(); worstRatio = Math.max(worstRatio, prev / d, d / prev); prev = d; }
+      out.boost.handRatio = worstRatio; out.boost.handedSpeed = speed(); out.boost.handedFlown = pl.flown; }
+    player.p.copy(pl.p); boardCarrier(pl, pl.p); mountEdge = true; __run(2);   // aboard and at the controls again for what follows
     /* handing back: no jump in place, heading or speed */
     pl.p.set(0, 200, 0); __run(30);
     const step = () => { const a = pl.p.clone(); __run(1); return pl.p.distanceTo(a); };
@@ -1381,6 +1402,12 @@ async function piloting(page, check) {
   check('handing back to the autopilot does not jump', r.handed && r.jump < r.before * 1.5 && r.turn < 0.05,
     'worst step ' + r.jump.toFixed(3) + ' m against ' + r.before.toFixed(3) + ', worst turn ' + r.turn.toFixed(3) + ' rad/frame');
   check('handed back, the stick walks you again', r.walkAgain);
+  check('Shift lights the boosters and adds their speed', r.boost.dark && r.boost.lit && r.boost.len > 4 && r.boost.full > r.boost.before + 0.9 * r.boostAdd,
+    (r.boost.before * 3.6).toFixed(0) + ' → ' + (r.boost.full * 3.6).toFixed(0) + ' km/h, flame ' + r.boost.len.toFixed(1) + ' m');
+  check('let go, they burn down to cruise', r.boost.after < r.boost.cruise + 0.12 * r.boostAdd, (r.boost.after * 3.6).toFixed(0) + ' km/h 4 s later, cruise ' + (r.boost.cruise * 3.6).toFixed(0));
+  check('boosting at the tallest tower, it still pulls up over the roof', r.boost.clear > 0, r.boost.clear.toFixed(1) + ' m to spare');
+  check('handed back mid-boost, it slows down the circuit without a jolt', !r.boost.handedFlown && r.boost.handRatio < 1.03,
+    'worst frame-to-frame change ' + ((r.boost.handRatio - 1) * 100).toFixed(2) + '%');
   check('stepping off while flying hands it back', r.offFlown);
   check('aiming meets a banked, pitched aircraft on its own underside', r.aim.every(o => o < 1e-3) && Math.abs(r.aimRoll) > 0.1,
     'off the face by ' + r.aim.map(o => o.toFixed(4) + ' m').join(' / ') + ' at a bank of ' + r.aimRoll.toFixed(2));
