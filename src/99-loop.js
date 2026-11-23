@@ -44,6 +44,7 @@ function frame() {
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
+  routeStick(inp);                  // flying, the stick is the aircraft's (89-pilot.js)
   /* Edges are only consumed by a physics step that actually saw them. A
      display faster than 120 Hz renders frames with no substep at all, and
      clearing the flag here threw the press away on every one of them. */
@@ -152,12 +153,11 @@ function frame() {
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
-  /* contextual board button: shown exactly when E would board */
+  /* contextual E button: shown exactly when E would do something, saying what */
   if (touchOn) {
-    const helm = !photoMode && player.riding && player.riding.kind === 'plane';
-    const nearPl = !photoMode && (helm || (!player.riding && !!boardablePlane(player.p)));
-    if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
-    const label = !helm ? 'Board' : player.riding.flown ? 'Let go' : 'Fly';
+    const t = photoMode ? null : mountTarget(player.p);
+    if (boardEl.classList.contains('show') !== !!t) boardEl.classList.toggle('show', !!t);
+    const label = !t ? boardEl.textContent : t !== player.riding ? 'Board' : t.flown ? 'Let go' : 'Fly';
     if (boardEl.textContent !== label) boardEl.textContent = label;
   }
   renderer.render(scene, camera);

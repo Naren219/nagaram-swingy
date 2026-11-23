@@ -376,7 +376,7 @@ function poseRig(dt, inp) {
        shoulders turn against the hips, and the body rises and falls: at the
        passing of the legs a walker is at the top of the stride and a runner
        at the bottom. */
-    const gait = riding ? (player.riding.flown ? 0 : Math.hypot(inp.mx || 0, inp.mz || 0) * 5.5) : (player.wallRun ? spd : vh);
+    const gait = riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 5.5 : (player.wallRun ? spd : vh);
     const cad = clamp(1.75 + 0.18 * gait, 1.75, 3.6);                  // steps per second
     const stride = Math.floor(runPhase / PI);
     runPhase += dt * PI * cad * sstep(0.15, 0.9, gait);

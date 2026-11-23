@@ -134,9 +134,10 @@ function unpackGhost(s) {
 
 /* ---- what you see ---- */
 const RING_GEO = new THREE.TorusGeometry(RING_R, 0.42, 6, 30);
-const ringNow = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false }));
+const RING_C = cssToken('ring');   // one colour for the ring, its pointer and its dot on the map
+const ringNow = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: RING_C, fog: false, toneMapped: false }));
 const ringAfter = new THREE.Mesh(RING_GEO,
-  new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false }));
+  new THREE.MeshBasicMaterial({ color: RING_C, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false }));
 /* a shaft of light over the next ring, so it can be found from across the city */
 const ringBeam = new THREE.Mesh(
   new THREE.CylinderGeometry(1.6, 1.6, 420, 8, 1, true).translate(0, 210 + RING_R, 0),
@@ -306,9 +307,10 @@ function drawRunOnMap(c, f) {
   if (!flying()) return;
   for (let i = COURSE_RINGS - 1; i >= run.next; i--) {
     const r = run.rings[i], first = i === run.next;
-    c.fillStyle = first ? '#ffb52e' : 'rgba(255,181,46,.4)';
+    c.fillStyle = RING_C; c.globalAlpha = first ? 1 : 0.4;
     c.beginPath(); c.arc((r.x - player.p.x) * f, (r.z - player.p.z) * f, first ? 3.2 : 1.8, 0, TAU); c.fill();
   }
+  c.globalAlpha = 1;
 }
 
 addEventListener('keydown', e => {

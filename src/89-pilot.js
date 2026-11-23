@@ -16,8 +16,12 @@
    that can be off from that circuit's band, and it is eased back in.
 
    Physics only announces the press (emit('helm', hull)); this file decides
-   what it means. A hull being flown carries `flown`, and the rider's walkway
-   reads it to hold you in the seat instead of letting the stick walk you.
+   what it means. Taking the controls swaps the hull's step from flyPlane to
+   flyByHand, and handing back swaps it back: those two functions, and
+   nothing else, write `flown` and `step`. The stick is routed here too
+   (routeStick): on a hull being flown it steers the hull, and the walk input
+   the rider's walkway reads becomes a walk to the seat, so nothing
+   downstream needs to know you are flying.
    ===================================================================== */
 const PILOT_TURN = 0.55;        // rad/s of heading at full stick
 const PILOT_BANK = 0.62;        // rad of roll at full stick
@@ -32,13 +36,27 @@ let pilotEdgeSaid = false;
 
 listen('helm', (pl) => {
   if (pl.flown) { handBack(pl); toast('Autopilot has it'); return; }
-  pl.flown = true; pl.turnRate = 0;
-  pl.pitch = pl.pitch || 0; pl.roll = pl.roll || 0;
-  pilotEdgeSaid = false;
+  takeControls(pl);
   toast(touchOn ? 'You have the controls · stick to steer · Let go to hand it back'
                 : 'You have the controls · A/D turn · W/S climb and dive · E to let go');
   toastT = 3.5;
 });
+function takeControls(pl) {
+  pl.flown = true; pl.step = flyByHand; pl.turnRate = 0;
+  pilotEdgeSaid = false;
+}
+
+/* Aboard a hull being flown, the stick is the hull's (flyByHand reads
+   inp.rlRaw / inp.mzRaw), and the walk becomes a walk to the seat: a world
+   direction, as inp.mx/mz always are, slowing to nothing on arrival. */
+function routeStick(inp) {
+  const pl = player.riding;
+  if (!pl || !pl.flown) return;
+  const lx = -player.rideLo.x, lz = COCKPIT_Z - player.rideLo.z, d = Math.hypot(lx, lz);
+  const k = d < 0.01 ? 0 : Math.min(1, d / 0.35) / d;
+  const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+  inp.mx = (lx * c + lz * sn) * k; inp.mz = (lz * c - lx * sn) * k;
+}
 
 /* the top of whatever is solid under (x, z), or 0 for the street */
 function solidTop(x, z) {
@@ -47,7 +65,9 @@ function solidTop(x, z) {
 }
 
 function flyByHand(pl, dt) {
-  const turn = clamp(inp.rlRaw || 0, -1, 1), climb = clamp(inp.mzRaw || 0, -1, 1);
+  /* the hands have to be aboard to be on the controls */
+  if (player.riding !== pl) { handBack(pl); flyPlane(pl, dt); return; }
+  const turn = clamp(inp.rlRaw, -1, 1), climb = clamp(inp.mzRaw, -1, 1);
   const spd = pl.cruise, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
 
   /* D turns right, which is the heading angle going DOWN (75-traffic.js:
@@ -80,11 +100,12 @@ function flyByHand(pl, dt) {
   const y = clamp(pl.p.y + spd * Math.sin(pl.pitch) * dt, top + PLANE_HY + 1, PILOT_CEIL);
   pl.v.set(x - pl.p.x, y - pl.p.y, z - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
   pl.p.set(x, y, z);
+  drawPlane(pl);
 }
 
 /* back to a circuit: through here, along the nose, at its old size */
 function handBack(pl) {
-  pl.flown = false;
+  pl.flown = false; pl.step = flyPlane;
   const s = Math.sign(pl.w), hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
   /* flyPlane's nose is along w·(−sin ph, cos ph), so sin ph = −s·hx, cos ph = s·hz */
   pl.ph = Math.atan2(-s * hx, s * hz);

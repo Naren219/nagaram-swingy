@@ -1353,6 +1353,18 @@ async function piloting(page, check) {
     for (let i = 0; i < 240; i++) { jump = Math.max(jump, step()); turn = Math.max(turn, Math.abs(wrapA(pl.yaw - prevYaw))); prevYaw = pl.yaw; }
     out.handed = !pl.flown && player.riding === pl; out.before = before; out.jump = jump; out.turn = turn;
     out.walkAgain = (() => { const z = player.rideLo.z; keys['KeyS'] = true; __run(30); keys['KeyS'] = false; return Math.abs(player.rideLo.z - z) > 0.2; })();
+    /* aim sees the hull it is drawn as: a ray up at a point under a banked
+       and pitched wing meets the hull's own underside. Polarity: tested on a
+       heading-only box, the hit was 2.4 m off that face. */
+    out.aim = [[0, 0], [0.3, 0]].map(([pitch, extraRoll]) => {
+      const p0 = pl.pitch, r0 = pl.roll; pl.pitch = pitch; pl.roll = r0 + extraRoll;
+      const at = planePoint(pl, 11, 0, 4, new THREE.Vector3());
+      const hit = rayHitPlanes(at.x, at.y - 40, at.z, 0, 1, 0, 80), lo = new THREE.Vector3();
+      const off = hit && hit.pl === pl ? Math.abs(worldToPlane(pl, hit.x, hit.y, hit.z, lo).y + pl.hy + pl.reach * 0.5) : 99;
+      pl.pitch = p0; pl.roll = r0;
+      return off;
+    });
+    out.aimRoll = pl.roll;
     /* stepping off while flying hands it back too */
     mountEdge = true; __run(2); const was = !!pl.flown; jumpEdge = true; __run(2);
     out.offFlown = was && !pl.flown && player.riding === null;
@@ -1370,6 +1382,8 @@ async function piloting(page, check) {
     'worst step ' + r.jump.toFixed(3) + ' m against ' + r.before.toFixed(3) + ', worst turn ' + r.turn.toFixed(3) + ' rad/frame');
   check('handed back, the stick walks you again', r.walkAgain);
   check('stepping off while flying hands it back', r.offFlown);
+  check('aiming meets a banked, pitched aircraft on its own underside', r.aim.every(o => o < 1e-3) && Math.abs(r.aimRoll) > 0.1,
+    'off the face by ' + r.aim.map(o => o.toFixed(4) + ' m').join(' / ') + ' at a bank of ' + r.aimRoll.toFixed(2));
 }
 
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
