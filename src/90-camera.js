@@ -37,7 +37,7 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 3.4;
+  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 0.6;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   /* perched (91-perch.js) the camera backs off and lifts a little, so you sit

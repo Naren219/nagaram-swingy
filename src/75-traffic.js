@@ -159,6 +159,25 @@ const V_PLANE = mergeGeos([
 const PLANE_HX = 13.0, PLANE_HY = 3.4, PLANE_HZ = 12.0;   // AABB half-extents
 const DECK_Y = 1.45;     // top of the fuselage, where a rider stands
 const PLANE_BANK = 0.22; // the roll an aircraft holds round its circuit
+/* the boosters: lit by the pilot (89-pilot.js), they add PLANE_BOOST to the
+   cruising speed at full thrust, and burn down at PLANE_BOOST_FALL once let
+   go, on the autopilot too, so handing back mid-boost slows it, not stops it */
+const PLANE_BOOST = 38, PLANE_BOOST_FALL = 1.1;
+const ENGINE_X = 7.0, ENGINE_Y = -1.9, NOZZLE_Z = -1.9;   // the back of each engine (V_PLANE)
+const FLAME_LEN = 6;     // metres of flame at full thrust
+const FLAME = new THREE.ConeGeometry(0.72, 1, 10).rotateX(-PI / 2).translate(0, 0, -0.5);   // base at the nozzle, 1 m long
+/* the flame is drawn as it is, so it stays orange against a bright sky; only its core adds light */
+const flameMat = new THREE.MeshBasicMaterial({ color: 0xff5a12, transparent: true, opacity: 0.85,
+  depthWrite: false, toneMapped: false });
+const flameCoreMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.95,
+  blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+function makeFlame(x) {
+  const g = new THREE.Group(), core = new THREE.Mesh(FLAME, flameCoreMat);
+  core.scale.set(0.5, 0.5, 0.55);
+  g.add(new THREE.Mesh(FLAME, flameMat), core);
+  g.position.set(x, ENGINE_Y, NOZZLE_Z); g.visible = false;
+  return g;
+}
 const planes = [];
 {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -166,9 +185,11 @@ const planes = [];
     const mesh = new THREE.Mesh(V_PLANE, mat);
     mesh.castShadow = true; mesh.frustumCulled = false;
     mesh.rotation.order = 'YXZ';   // heading, then nose up/down, then bank: how planePoint turns it too
+    const flames = [makeFlame(-ENGINE_X), makeFlame(ENGINE_X)];
+    mesh.add(...flames);
     scene.add(mesh);
     const pl = {
-      kind: 'plane', step: flyPlane, mesh,
+      kind: 'plane', step: flyPlane, mesh, flames,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
       cx: rnd(-120, 120), cz: rnd(-160, 120),
@@ -179,7 +200,7 @@ const planes = [];
          its box, how generously a web may find it, and where a rider walks */
       hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5,
       /* the attitude the hull is drawn and ridden at; flown by hand, it can be (89-pilot.js) */
-      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0
+      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0, boost: 0
     };
     pl.cruise = pl.r * Math.abs(pl.w);   // the speed it flies its circuit at, and is flown at
     planes.push(pl);
@@ -191,7 +212,8 @@ for (const b of boats) planes.push(b);
 for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
 /* the autopilot. A hull being flown by hand steps with flyByHand instead (89-pilot.js) */
 function flyPlane(pl, dt) {
-  pl.ph += pl.w * dt;
+  pl.boost = damp(pl.boost, 0, PLANE_BOOST_FALL, dt);
+  pl.ph += pl.w * dt * (1 + pl.boost * PLANE_BOOST / pl.cruise);   // the circuit, faster by what boost is left
   pl.oy *= Math.exp(-dt / 7);            // a hand-back off its circuit's height eases back onto it
   const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
   const py = pl.y + Math.sin(pl.ph * 2.1) * 6 + pl.oy;
@@ -206,6 +228,13 @@ function flyPlane(pl, dt) {
 function drawPlane(pl) {
   pl.mesh.position.copy(pl.p);
   pl.mesh.rotation.set(-pl.pitch, pl.yaw, pl.roll);
+  /* the flames are as long as the thrust, and never quite still */
+  const lit = pl.boost > 0.01;
+  for (let i = 0; i < 2; i++) {
+    const f = pl.flames[i];
+    f.visible = lit;
+    if (lit) f.scale.set(0.75 + 0.25 * pl.boost, 0.75 + 0.25 * pl.boost, pl.boost * FLAME_LEN * (1 + 0.14 * Math.sin(T * 43 + i * 2.1)));
+  }
 }
 /* afloat, a boat sails its circle and rides the swell; beached, it sits */
 function sailBoat(b, dt) {

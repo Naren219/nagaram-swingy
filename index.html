@@ -271,7 +271,7 @@ document.getElementById('icon').href = 'data:image/svg+xml,' + encodeURIComponen
       <tr><td>Shift</td><td>Tuck &amp; dive</td></tr>
       <tr><td>Q</td><td>Zip to anchor</td></tr>
       <tr><td>E</td><td>Cling to wall &middot; board an aircraft</td></tr>
-      <tr><td>E aboard</td><td>Fly it: A/D turn &middot; W/S climb and dive</td></tr>
+      <tr><td>E aboard</td><td>Fly it: A/D turn &middot; W/S climb and dive &middot; Shift boost</td></tr>
       <tr><td>T / F / M</td><td>Time of day · assist · mute</td></tr>
       <tr><td>G / N / X</td><td>Ring run: start · next course · leave</td></tr>
       <tr><td>B</td><td>Trial: the line bends round corners</td></tr>
@@ -1793,6 +1793,25 @@ const V_PLANE = mergeGeos([
 const PLANE_HX = 13.0, PLANE_HY = 3.4, PLANE_HZ = 12.0;   // AABB half-extents
 const DECK_Y = 1.45;     // top of the fuselage, where a rider stands
 const PLANE_BANK = 0.22; // the roll an aircraft holds round its circuit
+/* the boosters: lit by the pilot (89-pilot.js), they add PLANE_BOOST to the
+   cruising speed at full thrust, and burn down at PLANE_BOOST_FALL once let
+   go, on the autopilot too, so handing back mid-boost slows it, not stops it */
+const PLANE_BOOST = 38, PLANE_BOOST_FALL = 1.1;
+const ENGINE_X = 7.0, ENGINE_Y = -1.9, NOZZLE_Z = -1.9;   // the back of each engine (V_PLANE)
+const FLAME_LEN = 6;     // metres of flame at full thrust
+const FLAME = new THREE.ConeGeometry(0.72, 1, 10).rotateX(-PI / 2).translate(0, 0, -0.5);   // base at the nozzle, 1 m long
+/* the flame is drawn as it is, so it stays orange against a bright sky; only its core adds light */
+const flameMat = new THREE.MeshBasicMaterial({ color: 0xff5a12, transparent: true, opacity: 0.85,
+  depthWrite: false, toneMapped: false });
+const flameCoreMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.95,
+  blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+function makeFlame(x) {
+  const g = new THREE.Group(), core = new THREE.Mesh(FLAME, flameCoreMat);
+  core.scale.set(0.5, 0.5, 0.55);
+  g.add(new THREE.Mesh(FLAME, flameMat), core);
+  g.position.set(x, ENGINE_Y, NOZZLE_Z); g.visible = false;
+  return g;
+}
 const planes = [];
 {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -1800,9 +1819,11 @@ const planes = [];
     const mesh = new THREE.Mesh(V_PLANE, mat);
     mesh.castShadow = true; mesh.frustumCulled = false;
     mesh.rotation.order = 'YXZ';   // heading, then nose up/down, then bank: how planePoint turns it too
+    const flames = [makeFlame(-ENGINE_X), makeFlame(ENGINE_X)];
+    mesh.add(...flames);
     scene.add(mesh);
     const pl = {
-      kind: 'plane', step: flyPlane, mesh,
+      kind: 'plane', step: flyPlane, mesh, flames,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
       cx: rnd(-120, 120), cz: rnd(-160, 120),
@@ -1813,7 +1834,7 @@ const planes = [];
          its box, how generously a web may find it, and where a rider walks */
       hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5,
       /* the attitude the hull is drawn and ridden at; flown by hand, it can be (89-pilot.js) */
-      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0
+      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0, boost: 0
     };
     pl.cruise = pl.r * Math.abs(pl.w);   // the speed it flies its circuit at, and is flown at
     planes.push(pl);
@@ -1825,7 +1846,8 @@ for (const b of boats) planes.push(b);
 for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
 /* the autopilot. A hull being flown by hand steps with flyByHand instead (89-pilot.js) */
 function flyPlane(pl, dt) {
-  pl.ph += pl.w * dt;
+  pl.boost = damp(pl.boost, 0, PLANE_BOOST_FALL, dt);
+  pl.ph += pl.w * dt * (1 + pl.boost * PLANE_BOOST / pl.cruise);   // the circuit, faster by what boost is left
   pl.oy *= Math.exp(-dt / 7);            // a hand-back off its circuit's height eases back onto it
   const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
   const py = pl.y + Math.sin(pl.ph * 2.1) * 6 + pl.oy;
@@ -1840,6 +1862,13 @@ function flyPlane(pl, dt) {
 function drawPlane(pl) {
   pl.mesh.position.copy(pl.p);
   pl.mesh.rotation.set(-pl.pitch, pl.yaw, pl.roll);
+  /* the flames are as long as the thrust, and never quite still */
+  const lit = pl.boost > 0.01;
+  for (let i = 0; i < 2; i++) {
+    const f = pl.flames[i];
+    f.visible = lit;
+    if (lit) f.scale.set(0.75 + 0.25 * pl.boost, 0.75 + 0.25 * pl.boost, pl.boost * FLAME_LEN * (1 + 0.14 * Math.sin(T * 43 + i * 2.1)));
+  }
 }
 /* afloat, a boat sails its circle and rides the swell; beached, it sits */
 function sailBoat(b, dt) {
@@ -4111,7 +4140,8 @@ function applyWeather(dt) {
    Aboard an aircraft, E takes its controls: you go forward to the cockpit,
    the view drops back to frame the whole airframe, and A/D turn it (it banks
    into the turn) while W/S put the nose up and down. E again hands it back.
-   The aircraft keeps its own cruising speed; you only choose where it goes.
+   It flies at its own cruising speed, and Shift lights the boosters in the
+   back of its engines for more (PLANE_BOOST, 75-traffic.js).
 
    Two things it will not let you do. It will not fly into the city: it
    looks down under itself and ahead of itself, and pulls up over whatever is
@@ -4144,13 +4174,15 @@ let pilotEdgeSaid = false;
 listen('helm', (pl) => {
   if (pl.flown) { handBack(pl); toast('Autopilot has it'); return; }
   takeControls(pl);
-  toast(touchOn ? 'You have the controls · stick to steer · Let go to hand it back'
-                : 'You have the controls · A/D turn · W/S climb and dive · E to let go');
+  toast(touchOn ? 'You have the controls · stick to steer · Boost to speed up · Let go to hand it back'
+                : 'You have the controls · A/D turn · W/S climb and dive · Shift boost · E to let go');
   toastT = 3.5;
 });
+const tuckBtn = document.getElementById('tTuck');
 function takeControls(pl) {
   pl.flown = true; pl.step = flyByHand; pl.turnRate = 0;
   pilotEdgeSaid = false;
+  tuckBtn.textContent = 'Boost';
 }
 
 /* Aboard a hull being flown, the stick is the hull's (flyByHand reads
@@ -4175,7 +4207,9 @@ function flyByHand(pl, dt) {
   /* the hands have to be aboard to be on the controls */
   if (player.riding !== pl) { handBack(pl); flyPlane(pl, dt); return; }
   const turn = clamp(inp.rlRaw, -1, 1), climb = clamp(inp.mzRaw, -1, 1);
-  const spd = pl.cruise, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+  /* the dive key (Shift, the Boost button, the pad's dive) lights the boosters */
+  pl.boost = damp(pl.boost, inp.tuck ? 1 : 0, inp.tuck ? 2.6 : PLANE_BOOST_FALL, dt);
+  const spd = pl.cruise + pl.boost * PLANE_BOOST, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
 
   /* D turns right, which is the heading angle going DOWN (75-traffic.js:
      the nose points along (sin yaw, cos yaw)) */
@@ -4213,6 +4247,7 @@ function flyByHand(pl, dt) {
 /* back to a circuit: through here, along the nose, at its old size */
 function handBack(pl) {
   pl.flown = false; pl.step = flyPlane;
+  tuckBtn.textContent = 'Dive';
   const s = Math.sign(pl.w), hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
   /* flyPlane's nose is along w·(−sin ph, cos ph), so sin ph = −s·hx, cos ph = s·hz */
   pl.ph = Math.atan2(-s * hx, s * hz);
@@ -4225,7 +4260,7 @@ function handBack(pl) {
 
 /* the chase view: the camera follows the nose, a little above it, unless you
    have just looked somewhere yourself, and comes back to it a moment after */
-const PILOT_VIEW_PITCH = -0.16;
+const PILOT_VIEW_PITCH = -0.2;
 let pilotLookYaw = 0, pilotLookPitch = 0, pilotLookIdle = 0;
 function pilotCamera(dt) {
   const flown = !!(player.riding && player.riding.flown);
@@ -4282,7 +4317,7 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 3.4;
+  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 0.6;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
@@ -4863,7 +4898,8 @@ function updateAudio(dt) {
     if (pl.train) rail = clamp(1 - d / 110, 0, 1) * clamp(pl.v.length() / 12, 0.15, 1);
     else if (pl.kind === 'plane') eng = Math.max(eng, clamp(1 - d / 150, 0, 1));
   }
-  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') eng = 1; }
+  let thrust = 0;                                 // the boosters of the aircraft you are on (89-pilot.js)
+  if (player.riding) { if (player.riding.train) rail = Math.max(rail, 0.8); else if (player.riding.kind === 'plane') { eng = 1; thrust = player.riding.boost; } }
 
   const wob = 0.82 + 0.18 * Math.sin(T * 0.31) + 0.06 * Math.sin(T * 0.83);
   const tgt = {
@@ -4871,9 +4907,9 @@ function updateAudio(dt) {
     traffic: trafficN * alt * 0.20 * (1 - night * 0.55),
     bazaar: bazaarN * alt * 0.085 * (1 - night * 0.75),
     night: night * alt * 0.030 * (0.7 + 0.3 * Math.sin(T * 1.7)),
-    engine: eng * 0.16,
+    engine: eng * 0.16 + thrust * 0.14,
     rail: rail * rail * 0.26,
-    engineTone: eng * eng * 0.055,
+    engineTone: eng * eng * 0.055 + thrust * 0.04,
     rain: rainHere * 0.34
   };
   const k = 1 - Math.exp(-2.2 * dt);
@@ -4883,7 +4919,7 @@ function updateAudio(dt) {
     b.g.gain.value = b.cur;
   }
   if (beds.engineTone && beds.engineTone.o)
-    beds.engineTone.o.frequency.value = 52 + eng * 14;
+    beds.engineTone.o.frequency.value = 52 + eng * 14 + thrust * 26;
   updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */
