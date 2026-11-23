@@ -17,9 +17,15 @@ function districtAt(x, z) {
   return 'mid';
 }
 const ZONE_NAME = {
-  temple: 'temple ward', oldtown: 'old bazaar', mid: 'midtown', tech: 'tech park',
-  apartments: 'north blocks', chettinad: 'chettinad quarter',
-  beach: 'the marina', river: 'riverside', sea: 'bay of bengal'
+  temple: 'Temple Ward', oldtown: 'Old Bazaar', mid: 'Midtown', tech: 'Tech Park',
+  apartments: 'North Blocks', chettinad: 'Chettinad Quarter',
+  beach: 'The Marina', river: 'Riverside', sea: 'Bay of Bengal'
+};
+/* the same districts as the city calls them, shown beside the English */
+const ZONE_TAMIL = {
+  temple: 'கோயில் பகுதி', oldtown: 'கடைவீதி', mid: 'நகர மையம்', tech: 'தொழில்நுட்பப் பூங்கா',
+  apartments: 'வடக்குக் குடியிருப்பு', chettinad: 'செட்டிநாடு',
+  beach: 'மெரினா', river: 'ஆற்றங்கரை', sea: 'வங்கக் கடல்'
 };
 
 const PALETTE = {

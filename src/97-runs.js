@@ -19,8 +19,8 @@ const RUN_KEY = 'nagaram.runs';
 const COURSES = (() => {
   const d = new Date(), today = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
   const shared = /[?&]run=(\d{1,9})\b/.exec(location.search);
-  const seeds = [['day-' + today, 'today', today], ['c1', 'course one', 1101], ['c2', 'course two', 2202], ['c3', 'course three', 3303]];
-  if (shared) seeds.unshift(['seed-' + shared[1], 'seed ' + shared[1], +shared[1]]);
+  const seeds = [['day-' + today, 'Today', today], ['c1', 'Course one', 1101], ['c2', 'Course two', 2202], ['c3', 'Course three', 3303]];
+  if (shared) seeds.unshift(['seed-' + shared[1], 'Seed ' + shared[1], +shared[1]]);
   return seeds.map(([id, name, seed]) => ({ id, name, seed, rings: null, sig: '' }));   // rings are built on first use
 })();
 
@@ -190,7 +190,7 @@ function syncRunView() {
   const d = runDelta();
   runNm.textContent = COURSES[run.ci].name;
   runGt.textContent = run.next + '/' + COURSE_RINGS;
-  runTm.textContent = run.state === 'armed' ? 'fly through the ring' : fmtRun(run.t);
+  runTm.textContent = run.state === 'armed' ? 'Fly through the ring' : fmtRun(run.t);
   runDf.textContent = d === null ? '' : fmtDiff(d);
   runDf.classList.toggle('up', d !== null && d < 0);
 }
@@ -210,7 +210,7 @@ function armRun() {
   const c = COURSES[run.ci];
   if (!c.rings) {
     c.rings = buildCourse(c.seed);
-    if (!c.rings) { toast('no course for that seed'); return; }
+    if (!c.rings) { toast('No course for that seed'); return; }
     c.sig = courseSig(c.rings);
   }
   run.state = 'armed'; run.rings = c.rings; run.next = 0;

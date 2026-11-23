@@ -121,13 +121,13 @@ scene.add(hemi);
 scene.fog = new THREE.FogExp2(0xc9d6dc, 0.00105);
 
 const TOD = [
-  { name: 'noon', sun: [0.32, 0.86, -0.4], sunC: 0xfff0d0, sunI: 2.7, top: 0x2a6fb0, mid: 0xa8c8dc, bot: 0xe6d8bd,
+  { name: 'Noon', sun: [0.32, 0.86, -0.4], sunC: 0xfff0d0, sunI: 2.7, top: 0x2a6fb0, mid: 0xa8c8dc, bot: 0xe6d8bd,
     hemiS: 0xbcd9ec, hemiG: 0x6b5a44, hemiI: 0.9, fog: 0xcbd8de, fogD: 0.00105, night: 0, cloud: 0.5, exp: 1.05 },
-  { name: 'evening', sun: [-0.86, 0.20, 0.18], sunC: 0xffb066, sunI: 2.5, top: 0x2b5c8e, mid: 0xd79c72, bot: 0xf0c489,
+  { name: 'Evening', sun: [-0.86, 0.20, 0.18], sunC: 0xffb066, sunI: 2.5, top: 0x2b5c8e, mid: 0xd79c72, bot: 0xf0c489,
     hemiS: 0xe8b489, hemiG: 0x59422f, hemiI: 0.7, fog: 0xdfae86, fogD: 0.00125, night: 0.25, cloud: 0.72, exp: 1.1 },
-  { name: 'night', sun: [-0.4, 0.42, 0.6], sunC: 0x9ab6e0, sunI: 0.30, top: 0x050a18, mid: 0x0d1a30, bot: 0x21283a,
+  { name: 'Night', sun: [-0.4, 0.42, 0.6], sunC: 0x9ab6e0, sunI: 0.30, top: 0x050a18, mid: 0x0d1a30, bot: 0x21283a,
     hemiS: 0x24344f, hemiG: 0x0d1014, hemiI: 0.32, fog: 0x0d1622, fogD: 0.00160, night: 1, cloud: 0.35, exp: 1.35 },
-  { name: 'dawn', sun: [0.88, 0.13, -0.30], sunC: 0xffcf9a, sunI: 2.1, top: 0x3f6f9e, mid: 0xc0b6c4, bot: 0xf3cbb0,
+  { name: 'Dawn', sun: [0.88, 0.13, -0.30], sunC: 0xffcf9a, sunI: 2.1, top: 0x3f6f9e, mid: 0xc0b6c4, bot: 0xf3cbb0,
     hemiS: 0xdcc8c6, hemiG: 0x4d4238, hemiI: 0.66, fog: 0xd9c7c0, fogD: 0.00145, night: 0.35, cloud: 0.6, exp: 1.08 }
 ];
 let todIdx = 1;                      // seeds the facade uniforms; applyDay() takes over per-frame

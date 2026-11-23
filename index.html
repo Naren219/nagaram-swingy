@@ -3,59 +3,70 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>NAGARAM — web-swing sandbox</title>
+<title>Nagaram — web-swing sandbox</title>
 <!-- gopuram mark, inline so the page still makes zero extra requests -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20fill=%22%23171a1c%22/%3E%3Cpath%20d=%22M6%2027h20L22%209h-3l-1-4h-4l-1%204H10z%22%20fill=%22%23e8a92b%22/%3E%3Crect%20x=%2214%22%20y=%2215%22%20width=%224%22%20height=%2212%22%20fill=%22%23d5352b%22/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20fill=%22%231d1320%22/%3E%3Cpath%20d=%22M6%2027h20L22%209h-3l-1-4h-4l-1%204H10z%22%20fill=%22%23d8a83c%22/%3E%3Crect%20x=%2214%22%20y=%2215%22%20width=%224%22%20height=%2212%22%20fill=%22%23b0263a%22/%3E%3C/svg%3E">
+<!-- Anek Tamil (OFL, see vendor/anek-tamil.LICENSE): one family whose Latin
+     was drawn to sit with its Tamil. Subset to Latin + Tamil, weight 400–800. -->
+<link rel="preload" href="vendor/anek-tamil.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  @font-face{font-family:"Anek Tamil";src:url(vendor/anek-tamil.woff2) format("woff2");
+    font-weight:400 800;font-style:normal;font-display:swap}
+  /* Kanchipuram silk: an aubergine ground, a zari-gold border, a peacock
+     inner line and arakku red, the way a pattu saree is put together. */
   :root{
-    --granite:#171a1c;      /* Mahabalipuram granite */
-    --chalk:#efe7d6;        /* temple lime wash */
-    --vermilion:#d5352b;    /* kumkum stripe */
-    --turmeric:#e8a92b;     /* gopuram band */
-    --malachite:#1f7a63;    /* Bay of Bengal */
-    --ink:rgba(10,12,13,.72);
-    --hair:rgba(239,231,214,.22);
-    --lock:#3ef0ff;         /* target cyan — nothing else in the palette is cool */
+    --ground:#1d1320;               /* aubergine silk */
+    --ink:rgba(40,19,40,.82);       /* panels */
+    --silk:#f4ead2;                 /* raw silk, all text */
+    --zari:#d8a83c;                 /* gold thread */
+    --peacock:#127a74;              /* peacock teal */
+    --peacock-lt:#4cc3b2;           /* the same, as text on the dark */
+    --arakku:#b0263a;               /* arakku red */
+    --arakku-lt:#e8576b;            /* the same, as text on the dark */
+    --hair:rgba(216,168,60,.30);    /* a gold hairline */
+    --korvai:rgba(18,122,116,.60);  /* the contrasting inner border */
+    --lock:#3ef0ff;                 /* target cyan — nothing else in the palette is this cool */
+    --font:"Anek Tamil","Noto Sans Tamil",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    /* the zari border: temple teeth over a gold line, one 18px repeat */
+    --zari-band:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='10'%3E%3Cpath d='M1 9L4 6H6L9 2L12 6H14L17 9Z' fill='%23d8a83c' fill-opacity='.85'/%3E%3Ccircle cx='9' cy='6.7' r='1.05' fill='%23b0263a'/%3E%3Crect y='9' width='18' height='1' fill='%23d8a83c'/%3E%3C/svg%3E");
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;overflow:hidden;background:#05070a;color:var(--chalk);
-    font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Noto Sans Tamil",sans-serif;
+  html,body{height:100%;overflow:hidden;background:#0b070d;color:var(--silk);
+    font-family:var(--font);font-feature-settings:"tnum";
     -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
   canvas{display:block}
   #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
 
   /* ---- speed vignette ---- */
   #rush{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:4;
-    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(4,10,14,.85) 100%);
+    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(14,6,14,.85) 100%);
     transition:opacity .12s linear}
 
-  /* ---- inscription band: the signature element ---- */
+  /* ---- the band: readouts under a woven zari border ---- */
   #band{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:stretch;
-    height:74px;background:linear-gradient(0deg,rgba(8,10,11,.9),rgba(8,10,11,.35));
-    border-top:1px solid var(--hair)}
-  #band::before{content:"";position:absolute;top:-3px;left:0;right:0;height:2px;
-    background:repeating-linear-gradient(90deg,var(--vermilion) 0 26px,var(--turmeric) 26px 34px,transparent 34px 60px);
-    opacity:.75}
+    height:74px;background:linear-gradient(0deg,rgba(22,13,24,.94),rgba(29,19,32,.55))}
+  #band::before{content:"";position:absolute;top:-10px;left:0;right:0;height:10px;
+    background:var(--zari-band) repeat-x;opacity:.9}
   .cell{flex:0 0 auto;padding:12px 20px 10px;border-right:1px solid var(--hair);min-width:118px}
   .cell:last-child{border-right:0}
-  .k{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;opacity:.55;white-space:nowrap}
-  .k b{font-weight:500;letter-spacing:.02em;opacity:.85}
-  .v{font:600 26px/1.05 ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:5px;
-    font-variant-numeric:tabular-nums}
-  .v small{font-size:11px;opacity:.5;font-weight:400;margin-left:3px}
-  #vTen .v{color:var(--turmeric)}
-  #vSpd .v{color:var(--chalk)}
+  .k{font-size:12px;font-weight:500;letter-spacing:.02em;opacity:.68;white-space:nowrap}
+  .k b{font-weight:500;opacity:.85}
+  .v{font:600 27px/1.05 var(--font);margin-top:4px;font-variant-numeric:tabular-nums}
+  .v small{font-size:12px;opacity:.55;font-weight:400;margin-left:3px}
+  #vTen .v{color:var(--zari)}
+  #vSpd .v{color:var(--silk)}
   .grow{flex:1 1 auto;border-right:0}
-  #zone{padding:14px 20px;text-align:right;opacity:.8}
-  #zone .en{font-size:15px;letter-spacing:.22em;text-transform:uppercase;opacity:.75}
+  #zone{padding:12px 20px;text-align:right}
+  #zone .en{font-size:17px;font-weight:600;opacity:.9}
+  #zone .ta{font-size:13px;font-weight:500;color:var(--zari);opacity:.85;margin-top:3px}
 
-  /* ---- tension bar ---- */
+  /* ---- tension: the band's gold line fills, peacock to arakku ---- */
   #tbar{position:absolute;left:0;bottom:74px;height:2px;width:0%;
-    background:linear-gradient(90deg,var(--malachite),var(--turmeric),var(--vermilion));transition:width .05s linear}
+    background:linear-gradient(90deg,var(--peacock-lt),var(--zari),var(--arakku-lt));transition:width .05s linear}
 
   /* ---- crosshair ---- */
   #cross{position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px}
-  #cross i{position:absolute;background:var(--chalk);opacity:.55;transition:all .12s ease}
+  #cross i{position:absolute;background:var(--silk);opacity:.6;transition:all .12s ease}
   #cross i:nth-child(1){left:19px;top:0;width:2px;height:9px}
   #cross i:nth-child(2){left:19px;bottom:0;width:2px;height:9px}
   #cross i:nth-child(3){top:19px;left:0;height:2px;width:9px}
@@ -64,94 +75,100 @@
   #cross.lock i:nth-child(1){height:5px}#cross.lock i:nth-child(2){height:5px}
   #cross.lock i:nth-child(3){width:5px}#cross.lock i:nth-child(4){width:5px}
   #cross b{position:absolute;left:18px;top:18px;width:4px;height:4px;border-radius:50%;
-    background:var(--vermilion);opacity:0;transition:opacity .1s}
+    background:var(--zari);opacity:0;transition:opacity .1s}
   #cross.web b{opacity:1}
-  #cross.miss i{background:var(--vermilion);opacity:.95;box-shadow:0 0 8px rgba(207,58,42,.8)}
+  #cross.miss i{background:var(--arakku-lt);opacity:.95;box-shadow:0 0 8px rgba(176,38,58,.85)}
   #cross.miss{animation:missPulse .22s ease-out}
   @keyframes missPulse{from{transform:scale(1.55)}to{transform:scale(1)}}
 
+  /* ---- panels: a gold edge with a peacock line inside it ---- */
+  #help,#mapwrap{border:1px solid var(--hair);outline:1px solid var(--korvai);outline-offset:-5px}
+
   /* ---- minimap ---- */
   #mapwrap{position:absolute;right:18px;top:18px;width:168px;height:168px;
-    border:1px solid var(--hair);background:rgba(6,9,10,.6);backdrop-filter:blur(3px)}
+    background:rgba(30,16,32,.68);backdrop-filter:blur(3px)}
   #mapwrap canvas{width:100%;height:100%;opacity:.92}
-  #mapwrap::after{content:"nagaram";position:absolute;left:7px;bottom:5px;font-size:11px;opacity:.5}
+  #mapwrap::after{content:"நகரம்";position:absolute;left:7px;bottom:7px;padding:2px 6px 1px;font-size:12px;font-weight:600;
+    color:var(--zari);background:var(--ink);opacity:.9}
 
   /* ---- free-look steering ring (shown when pointer lock is unavailable) ---- */
   #look{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s ease}
   #look.on{opacity:1}
   body.freelook canvas{cursor:none}
   #look .ring{position:absolute;left:50%;top:50%;width:15vmin;height:15vmin;margin:-7.5vmin 0 0 -7.5vmin;
-    border:1px dashed var(--hair);border-radius:50%;opacity:.55}
+    border:1px dashed var(--hair);border-radius:50%;opacity:.7}
   #look .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
-    background:var(--turmeric);box-shadow:0 0 10px rgba(232,169,43,.85);opacity:.9}
+    background:var(--zari);box-shadow:0 0 10px rgba(216,168,60,.85);opacity:.9}
   #look .vec{position:absolute;left:50%;top:50%;height:1px;transform-origin:0 50%;
-    background:linear-gradient(90deg,rgba(232,169,43,0),rgba(232,169,43,.75))}
+    background:linear-gradient(90deg,rgba(216,168,60,0),rgba(216,168,60,.75))}
 
   /* ---- transient readout (sensitivity, mode changes) ---- */
   #toast{position:absolute;left:50%;top:16%;transform:translateX(-50%);
-    padding:7px 15px;border:1px solid var(--hair);background:rgba(14,15,17,.72);
-    font:11px/1 ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;
-    color:var(--turmeric);opacity:0;transition:opacity .2s ease;white-space:nowrap}
-  #toast.on{opacity:.92}
+    padding:8px 16px 7px;border:1px solid var(--hair);background:var(--ink);
+    font:500 14px/1.1 var(--font);letter-spacing:.01em;
+    color:var(--silk);opacity:0;transition:opacity .2s ease;white-space:nowrap}
+  #toast.on{opacity:.95}
 
   /* ---- ring run: readout, and a pointer to a ring that is out of view ---- */
   #run{position:absolute;left:50%;top:18px;transform:translateX(-50%);display:none;align-items:baseline;gap:14px;
-    padding:9px 16px;border:1px solid var(--hair);background:rgba(14,15,17,.72);white-space:nowrap;
-    font:11px/1 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase}
+    padding:9px 16px 8px;border:1px solid var(--hair);background:var(--ink);white-space:nowrap;
+    font:500 14px/1 var(--font)}
   #run.on{display:flex}
-  #run .nm{color:var(--turmeric)}
-  #run .gt{opacity:.6}
-  #run .tm{font-size:17px;font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums}
-  #run.done .tm{color:var(--turmeric)}
-  #run .df{color:var(--vermilion);font-variant-numeric:tabular-nums}
-  #run .df.up{color:#59d08a}
+  #run .nm{color:var(--zari);font-weight:600}
+  #run .gt{opacity:.65}
+  #run .tm{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+  #run.done .tm{color:var(--zari)}
+  #run .df{color:var(--arakku-lt);font-variant-numeric:tabular-nums}
+  #run .df.up{color:var(--peacock-lt)}
   #run .df:empty{display:none}
   #runarrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-9px 0 0 -8px;display:none;opacity:.9;
     border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid #ffb52e}
   #runarrow.on{display:block}
 
   /* ---- help ---- */
-  #help{position:absolute;left:18px;top:18px;max-width:330px;padding:16px 18px 15px;
-    background:var(--ink);border:1px solid var(--hair);backdrop-filter:blur(6px);
-    font-size:12px;line-height:1.62}
-  #help h1{font-size:12px;letter-spacing:.34em;font-weight:600;margin-bottom:2px}
-  #help .sub{font-size:10.5px;letter-spacing:.1em;opacity:.5;margin-bottom:12px}
+  #help{position:absolute;left:18px;top:18px;max-width:340px;padding:17px 19px 15px;
+    background:var(--ink);backdrop-filter:blur(6px);
+    font-size:13px;line-height:1.55}
+  #help h1{display:flex;align-items:baseline;gap:9px;font-size:21px;font-weight:800;line-height:1.1}
+  #help h1 span{font-size:14px;font-weight:600;color:var(--zari)}
+  #help .sub{font-size:12px;opacity:.6;margin:2px 0 12px}
   #help table{border-collapse:collapse;width:100%}
-  #help td{padding:1.5px 0;vertical-align:top}
-  #help td:first-child{width:104px;color:var(--turmeric);font:11px/1.6 ui-monospace,monospace;
-    white-space:nowrap;padding-right:10px}
-  #help .hint{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair);opacity:.6;font-size:11px}
+  #help td{padding:1px 0;vertical-align:top}
+  #help td:first-child{width:104px;color:var(--zari);font-weight:600;white-space:nowrap;padding-right:10px}
+  #help .hint{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair);opacity:.68;font-size:12px;line-height:1.5}
   #help.hide{display:none}
 
   /* ---- start / lock overlay ---- */
   #gate{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:6px;cursor:pointer;
-    background:radial-gradient(ellipse at 50% 62%,rgba(20,28,32,.55),rgba(3,5,7,.94) 70%);
+    align-items:center;justify-content:center;gap:2px;cursor:pointer;
+    background:radial-gradient(ellipse at 50% 62%,rgba(40,22,42,.55),rgba(11,6,13,.94) 70%);
     backdrop-filter:blur(2px)}
-  #gate h2{font-size:clamp(34px,7vw,74px);letter-spacing:.16em;font-weight:600}
-  #gate p{margin-top:16px;font-size:12px;letter-spacing:.26em;text-transform:uppercase;opacity:.65}
-  #gate .rule{width:min(420px,70vw);height:1px;margin:18px 0 2px;
-    background:linear-gradient(90deg,transparent,var(--vermilion),var(--turmeric),transparent)}
-  #gate #today{margin-top:6px;font-size:10px;opacity:.45}
+  #gate h2{font-size:clamp(46px,8.5vw,104px);font-weight:800;line-height:1;letter-spacing:.005em}
+  #gate .ta{font-size:clamp(18px,2.6vw,30px);font-weight:600;color:var(--zari);margin-top:4px}
+  #gate .rule{width:min(420px,70vw);height:10px;margin:20px 0 6px;background:var(--zari-band) repeat-x center;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);
+    mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent)}
+  #gate p{margin-top:12px;font-size:16px;font-weight:500;opacity:.8}
+  #gate #today{margin-top:6px;font-size:13px;font-weight:400;opacity:.55}
   #gate.gone{display:none}
 
   /* ---- pause ---- */
   #pbtn{position:absolute;top:16px;right:16px;z-index:14;pointer-events:auto;cursor:pointer;
-    width:34px;height:34px;border:1px solid var(--hair);background:rgba(14,15,17,.6);
+    width:34px;height:34px;border:1px solid var(--hair);background:rgba(29,19,32,.65);
     display:flex;align-items:center;justify-content:center;gap:4px;transition:border-color .15s}
-  #pbtn:hover{border-color:var(--turmeric)}
-  #pbtn i{width:3px;height:13px;background:var(--turmeric);opacity:.85}
+  #pbtn:hover{border-color:var(--zari)}
+  #pbtn i{width:3px;height:13px;background:var(--zari);opacity:.9}
   #pbtn.on i:first-child{width:0;height:0;background:none;
-    border-left:11px solid var(--turmeric);border-top:7px solid transparent;border-bottom:7px solid transparent}
+    border-left:11px solid var(--zari);border-top:7px solid transparent;border-bottom:7px solid transparent}
   #pbtn.on i:last-child{display:none}
   #pause{position:fixed;inset:0;z-index:24;display:none;flex-direction:column;
     align-items:center;justify-content:center;gap:6px;cursor:pointer;
-    background:rgba(10,11,13,.74);backdrop-filter:blur(3px)}
+    background:rgba(18,10,20,.76);backdrop-filter:blur(3px)}
   #pause.on{display:flex}
-  #pause h3{font-size:clamp(20px,4vw,34px);letter-spacing:.22em;font-weight:500}
-  #pause p{margin-top:14px;font-size:11px;letter-spacing:.26em;text-transform:uppercase;opacity:.6}
+  #pause h3{font-size:clamp(26px,4.4vw,42px);font-weight:700}
+  #pause p{margin-top:10px;font-size:15px;opacity:.7}
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
-    background:#05070a;font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.8}
+    background:#0b070d;font-size:15px;opacity:.8}
   #load.gone{display:none}
   /* ---- in flight the readouts step back; they return faster than they left ---- */
   #band,#tbar,#help,#mapwrap{transition:opacity .35s}
@@ -174,21 +191,21 @@
   /* The stick visual is display-only: the whole left region of the screen is
      the stick zone, and the base floats to wherever the thumb lands. */
   #tStick{position:absolute;left:max(26px,env(safe-area-inset-left));bottom:106px;width:120px;height:120px;
-    border:1px solid var(--hair);border-radius:50%;background:rgba(10,12,13,.30);
+    border:1px solid var(--hair);border-radius:50%;background:rgba(29,19,32,.32);
     opacity:.55;transition:opacity .18s;pointer-events:none}
   #tStick.live{opacity:1;transition:none}
   #tStick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-    border-radius:50%;background:rgba(232,169,43,.45);border:1px solid var(--turmeric)}
+    border-radius:50%;background:rgba(216,168,60,.42);border:1px solid var(--zari)}
   .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
-    display:flex;align-items:center;justify-content:center;background:rgba(10,12,13,.42);
-    color:var(--chalk);font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
+    display:flex;align-items:center;justify-content:center;background:rgba(29,19,32,.48);
+    color:var(--silk);font:600 13px/1 var(--font);
     -webkit-user-select:none;user-select:none;touch-action:none}
-  .tbtn.on{background:rgba(232,169,43,.35);border-color:var(--turmeric)}
+  .tbtn.on{background:rgba(216,168,60,.35);border-color:var(--zari)}
   /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
      which double as aim surfaces while held. Everything a player needs DURING
      a swing — zip and dive — sits on the left, because the right thumb is
      pinned on the web button for the whole arc. */
-  #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--turmeric)}
+  #tWeb{right:max(22px,env(safe-area-inset-right));bottom:84px;width:96px;height:96px;color:var(--zari);font-size:15px}
   #tJump{right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:66px;width:64px;height:64px}
   #tZip{left:max(26px,env(safe-area-inset-left));bottom:246px;width:60px;height:60px;color:var(--lock)}
   #tTuck{left:calc(max(26px,env(safe-area-inset-left)) + 92px);bottom:236px;width:60px;height:60px}
@@ -196,28 +213,28 @@
     padding:0 22px;border-radius:999px;display:none;color:var(--lock)}
   #tBoard.show{display:flex}
   #tRun,#tRunNext,#tRunQuit{top:max(14px,env(safe-area-inset-top));height:34px;width:auto;padding:0 14px;border-radius:999px}
-  #tRun{left:max(26px,env(safe-area-inset-left));color:var(--turmeric)}
+  #tRun{left:max(26px,env(safe-area-inset-left));color:var(--zari)}
   #tRunNext{left:calc(max(26px,env(safe-area-inset-left)) + 74px);display:none}
   #tRunQuit{left:calc(max(26px,env(safe-area-inset-left)) + 150px);display:none}
   body.run #tRunNext,body.run #tRunQuit{display:flex}
 
   /* ---- landscape only on touch ---- */
   #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
-    justify-content:center;gap:18px;background:#05070a}
-  #rotate .ph{width:64px;height:38px;border:2px solid var(--turmeric);border-radius:7px;
+    justify-content:center;gap:18px;background:#0b070d}
+  #rotate .ph{width:64px;height:38px;border:2px solid var(--zari);border-radius:7px;
     animation:phTurn 1.8s ease-in-out infinite}
   @keyframes phTurn{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
-  #rotate p{font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.7}
+  #rotate p{font-size:15px;opacity:.75}
   @media (orientation: portrait){body.touch #rotate{display:flex}}
 
   @media (max-width:760px){#help,#mapwrap{display:none}.cell{min-width:88px;padding:10px 13px}
-    .v{font-size:20px}#band{height:62px}#tbar{bottom:62px}}
+    .v{font-size:21px}#band{height:62px}#tbar{bottom:62px}#zone .en{font-size:15px}#zone .ta{font-size:12px}}
   /* phone landscape: the minimap would sit on the button cluster */
   @media (max-height:500px){body.touch #mapwrap{display:none}}
 </style>
 </head>
 <body>
-<div id="load">generating nagaram…</div>
+<div id="load">Generating Nagaram…</div>
 <div id="rush"></div>
 <div id="hud">
   <div id="cross"><i></i><i></i><i></i><i></i><b></b></div>
@@ -227,60 +244,61 @@
   <div id="runarrow"></div>
   <div id="mapwrap"><canvas id="map" width="336" height="336"></canvas></div>
   <div id="help">
-    <h1>NAGARAM</h1>
-    <div class="sub">web-swing sandbox · coromandel coast</div>
+    <h1>Nagaram <span lang="ta">நகரம்</span></h1>
+    <div class="sub">Web-swing sandbox · Coromandel Coast</div>
     <table>
-      <tr><td>mouse</td><td>look</td></tr>
-      <tr><td>arrows</td><td>look (always available)</td></tr>
-      <tr><td>[ / ]</td><td>look sensitivity</td></tr>
-      <tr><td>esc</td><td>pause</td></tr>
-      <tr><td>L / R click</td><td>fire left / right web (hold)</td></tr>
-      <tr><td>W / S</td><td>winch in / pay out line</td></tr>
-      <tr><td>A / D</td><td>steer + bank</td></tr>
-      <tr><td>space</td><td>jump · hold in air to glide</td></tr>
-      <tr><td>shift</td><td>tuck &amp; dive</td></tr>
-      <tr><td>Q</td><td>zip to anchor</td></tr>
-      <tr><td>E</td><td>cling to wall &middot; board an aircraft</td></tr>
-      <tr><td>T / F / M</td><td>time of day · assist · mute</td></tr>
-      <tr><td>G / N / X</td><td>ring run: start · next course · leave</td></tr>
-      <tr><td>B</td><td>trial: the line bends round corners</td></tr>
-      <tr><td>C</td><td>photo mode</td></tr>
-      <tr><td>P / R / H</td><td>shadows · respawn · hide this</td></tr>
-      <tr><td>gamepad</td><td>triggers fire the webs</td></tr>
+      <tr><td>Mouse</td><td>Look</td></tr>
+      <tr><td>Arrows</td><td>Look (always available)</td></tr>
+      <tr><td>[ / ]</td><td>Look sensitivity</td></tr>
+      <tr><td>Esc</td><td>Pause</td></tr>
+      <tr><td>L / R click</td><td>Fire left / right web (hold)</td></tr>
+      <tr><td>W / S</td><td>Winch in / pay out line</td></tr>
+      <tr><td>A / D</td><td>Steer + bank</td></tr>
+      <tr><td>Space</td><td>Jump · hold in air to glide</td></tr>
+      <tr><td>Shift</td><td>Tuck &amp; dive</td></tr>
+      <tr><td>Q</td><td>Zip to anchor</td></tr>
+      <tr><td>E</td><td>Cling to wall &middot; board an aircraft</td></tr>
+      <tr><td>T / F / M</td><td>Time of day · assist · mute</td></tr>
+      <tr><td>G / N / X</td><td>Ring run: start · next course · leave</td></tr>
+      <tr><td>B</td><td>Trial: the line bends round corners</td></tr>
+      <tr><td>C</td><td>Photo mode</td></tr>
+      <tr><td>P / R / H</td><td>Shadows · respawn · hide this</td></tr>
+      <tr><td>Gamepad</td><td>Triggers fire the webs</td></tr>
     </table>
     <div class="hint">The cyan ring marks exactly where the line will bite. Aircraft crossing the city are valid anchors too — latch one and it tows you — hold the button and it fires the moment one appears. Line tension does the work. Winch in near the bottom of an arc, pay out at the top — that's how you gain speed.</div>
   </div>
   <div id="tbar"></div>
   <div id="band">
-    <div class="cell" id="vSpd"><div class="k">speed</div><div class="v">0<small>km/h</small></div></div>
-    <div class="cell" id="vAlt"><div class="k">altitude</div><div class="v">0<small>m</small></div></div>
-    <div class="cell" id="vTen"><div class="k">tension</div><div class="v">0<small>kN</small></div></div>
-    <div class="cell" id="vLen"><div class="k">line</div><div class="v">—</div></div>
+    <div class="cell" id="vSpd"><div class="k">Speed</div><div class="v">0<small>km/h</small></div></div>
+    <div class="cell" id="vAlt"><div class="k">Altitude</div><div class="v">0<small>m</small></div></div>
+    <div class="cell" id="vTen"><div class="k">Tension</div><div class="v">0<small>kN</small></div></div>
+    <div class="cell" id="vLen"><div class="k">Line</div><div class="v">—</div></div>
     <div class="cell grow"></div>
-    <div class="cell" id="zone"><div class="en">temple ward</div></div>
+    <div class="cell" id="zone"><div class="en">Temple Ward</div><div class="ta" lang="ta">கோயில் பகுதி</div></div>
   </div>
 </div>
 <div id="touch">
   <div id="tStick"><div class="nub"></div></div>
-  <div class="tbtn" id="tWeb">web</div>
-  <div class="tbtn" id="tJump">jump</div>
-  <div class="tbtn" id="tZip">zip</div>
-  <div class="tbtn" id="tTuck">dive</div>
-  <div class="tbtn" id="tBoard">board</div>
-  <div class="tbtn" id="tRun">run</div>
-  <div class="tbtn" id="tRunNext">next</div>
-  <div class="tbtn" id="tRunQuit">end</div>
+  <div class="tbtn" id="tWeb">Web</div>
+  <div class="tbtn" id="tJump">Jump</div>
+  <div class="tbtn" id="tZip">Zip</div>
+  <div class="tbtn" id="tTuck">Dive</div>
+  <div class="tbtn" id="tBoard">Board</div>
+  <div class="tbtn" id="tRun">Run</div>
+  <div class="tbtn" id="tRunNext">Next</div>
+  <div class="tbtn" id="tRunQuit">End</div>
 </div>
-<div id="rotate"><div class="ph"></div><p>rotate to landscape</p></div>
+<div id="rotate"><div class="ph"></div><p>Rotate to landscape</p></div>
 <div id="pbtn"><i></i><i></i></div>
 <div id="pause">
-  <h3>PAUSED</h3>
-  <p>click anywhere to resume</p>
+  <h3>Paused</h3>
+  <p>Click anywhere to resume</p>
 </div>
 <div id="gate">
-  <h2>NAGARAM</h2>
+  <h2>Nagaram</h2>
+  <div class="ta" lang="ta">நகரம்</div>
   <div class="rule"></div>
-  <p>click to swing</p>
+  <p>Click to swing</p>
   <p id="today"></p>
 </div>
 <!-- three.js r128, vendored from npm three@0.128.0 (MIT, see vendor/three.LICENSE).
@@ -410,13 +428,13 @@ scene.add(hemi);
 scene.fog = new THREE.FogExp2(0xc9d6dc, 0.00105);
 
 const TOD = [
-  { name: 'noon', sun: [0.32, 0.86, -0.4], sunC: 0xfff0d0, sunI: 2.7, top: 0x2a6fb0, mid: 0xa8c8dc, bot: 0xe6d8bd,
+  { name: 'Noon', sun: [0.32, 0.86, -0.4], sunC: 0xfff0d0, sunI: 2.7, top: 0x2a6fb0, mid: 0xa8c8dc, bot: 0xe6d8bd,
     hemiS: 0xbcd9ec, hemiG: 0x6b5a44, hemiI: 0.9, fog: 0xcbd8de, fogD: 0.00105, night: 0, cloud: 0.5, exp: 1.05 },
-  { name: 'evening', sun: [-0.86, 0.20, 0.18], sunC: 0xffb066, sunI: 2.5, top: 0x2b5c8e, mid: 0xd79c72, bot: 0xf0c489,
+  { name: 'Evening', sun: [-0.86, 0.20, 0.18], sunC: 0xffb066, sunI: 2.5, top: 0x2b5c8e, mid: 0xd79c72, bot: 0xf0c489,
     hemiS: 0xe8b489, hemiG: 0x59422f, hemiI: 0.7, fog: 0xdfae86, fogD: 0.00125, night: 0.25, cloud: 0.72, exp: 1.1 },
-  { name: 'night', sun: [-0.4, 0.42, 0.6], sunC: 0x9ab6e0, sunI: 0.30, top: 0x050a18, mid: 0x0d1a30, bot: 0x21283a,
+  { name: 'Night', sun: [-0.4, 0.42, 0.6], sunC: 0x9ab6e0, sunI: 0.30, top: 0x050a18, mid: 0x0d1a30, bot: 0x21283a,
     hemiS: 0x24344f, hemiG: 0x0d1014, hemiI: 0.32, fog: 0x0d1622, fogD: 0.00160, night: 1, cloud: 0.35, exp: 1.35 },
-  { name: 'dawn', sun: [0.88, 0.13, -0.30], sunC: 0xffcf9a, sunI: 2.1, top: 0x3f6f9e, mid: 0xc0b6c4, bot: 0xf3cbb0,
+  { name: 'Dawn', sun: [0.88, 0.13, -0.30], sunC: 0xffcf9a, sunI: 2.1, top: 0x3f6f9e, mid: 0xc0b6c4, bot: 0xf3cbb0,
     hemiS: 0xdcc8c6, hemiG: 0x4d4238, hemiI: 0.66, fog: 0xd9c7c0, fogD: 0.00145, night: 0.35, cloud: 0.6, exp: 1.08 }
 ];
 let todIdx = 1;                      // seeds the facade uniforms; applyDay() takes over per-frame
@@ -441,9 +459,15 @@ function districtAt(x, z) {
   return 'mid';
 }
 const ZONE_NAME = {
-  temple: 'temple ward', oldtown: 'old bazaar', mid: 'midtown', tech: 'tech park',
-  apartments: 'north blocks', chettinad: 'chettinad quarter',
-  beach: 'the marina', river: 'riverside', sea: 'bay of bengal'
+  temple: 'Temple Ward', oldtown: 'Old Bazaar', mid: 'Midtown', tech: 'Tech Park',
+  apartments: 'North Blocks', chettinad: 'Chettinad Quarter',
+  beach: 'The Marina', river: 'Riverside', sea: 'Bay of Bengal'
+};
+/* the same districts as the city calls them, shown beside the English */
+const ZONE_TAMIL = {
+  temple: 'கோயில் பகுதி', oldtown: 'கடைவீதி', mid: 'நகர மையம்', tech: 'தொழில்நுட்பப் பூங்கா',
+  apartments: 'வடக்குக் குடியிருப்பு', chettinad: 'செட்டிநாடு',
+  beach: 'மெரினா', river: 'ஆற்றங்கரை', sea: 'வங்கக் கடல்'
 };
 
 const PALETTE = {
@@ -3992,7 +4016,7 @@ function updateWeather(dt) {
   /* one word as it comes in, not one per frame */
   if (on && squall.k !== squallSaid && !photoMode) {
     const u = squallU(player.p.x, player.p.z);
-    if (u < 420 && u > 0) { squallSaid = squall.k; toast('a squall is coming in off the bay'); }
+    if (u < 420 && u > 0) { squallSaid = squall.k; toast('A squall is coming in off the bay'); }
   }
   if (on && rv > 0.4 && Math.random() < dt / 9) { flash = 1; emit('thunder', 0.3 + 0.7 * rv); }
   flash = Math.max(0, flash - dt * 4.5);
@@ -4211,7 +4235,7 @@ gate.addEventListener('click', () => {
       if (fs && fs.then) fs.then(lock, lock); else lock();
     } catch (err) {}
     gate.classList.add('gone');
-    toast('left: move · drag: look · hold web to swing');
+    toast('Left: move · drag: look · hold web to swing');
     toastT = 4.5;
     return;                              // no pointer lock on touch
   }
@@ -4228,13 +4252,13 @@ gate.addEventListener('click', () => {
 const toastEl = document.getElementById('toast');
 let toastT = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('on'); toastT = 1.6; }
-listen('board', () => toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk'));
+listen('board', () => toast(touchOn ? 'Riding · jump to drop · stick to walk' : 'Riding · space to drop · A/D to walk'));
 function setFreeLook(on) {
   if (on && touchOn) return;   // drag-look serves touch; the cursor ring would fight it
   freeLook = on;
   lookEl.classList.toggle('on', on);
   document.body.classList.toggle('freelook', on);
-  if (on) toast('steer with cursor · [ ] sensitivity');
+  if (on) toast('Steer with cursor · [ ] sensitivity');
 }
 const lookEl = document.getElementById('look');
 const lookDot = lookEl.querySelector('.dot'), lookVec = lookEl.querySelector('.vec');
@@ -4298,7 +4322,7 @@ let photoMode = false;
 function setPhoto(on) {
   photoMode = on;
   document.body.classList.toggle('photo', on);
-  toast(on ? 'photo mode · C to exit' : 'photo mode off');
+  toast(on ? 'Photo mode · C to exit' : 'Photo mode off');
 }
 
 /* ---------------------------------------------------------------
@@ -4441,7 +4465,7 @@ function pollPad(dt) {
     const on = B[i].pressed || B[i].value > 0.35 ? 1 : 0;
     if (on !== pad.was[i]) {
       pad.was[i] = on; padButton(i, !!on);
-      if (on && !pad.hello && started) { pad.hello = true; toast('gamepad · triggers fire the webs'); toastT = 3; }
+      if (on && !pad.hello && started) { pad.hello = true; toast('Gamepad · triggers fire the webs'); toastT = 3; }
     }
   }
   if (paused || !started) { pad.lx = pad.ly = 0; return; }
@@ -4508,7 +4532,7 @@ addEventListener('keydown', e => {
       saveSettings();
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
-    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'the line bends round corners' : 'the line goes straight'); saveSettings(); }
+    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'The line bends round corners' : 'The line goes straight'); saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
     if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
@@ -4516,7 +4540,7 @@ addEventListener('keydown', e => {
     if (e.code === 'KeyR') respawn();
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
       sens = clamp(sens * (e.code === 'BracketRight' ? 1.18 : 1 / 1.18), 0.0009, 0.0130);
-      toast('look sensitivity ' + Math.round(sens / 0.0034 * 100) + '%');
+      toast('Look sensitivity ' + Math.round(sens / 0.0034 * 100) + '%');
       saveSettings();
     }
   }
@@ -4914,26 +4938,26 @@ const MAPR = 620;
 const mapBase = document.createElement('canvas'); mapBase.width = mapBase.height = 720;
 (function drawMap() {
   const c = mapBase.getContext('2d'), S = 720, f = S / (MAPR * 2), o = S / 2;
-  c.fillStyle = '#0d1113'; c.fillRect(0, 0, S, S);
-  c.fillStyle = '#0a2530'; c.fillRect(o + SEA_X * f, 0, S, S);
-  c.strokeStyle = '#0a2530'; c.lineWidth = RIVER_HW * 2 * f; c.beginPath();
+  c.fillStyle = '#170f1a'; c.fillRect(0, 0, S, S);
+  c.fillStyle = '#0b3a3a'; c.fillRect(o + SEA_X * f, 0, S, S);
+  c.strokeStyle = '#0b3a3a'; c.lineWidth = RIVER_HW * 2 * f; c.beginPath();
   for (let x = -MAPR; x <= MAPR; x += 20) { const z = riverZ(x); x === -MAPR ? c.moveTo(o + x * f, o + z * f) : c.lineTo(o + x * f, o + z * f); }
   c.stroke();
-  c.strokeStyle = 'rgba(200,190,160,0.10)'; c.lineWidth = 1;
+  c.strokeStyle = 'rgba(216,168,60,0.10)'; c.lineWidth = 1;
   for (let k = -EXT; k <= EXT; k += PITCH) {
     c.beginPath(); c.moveTo(0, o + k * f); c.lineTo(S, o + k * f); c.stroke();
     c.beginPath(); c.moveTo(o + k * f, 0); c.lineTo(o + k * f, S); c.stroke();
   }
   for (const b of buildings) {
     const t = clamp(b.h / 90, 0.12, 1);
-    c.fillStyle = b.kind === 'glass' ? `rgba(120,180,200,${0.35 + t * 0.5})` : `rgba(226,214,180,${0.14 + t * 0.55})`;
+    c.fillStyle = b.kind === 'glass' ? `rgba(90,190,180,${0.35 + t * 0.5})` : `rgba(244,234,210,${0.14 + t * 0.55})`;
     c.fillRect(o + (b.x - b.w / 2) * f, o + (b.z - b.d / 2) * f, Math.max(1, b.w * f), Math.max(1, b.d * f));
   }
-  c.fillStyle = 'rgba(232,83,44,0.55)';             // the metro line
+  c.fillStyle = 'rgba(176,38,58,0.75)';             // the metro line
   c.fillRect(o + METRO.x * f - 1, o + METRO.z0 * f, 2, (METRO.z1 - METRO.z0) * f);
-  c.fillStyle = '#d9a83a';
+  c.fillStyle = '#d8a83c';
   c.fillRect(o - PW * f, o - PW * f, PW * 2 * f, PW * 2 * f);
-  c.fillStyle = '#e8532c';
+  c.fillStyle = '#d83a52';
   for (const g of GOPURAMS) c.fillRect(o + g.x * f - 3, o + g.z * f - 3, 6, 6);
 })();
 function drawMinimap() {
@@ -4946,7 +4970,7 @@ function drawMinimap() {
   drawRunOnMap(mctx, 720 / (MAPR * 2));
   mctx.restore();
   mctx.save(); mctx.translate(S / 2, S / 2); mctx.rotate(yaw + PI);   /* arrow tracks camFwd on a north-up map */
-  mctx.fillStyle = '#e8a92b'; mctx.beginPath();
+  mctx.fillStyle = '#d8a83c'; mctx.beginPath();
   mctx.moveTo(0, -9); mctx.lineTo(6.5, 7); mctx.lineTo(0, 3.5); mctx.lineTo(-6.5, 7);
   mctx.closePath(); mctx.fill(); mctx.restore();
 }
@@ -4954,7 +4978,7 @@ function drawMinimap() {
 /* ---- hud ---- */
 const elSpd = document.querySelector('#vSpd .v'), elAlt = document.querySelector('#vAlt .v');
 const elTen = document.querySelector('#vTen .v'), elLen = document.querySelector('#vLen .v');
-const elZone = document.querySelector('#zone .en');
+const elZone = document.querySelector('#zone .en'), elZoneTa = document.querySelector('#zone .ta');
 const elBar = document.getElementById('tbar'), elRush = document.getElementById('rush');
 let hudT = 0, aimOk = false, missFlash = 0;
 listen('miss', () => { missFlash = 0.22; });
@@ -4985,8 +5009,8 @@ function updateHUD(dt) {
     ? Math.max(player.webs[0].on ? player.webs[0].len : 0, player.webs[1].on ? player.webs[1].len : 0).toFixed(0) + '<small>m</small>'
     : '—';
   elBar.style.width = clamp(tn / 14000, 0, 1) * 100 + '%';
-  const z = ZONE_NAME[player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z)] || ZONE_NAME.mid;
-  if (elZone.textContent !== z) { elZone.textContent = z; if (hudQuiet) toast(z); }
+  const zk = player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z), z = ZONE_NAME[zk] || ZONE_NAME.mid;
+  if (elZone.textContent !== z) { elZone.textContent = z; elZoneTa.textContent = ZONE_TAMIL[zk] || ZONE_TAMIL.mid; if (hudQuiet) toast(z); }
   elRush.style.opacity = clamp((spd - 26) / 76, 0, 0.9);
   cross.classList.toggle('web', on);
   cross.classList.toggle('lock', aimOk);
@@ -5014,8 +5038,8 @@ const RUN_KEY = 'nagaram.runs';
 const COURSES = (() => {
   const d = new Date(), today = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
   const shared = /[?&]run=(\d{1,9})\b/.exec(location.search);
-  const seeds = [['day-' + today, 'today', today], ['c1', 'course one', 1101], ['c2', 'course two', 2202], ['c3', 'course three', 3303]];
-  if (shared) seeds.unshift(['seed-' + shared[1], 'seed ' + shared[1], +shared[1]]);
+  const seeds = [['day-' + today, 'Today', today], ['c1', 'Course one', 1101], ['c2', 'Course two', 2202], ['c3', 'Course three', 3303]];
+  if (shared) seeds.unshift(['seed-' + shared[1], 'Seed ' + shared[1], +shared[1]]);
   return seeds.map(([id, name, seed]) => ({ id, name, seed, rings: null, sig: '' }));   // rings are built on first use
 })();
 
@@ -5185,7 +5209,7 @@ function syncRunView() {
   const d = runDelta();
   runNm.textContent = COURSES[run.ci].name;
   runGt.textContent = run.next + '/' + COURSE_RINGS;
-  runTm.textContent = run.state === 'armed' ? 'fly through the ring' : fmtRun(run.t);
+  runTm.textContent = run.state === 'armed' ? 'Fly through the ring' : fmtRun(run.t);
   runDf.textContent = d === null ? '' : fmtDiff(d);
   runDf.classList.toggle('up', d !== null && d < 0);
 }
@@ -5205,7 +5229,7 @@ function armRun() {
   const c = COURSES[run.ci];
   if (!c.rings) {
     c.rings = buildCourse(c.seed);
-    if (!c.rings) { toast('no course for that seed'); return; }
+    if (!c.rings) { toast('No course for that seed'); return; }
     c.sig = courseSig(c.rings);
   }
   run.state = 'armed'; run.rings = c.rings; run.next = 0;

@@ -195,7 +195,7 @@ function updateWeather(dt) {
   /* one word as it comes in, not one per frame */
   if (on && squall.k !== squallSaid && !photoMode) {
     const u = squallU(player.p.x, player.p.z);
-    if (u < 420 && u > 0) { squallSaid = squall.k; toast('a squall is coming in off the bay'); }
+    if (u < 420 && u > 0) { squallSaid = squall.k; toast('A squall is coming in off the bay'); }
   }
   if (on && rv > 0.4 && Math.random() < dt / 9) { flash = 1; emit('thunder', 0.3 + 0.7 * rv); }
   flash = Math.max(0, flash - dt * 4.5);
