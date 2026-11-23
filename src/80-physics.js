@@ -30,7 +30,7 @@ const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
+     board(plane)  helm(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
      land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
    The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
@@ -261,6 +261,7 @@ function stepPhysics(h, inp) {
   _pp.copy(P);
 
   /* ---- riding an aircraft ---- */
+  const aboard = !!player.riding;       // the press that boards is not also the press that takes the controls
   if (!player.riding && inp.mount) {
     /* snap onto the spine of the hull rather than wherever you grabbed */
     const near = boardablePlane(P);
@@ -268,12 +269,20 @@ function stepPhysics(h, inp) {
   }
   if (player.riding) {
     const pl = player.riding;
-    /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
-       before walking, or the controls flip as the aircraft turns */
-    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-    const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
-    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
-    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
+    /* E aboard an aircraft is a hand on its controls, or off them (89-pilot.js) */
+    if (aboard && inp.mount && pl.kind === 'plane') emit('helm', pl);
+    if (pl.flown) {
+      /* the stick flies the aircraft, so it cannot also walk you: go forward to the seat */
+      player.rideLo.x = damp(player.rideLo.x, 0, 6, h);
+      player.rideLo.z += clamp(COCKPIT_Z - player.rideLo.z, -9 * h, 9 * h);
+    } else {
+      /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
+         before walking, or the controls flip as the aircraft turns */
+      const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+      const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
+      player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
+      player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
+    }
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;

@@ -1312,8 +1312,68 @@ async function weatherAndDay(page, check) {
   check('other days load clean', [sankranti, again, wet, lit].every(o => o.errs.length === 0), [sankranti, wet, lit].map(o => o.errs.join(';')).join(' | ') || 'no errors');
 }
 
+async function piloting(page, check) {
+  /* E aboard an aircraft takes its controls (78-pilot.js). Polarity: before
+     it, the same presses left heading and height exactly on the circuit. */
+  const r = await page.evaluate(() => {
+    const pl = planes[0], o = new THREE.Vector3(), out = {};
+    const hold = (code, secs) => { keys[code] = true; __run(Math.round(secs * 60)); keys[code] = false; };
+    const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    player.p.set(pl.p.x, pl.p.y + 3, pl.p.z); player.v.copy(pl.v); __run(2); mountEdge = true; __run(3);
+    out.boarded = player.riding === pl; out.flownOnBoard = !!pl.flown;
+    mountEdge = true; __run(2); out.flown = !!pl.flown;
+    __run(150); out.seat = player.rideLo.z; out.cockpit = COCKPIT_Z;
+    /* turning: D is right, which is the heading angle falling; the hull banks with it */
+    let y0 = pl.yaw; hold('KeyD', 3); out.right = wrapA(pl.yaw - y0); out.rollRight = pl.roll;
+    y0 = pl.yaw; hold('KeyA', 3); out.left = wrapA(pl.yaw - y0);
+    __run(120);
+    /* climbing and diving, from well clear of the city */
+    pl.p.y = 250; __run(2);
+    let h0 = pl.p.y; hold('KeyW', 4); out.climb = pl.p.y - h0;
+    h0 = pl.p.y; hold('KeyS', 4); out.dive = pl.p.y - h0;
+    /* the rider stays on the hull at any attitude */
+    let slip = 0; keys['KeyD'] = keys['KeyW'] = true;
+    for (let i = 0; i < 180; i++) { __run(1); planePoint(pl, player.rideLo.x, player.rideLo.y, player.rideLo.z, o); slip = Math.max(slip, o.distanceTo(pRender)); }
+    keys['KeyD'] = keys['KeyW'] = false; out.slip = slip; out.pitched = pl.pitch;
+    /* diving at the tallest building: the belly never goes into a roof */
+    let tall = buildings[0]; for (const b of buildings) if (b.h > tall.h) tall = b;
+    pl.yaw = 0; pl.turnRate = 0; pl.pitch = -0.3;
+    pl.p.set(tall.x, tall.h + PLANE_HY + 30, tall.z - pl.cruise * 3); __run(1);
+    let worst = 1e9; keys['KeyS'] = true;
+    for (let i = 0; i < 480; i++) { __run(1); worst = Math.min(worst, pl.p.y - PLANE_HY - solidTop(pl.p.x, pl.p.z)); }
+    keys['KeyS'] = false; out.clear = worst; out.tallH = tall.h;
+    /* at the edge it turns itself home */
+    pl.p.set(1000, 250, 0); pl.yaw = Math.PI / 2; pl.turnRate = 0; pl.pitch = 0; __run(2);
+    const d0 = Math.hypot(pl.p.x, pl.p.z); __run(60 * 20); out.home = Math.hypot(pl.p.x, pl.p.z) - d0;
+    /* handing back: no jump in place, heading or speed */
+    pl.p.set(0, 200, 0); __run(30);
+    const step = () => { const a = pl.p.clone(); __run(1); return pl.p.distanceTo(a); };
+    const before = step(), yawB = pl.yaw;
+    mountEdge = true; let jump = 0, turn = 0, prevYaw = pl.yaw;
+    for (let i = 0; i < 240; i++) { jump = Math.max(jump, step()); turn = Math.max(turn, Math.abs(wrapA(pl.yaw - prevYaw))); prevYaw = pl.yaw; }
+    out.handed = !pl.flown && player.riding === pl; out.before = before; out.jump = jump; out.turn = turn;
+    out.walkAgain = (() => { const z = player.rideLo.z; keys['KeyS'] = true; __run(30); keys['KeyS'] = false; return Math.abs(player.rideLo.z - z) > 0.2; })();
+    /* stepping off while flying hands it back too */
+    mountEdge = true; __run(2); const was = !!pl.flown; jumpEdge = true; __run(2);
+    out.offFlown = was && !pl.flown && player.riding === null;
+    return out;
+  });
+  check('the press that boards an aircraft does not also take its controls', r.boarded && !r.flownOnBoard);
+  check('E aboard takes the controls, and you go forward to the cockpit', r.flown && Math.abs(r.seat - r.cockpit) < 0.05, 'seat at z ' + r.seat.toFixed(2));
+  check('D turns right and banks into it, A turns left', r.right < -0.6 && r.rollRight > 0.3 && r.left > 0.6,
+    'D ' + (r.right * 180 / Math.PI).toFixed(0) + '°, A ' + (r.left * 180 / Math.PI).toFixed(0) + '°, bank ' + r.rollRight.toFixed(2));
+  check('W climbs and S dives', r.climb > 10 && r.dive < -10, '+' + r.climb.toFixed(1) + ' m / ' + r.dive.toFixed(1) + ' m in 4 s');
+  check('the pilot stays in the seat through a climbing turn', r.slip < 1e-3 && r.pitched > 0.1, 'worst slip ' + r.slip.toFixed(4) + ' m at pitch ' + r.pitched.toFixed(2));
+  check('diving at the tallest tower, it pulls up over the roof', r.clear > 0, r.clear.toFixed(1) + ' m to spare over ' + r.tallH.toFixed(0) + ' m');
+  check('past the edge of the map it turns itself back', r.home < -100, (r.home).toFixed(0) + ' m nearer in 20 s');
+  check('handing back to the autopilot does not jump', r.handed && r.jump < r.before * 1.5 && r.turn < 0.05,
+    'worst step ' + r.jump.toFixed(3) + ' m against ' + r.before.toFixed(3) + ', worst turn ' + r.turn.toFixed(3) + ' rad/frame');
+  check('handed back, the stick walks you again', r.walkAgain);
+  check('stepping off while flying hands it back', r.offFlown);
+}
+
 const SECTIONS = [inputEdges, webEnergy, rigTiming, openGround, vegetation, hullPinning, coyoteTime, pausing, trafficMatrices, ringRuns, lineBite,
-  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro, carriers, weatherAndDay];
+  motionEvents, landing, wallRun, strandPicture, sashCloth, gamepad, quietHud, ropeWrap, perching, windSigns, birdsAndBell, metro, carriers, piloting, weatherAndDay];
 
 module.exports = async function fixedStep({ newPage, BASE, check }) {
   const { ctx, page } = await newPage({});

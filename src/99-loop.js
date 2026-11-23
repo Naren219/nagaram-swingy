@@ -4,7 +4,7 @@
 const clock = new THREE.Clock();
 let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
-const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
+const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, rlRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
 
 document.getElementById('load').classList.add('gone');
@@ -28,6 +28,7 @@ function frame() {
   if (keys['ArrowUp']) pitch = clamp(pitch + 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   if (keys['ArrowDown']) pitch = clamp(pitch - 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   freeLookStep(dt);
+  pilotCamera(dt);
   updateCamDirs();
 
   /* ---- gather input ---- */
@@ -37,7 +38,7 @@ function frame() {
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
   if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
-  inp.mzRaw = fb;
+  inp.mzRaw = fb; inp.rlRaw = rl;
   let mfx = 0, mfz = 0;
   if (!anyWeb) { mfx += camFwd.x * fb; mfz += camFwd.z * fb; }
   mfx += camRight.x * rl; mfz += camRight.z * rl;
@@ -153,8 +154,11 @@ function frame() {
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
   /* contextual board button: shown exactly when E would board */
   if (touchOn) {
-    const nearPl = !player.riding && !photoMode && !!boardablePlane(player.p);
+    const helm = !photoMode && player.riding && player.riding.kind === 'plane';
+    const nearPl = !photoMode && (helm || (!player.riding && !!boardablePlane(player.p)));
     if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
+    const label = !helm ? 'Board' : player.riding.flown ? 'Let go' : 'Fly';
+    if (boardEl.textContent !== label) boardEl.textContent = label;
   }
   renderer.render(scene, camera);
 }

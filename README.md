@@ -19,6 +19,7 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | Shift | tuck & dive |
 | Q | zip to anchor |
 | E | cling to wall · board whatever is in reach: an aircraft, the train, a boat, a crane jib, a car of the wheel |
+| E aboard an aircraft | take its controls (again to hand back): A / D turn and bank · W / S climb and dive |
 | T / F / M | skip time of day · swing assist · mute |
 | G / N / X | ring run: start or restart · next course · leave |
 | B | **trial:** the line bends round corners (off by default) |
@@ -26,11 +27,13 @@ Open `index.html` in a browser (or serve the repo root with any static server) a
 | P / R / H | shadows · respawn · hide help |
 | Esc | pause |
 
-**Gamepad** (any standard-mapped pad; rumble where the pad has it): the triggers are the two webs, the left stick moves and winches, the right stick looks. **A** jump, hold to glide · **B** or **RB** dive · **LB** zip · **X** cling, board · **Y** photo mode · **start** pause · **back** ring run. D-pad: up time of day, right next course, down leave run, left respawn.
+**Gamepad** (any standard-mapped pad; rumble where the pad has it): the triggers are the two webs, the left stick moves and winches, the right stick looks. **A** jump, hold to glide · **B** or **RB** dive · **LB** zip · **X** cling, board, fly · **Y** photo mode · **start** pause · **back** ring run. D-pad: up time of day, right next course, down leave run, left respawn.
 
 **Wind you can read.** The breeze steers the glide, and the city shows it: pennants on the gopurams and the tallest roofs point down-wind and hang when it drops, kites fly down-wind of whoever holds them with their tails streaming, and the palms lean with it.
 
 **Things that notice you.** Pigeons roost on the rooftops and gulls on the sand. Arrive at speed, walk into them or put a web down beside them and the flock goes up, wheels over the place it left and settles back on it. A web that lands on a gopuram rings it.
+
+**Flying an aircraft.** Aboard one, press E again (on touch, the button reads **Fly**) and you have its controls: you go forward to the cockpit and the view drops back behind the tail. A/D (or the stick) turn it, banking into the turn; W/S put the nose up and down. It keeps its own cruising speed. It will not fly into the city — it watches the roofs under and ahead of it and pulls up — and past the edge of the map it turns itself home. Press E again, jump off, or fire a web and the autopilot takes over from wherever you left it, on a new circuit through that point.
 
 **The metro.** An elevated line runs north–south up the gap between the blocks east of the temple, from south of the river to the north blocks, with a three-car train shuttling along it. The viaduct is solid: land on the deck, hang from its underside, fly between its piers. The train is a carrier like the aircraft, only low and fast: latch it and it tows you down the street, or press E to ride its roof.
 
@@ -168,6 +171,7 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 | `83-wind-signs.js` | the wind made visible: pennants, and the uniforms the plants lean by |
 | `86-sash.js` | the sash: a cloth chain simulated in the player's frame |
 | `87-birds.js` | flocks that go up when you arrive, and the gopuram bell |
+| `89-pilot.js` | taking an aircraft's controls: the flight model, the pull-up and the way home, handing back to the autopilot, the chase view |
 | `90-camera.js` | boom, collision, orientation |
 | `91-perch.js` | the perch: when standing still somewhere high becomes a view |
 | `92-input.js` | keyboard, pointer lock, touch, gamepad, photo mode, settings |
@@ -207,6 +211,7 @@ The interface palette is Kanchipuram silk (aubergine ground, zari gold, peacock 
 - **A bend changes what you swing about, never how much rope there is.** The path anchor → bends → body is the same length the step before and the step after a bend forms or lets go; a jump there is a free kick. The winch stops at the last bend (`wrapSeal`) for the same reason.
 - **Cast toward the anchor, not from it.** An anchor is on a wall, and `rayHit` starting on a wall cannot tell that wall from open air.
 - **A flock's flight is a closed curve in time, not a simulation.** `birdAt(flock, bird, seconds)` leaves a roosting spot and returns to exactly that spot `FLOCK_T` later, so nothing drifts and only flocks in the air cost anything. Birds with state of their own would need somewhere to land.
+- **An aircraft being flown is still a carrier.** `flyPlane` hands a hull with `flown` set to `flyByHand` only while its pilot is aboard; the moment `player.riding` is anything else it calls `handBack`, which fits a new circuit through where the hull is and along its nose, so nothing jumps. `planePoint`/`worldToPlane` turn by the hull's `pitch` and `roll` as well as its yaw, in the mesh's own order (YXZ), so a rider and an anchor stay on the airframe at any attitude.
 - **A carrier is anything in `planes` with a box (`hx`, `hy`, `hz`), a `reach` for the web, and a deck (`deck`, `walkX`, `walkZ`).** The aircraft and the metro train both are; boarding, riding, towing and aiming all read those fields and nothing else. A new moving thing to use should join `planes` rather than grow a parallel path.
 - **The metro's boxes go into the hash after the plants, traffic and boats are placed.** Placement draws from the world's random stream until it is satisfied, so an extra solid early would move every palm, kite and aircraft after it. The city is the same city, plus a metro (six palms that stood under the deck are dropped, not replaced).
 - **One wind.** Pennants, kites, palms, the sash and the aero model all read `WIND` (and `windHead`, its heading, which stays meaningful in a dead calm). A second, prettier wind for the scenery would make the scenery a liar.

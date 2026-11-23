@@ -258,6 +258,7 @@
       <tr><td>Shift</td><td>Tuck &amp; dive</td></tr>
       <tr><td>Q</td><td>Zip to anchor</td></tr>
       <tr><td>E</td><td>Cling to wall &middot; board an aircraft</td></tr>
+      <tr><td>E aboard</td><td>Fly it: A/D turn &middot; W/S climb and dive</td></tr>
       <tr><td>T / F / M</td><td>Time of day · assist · mute</td></tr>
       <tr><td>G / N / X</td><td>Ring run: start · next course · leave</td></tr>
       <tr><td>B</td><td>Trial: the line bends round corners</td></tr>
@@ -1777,12 +1778,14 @@ const V_PLANE = mergeGeos([
 ]);
 const PLANE_HX = 13.0, PLANE_HY = 3.4, PLANE_HZ = 12.0;   // AABB half-extents
 const DECK_Y = 1.45;     // top of the fuselage, where a rider stands
+const PLANE_BANK = 0.22; // the roll an aircraft holds round its circuit
 const planes = [];
 {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   for (let i = 0; i < 5; i++) {
     const mesh = new THREE.Mesh(V_PLANE, mat);
     mesh.castShadow = true; mesh.frustumCulled = false;
+    mesh.rotation.order = 'YXZ';   // heading, then nose up/down, then bank: how planePoint turns it too
     scene.add(mesh);
     planes.push({
       kind: 'plane', step: flyPlane, mesh,
@@ -1794,7 +1797,9 @@ const planes = [];
       p: V3(), v: V3(), yaw: 0,
       /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
          its box, how generously a web may find it, and where a rider walks */
-      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5,
+      /* the attitude the hull is drawn and ridden at, and the hand on the stick (89-pilot.js) */
+      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flown: false, turnRate: 0, cruise: 0
     });
   }
 }
@@ -1803,15 +1808,28 @@ const planes = [];
 for (const b of boats) planes.push(b);
 for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
 function flyPlane(pl, dt) {
+  if (!pl.cruise) pl.cruise = pl.r * Math.abs(pl.w);
+  if (pl.flown) {
+    /* someone has the controls (89-pilot.js); the moment they are not aboard
+       to hold them, the autopilot takes over from wherever the hull is */
+    if (player.riding === pl) { flyByHand(pl, dt); drawPlane(pl); return; }
+    handBack(pl);
+  }
   pl.ph += pl.w * dt;
+  pl.oy *= Math.exp(-dt / 7);            // a hand-back off its circuit's height eases back onto it
   const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6 + pl.oy;
   pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
   pl.p.set(px, py, pz);
   /* nose points along the tangent; bank into the turn */
   pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.pitch = damp(pl.pitch, 0, 1.6, dt);
+  pl.roll = damp(pl.roll, pl.w > 0 ? -PLANE_BANK : PLANE_BANK, 1.6, dt);
+  drawPlane(pl);
+}
+function drawPlane(pl) {
   pl.mesh.position.copy(pl.p);
-  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+  pl.mesh.rotation.set(-pl.pitch, pl.yaw, pl.roll);
 }
 /* afloat, a boat sails its circle and rides the swell; beached, it sits */
 function sailBoat(b, dt) {
@@ -1853,15 +1871,31 @@ function flyKite(k, dt) {
 function updatePlanes(dt) {
   for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
-/* local offset -> world, so a latched anchor rides the hull */
+/* local offset -> world, so a latched anchor rides the hull. An aircraft
+   also has an attitude (pitch nose-up, roll right-wing-down), turned in the
+   order its mesh is: bank, then nose, then heading. Everything else carried
+   only ever turns about the vertical. */
 function planePoint(pl, lx, ly, lz, out) {
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+  if (pl.pitch || pl.roll) {
+    const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+    const x1 = lx * cr - ly * sr, y1 = lx * sr + ly * cr;
+    const y2 = y1 * cp + lz * sp, z2 = lz * cp - y1 * sp;
+    lx = x1; ly = y2; lz = z2;
+  }
   return out.set(pl.p.x + lx * c + lz * sn, pl.p.y + ly, pl.p.z - lx * sn + lz * c);
 }
 function worldToPlane(pl, wx, wy, wz, out) {
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
   const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
-  return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
+  let x = dx * c - dz * sn, y = dy, z = dx * sn + dz * c;
+  if (pl.pitch || pl.roll) {
+    const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+    const y1 = y * cp - z * sp, z1 = y * sp + z * cp;
+    const x0 = x;
+    x = x0 * cr + y1 * sr; y = y1 * cr - x0 * sr; z = z1;
+  }
+  return out.set(x, y, z);
 }
 /* Slab test against each hull, in the hull's own frame: a crane jib is a long
    thin box turned to wherever it is pointing, and a world-aligned box round
@@ -2156,7 +2190,7 @@ const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
+     board(plane)  helm(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
      land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
    The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
@@ -2387,6 +2421,7 @@ function stepPhysics(h, inp) {
   _pp.copy(P);
 
   /* ---- riding an aircraft ---- */
+  const aboard = !!player.riding;       // the press that boards is not also the press that takes the controls
   if (!player.riding && inp.mount) {
     /* snap onto the spine of the hull rather than wherever you grabbed */
     const near = boardablePlane(P);
@@ -2394,12 +2429,20 @@ function stepPhysics(h, inp) {
   }
   if (player.riding) {
     const pl = player.riding;
-    /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
-       before walking, or the controls flip as the aircraft turns */
-    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-    const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
-    player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
-    player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
+    /* E aboard an aircraft is a hand on its controls, or off them (89-pilot.js) */
+    if (aboard && inp.mount && pl.kind === 'plane') emit('helm', pl);
+    if (pl.flown) {
+      /* the stick flies the aircraft, so it cannot also walk you: go forward to the seat */
+      player.rideLo.x = damp(player.rideLo.x, 0, 6, h);
+      player.rideLo.z += clamp(COCKPIT_Z - player.rideLo.z, -9 * h, 9 * h);
+    } else {
+      /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
+         before walking, or the controls flip as the aircraft turns */
+      const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+      const lx = inp.mx * c - inp.mz * sn, lz = inp.mx * sn + inp.mz * c;
+      player.rideLo.z = clamp(player.rideLo.z + lz * 7 * h, -pl.walkZ, pl.walkZ);
+      player.rideLo.x = clamp(player.rideLo.x + lx * 5 * h, -pl.walkX, pl.walkX);
+    }
     pinRider();
     V.copy(pl.v);
     player.grounded = true; player.clinging = false; player.coyote = 0.16;
@@ -3341,6 +3384,7 @@ function poseRig(dt, inp) {
 
   /* ---- heading ---- */
   if (player.clinging) turnHeading(-player.cn.x, -player.cn.z, 14, dt);
+  else if (riding && player.riding.flown) turnHeading(Math.sin(player.riding.yaw), Math.cos(player.riding.yaw), 8, dt);   // facing the nose
   else if (riding) { if (inp.mx || inp.mz) turnHeading(inp.mx, inp.mz, 8, dt); }
   else if (player.wallRun) turnHeading(V.x, V.z, 14, dt);
   else if (player.grounded) {
@@ -3426,7 +3470,7 @@ function poseRig(dt, inp) {
        shoulders turn against the hips, and the body rises and falls: at the
        passing of the legs a walker is at the top of the stride and a runner
        at the bottom. */
-    const gait = riding ? Math.hypot(inp.mx || 0, inp.mz || 0) * 5.5 : (player.wallRun ? spd : vh);
+    const gait = riding ? (player.riding.flown ? 0 : Math.hypot(inp.mx || 0, inp.mz || 0) * 5.5) : (player.wallRun ? spd : vh);
     const cad = clamp(1.75 + 0.18 * gait, 1.75, 3.6);                  // steps per second
     const stride = Math.floor(runPhase / PI);
     runPhase += dt * PI * cad * sstep(0.15, 0.9, gait);
@@ -4058,6 +4102,123 @@ function applyWeather(dt) {
   }
 }
 /* =====================================================================
+   TAKING THE CONTROLS
+   ---------------------------------------------------------------------
+   Aboard an aircraft, E takes its controls: you go forward to the cockpit,
+   the view drops back to frame the whole airframe, and A/D turn it (it banks
+   into the turn) while W/S put the nose up and down. E again hands it back.
+   The aircraft keeps its own cruising speed; you only choose where it goes.
+
+   Two things it will not let you do. It will not fly into the city: it
+   looks down under itself and ahead of itself, and pulls up over whatever is
+   there. And it will not leave: past the edge of the map it turns itself back.
+
+   Handing back is seamless. The autopilot flies a circle (flyPlane), so it is
+   given a new one: the same size and the same turning sense, through where
+   the aircraft is and along the way it is pointing. Height is the one thing
+   that can be off from that circuit's band, and it is eased back in.
+
+   Physics only announces the press (emit('helm', hull)); this file decides
+   what it means. A hull being flown carries `flown`, and the rider's walkway
+   reads it to hold you in the seat instead of letting the stick walk you.
+   ===================================================================== */
+const PILOT_TURN = 0.55;        // rad/s of heading at full stick
+const PILOT_BANK = 0.62;        // rad of roll at full stick
+const PILOT_PITCH = 0.32;       // rad of nose up or down at full stick
+const PILOT_CLEAR = 14;         // metres kept between the belly and any roof
+const PILOT_CEIL = 380;         // and no higher than this
+const PILOT_EDGE = 900;         // beyond this far from the centre it turns home
+const COCKPIT_Z = 7.4;          // where the pilot sits, forward along the spine
+const AUTO_LO = 78, AUTO_HI = 168;   // the band the autopilot's circuits fly in
+let pilotK = 0;                 // 0..1, how far the view has gone over to the chase camera
+let pilotEdgeSaid = false;
+
+listen('helm', (pl) => {
+  if (pl.flown) { handBack(pl); toast('Autopilot has it'); return; }
+  pl.flown = true; pl.turnRate = 0;
+  pl.pitch = pl.pitch || 0; pl.roll = pl.roll || 0;
+  pilotEdgeSaid = false;
+  toast(touchOn ? 'You have the controls · stick to steer · Let go to hand it back'
+                : 'You have the controls · A/D turn · W/S climb and dive · E to let go');
+  toastT = 3.5;
+});
+
+/* the top of whatever is solid under (x, z), or 0 for the street */
+function solidTop(x, z) {
+  const h = rayHit(x, 600, z, 0, -1, 0, 600);
+  return h ? 600 - h.t : 0;
+}
+
+function flyByHand(pl, dt) {
+  const turn = clamp(inp.rlRaw || 0, -1, 1), climb = clamp(inp.mzRaw || 0, -1, 1);
+  const spd = pl.cruise, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+
+  /* D turns right, which is the heading angle going DOWN (75-traffic.js:
+     the nose points along (sin yaw, cos yaw)) */
+  let want = -turn * PILOT_TURN;
+  const out = Math.hypot(pl.p.x, pl.p.z);
+  if (out > PILOT_EDGE) {
+    /* steer for the centre: positive yaw rate swings the nose toward (cos yaw, -sin yaw) */
+    const k = clamp((out - PILOT_EDGE) / 150, 0, 1), cx = -pl.p.x / out, cz = -pl.p.z / out;
+    if (cx * hx + cz * hz < 0.95) want = lerp(want, Math.sign(cx * hz - cz * hx || 1) * PILOT_TURN, k);
+    if (!pilotEdgeSaid) { pilotEdgeSaid = true; toast('Turning back toward the city'); }
+  } else if (out < PILOT_EDGE - 100) pilotEdgeSaid = false;
+  pl.turnRate = damp(pl.turnRate, want, 3, dt);
+  pl.yaw += pl.turnRate * dt;
+
+  /* look under and ahead: anything closer than PILOT_CLEAR below the belly
+     lifts the nose, harder the closer it is */
+  const top = Math.max(solidTop(pl.p.x, pl.p.z),
+                       solidTop(pl.p.x + hx * spd * 1.2, pl.p.z + hz * spd * 1.2),
+                       solidTop(pl.p.x + hx * spd * 2.6, pl.p.z + hz * spd * 2.6));
+  const floor = top + PLANE_HY + PILOT_CLEAR;
+  let pitchWant = climb * PILOT_PITCH;
+  if (pl.p.y < floor + 10) pitchWant = Math.max(pitchWant, PILOT_PITCH * clamp((floor + 10 - pl.p.y) / 12, 0, 1.2));
+  if (pl.p.y > PILOT_CEIL - 20) pitchWant = Math.min(pitchWant, -PILOT_PITCH * clamp((pl.p.y - PILOT_CEIL + 20) / 20, 0, 1));
+  pl.pitch = damp(pl.pitch, pitchWant, 2.4, dt);
+  pl.roll = damp(pl.roll, -pl.turnRate / PILOT_TURN * PILOT_BANK, 3, dt);
+
+  const c = Math.cos(pl.pitch), x = pl.p.x + Math.sin(pl.yaw) * spd * c * dt, z = pl.p.z + Math.cos(pl.yaw) * spd * c * dt;
+  /* never through a roof, even if the pull-up was not enough */
+  const y = clamp(pl.p.y + spd * Math.sin(pl.pitch) * dt, top + PLANE_HY + 1, PILOT_CEIL);
+  pl.v.set(x - pl.p.x, y - pl.p.y, z - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  pl.p.set(x, y, z);
+}
+
+/* back to a circuit: through here, along the nose, at its old size */
+function handBack(pl) {
+  pl.flown = false;
+  const s = Math.sign(pl.w), hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+  /* flyPlane's nose is along w·(−sin ph, cos ph), so sin ph = −s·hx, cos ph = s·hz */
+  pl.ph = Math.atan2(-s * hx, s * hz);
+  pl.cx = pl.p.x - Math.cos(pl.ph) * pl.r;
+  pl.cz = pl.p.z - Math.sin(pl.ph) * pl.r;
+  const base = pl.p.y - Math.sin(pl.ph * 2.1) * 6;
+  pl.y = clamp(base, AUTO_LO, AUTO_HI);
+  pl.oy = base - pl.y;            // eased away by flyPlane
+}
+
+/* the chase view: the camera follows the nose, a little above it, unless you
+   have just looked somewhere yourself, and comes back to it a moment after */
+const PILOT_VIEW_PITCH = -0.16;
+let pilotLookYaw = 0, pilotLookPitch = 0, pilotLookIdle = 0;
+function pilotCamera(dt) {
+  const flown = !!(player.riding && player.riding.flown);
+  pilotK = damp(pilotK, flown ? 1 : 0, 2.2, dt);
+  if (!flown) { pilotLookIdle = 0; pilotLookYaw = yaw; pilotLookPitch = pitch; return; }
+  if (Math.abs(yaw - pilotLookYaw) > 1e-6 || Math.abs(pitch - pilotLookPitch) > 1e-6) pilotLookIdle = 0;
+  else pilotLookIdle += dt;
+  if (pilotLookIdle > 1.2) {
+    /* camFwd is (−sin yaw, ·, cos yaw); the nose is (sin pl.yaw, ·, cos pl.yaw) */
+    let d = -player.riding.yaw - yaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const k = 1 - Math.exp(-1.6 * dt);
+    yaw += d * k;
+    pitch += (PILOT_VIEW_PITCH + player.riding.pitch * 0.5 - pitch) * k;
+  }
+  pilotLookYaw = yaw; pilotLookPitch = pitch;
+}
+/* =====================================================================
    CAMERA
    ===================================================================== */
 const PITCH_MAX = 1.47;                  // ~84 deg, near-vertical either way
@@ -4096,14 +4257,17 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip + perchK * 0.9;
+  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 3.4;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
      lower in a wider frame; where it looks is still exactly where you aim */
-  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
+  /* flying (89-pilot.js), the boom never swings below the airframe: look up
+     and the view tilts up from behind and above, rather than from underneath */
+  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, lerp(BOOM_UP, -0.14, pilotK)), cbp = Math.cos(bp);
   boomDir.set(-Math.sin(yaw) * cbp, Math.sin(bp), Math.cos(yaw) * cbp);
-  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT;
+  /* at the controls (89-pilot.js) the boom goes out past the tail, to frame the airframe */
+  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT + pilotK * 17;
   camPos.copy(pivot).addScaledVector(boomDir, -want);
   camPos.y += 0.55;
 
@@ -5321,7 +5485,7 @@ bindHold('tRunQuit', quitRun, () => {});
 const clock = new THREE.Clock();
 let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
-const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
+const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, rlRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
 
 document.getElementById('load').classList.add('gone');
@@ -5345,6 +5509,7 @@ function frame() {
   if (keys['ArrowUp']) pitch = clamp(pitch + 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   if (keys['ArrowDown']) pitch = clamp(pitch - 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   freeLookStep(dt);
+  pilotCamera(dt);
   updateCamDirs();
 
   /* ---- gather input ---- */
@@ -5354,7 +5519,7 @@ function frame() {
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
   if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
-  inp.mzRaw = fb;
+  inp.mzRaw = fb; inp.rlRaw = rl;
   let mfx = 0, mfz = 0;
   if (!anyWeb) { mfx += camFwd.x * fb; mfz += camFwd.z * fb; }
   mfx += camRight.x * rl; mfz += camRight.z * rl;
@@ -5470,8 +5635,11 @@ function frame() {
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
   /* contextual board button: shown exactly when E would board */
   if (touchOn) {
-    const nearPl = !player.riding && !photoMode && !!boardablePlane(player.p);
+    const helm = !photoMode && player.riding && player.riding.kind === 'plane';
+    const nearPl = !photoMode && (helm || (!player.riding && !!boardablePlane(player.p)));
     if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
+    const label = !helm ? 'Board' : player.riding.flown ? 'Let go' : 'Fly';
+    if (boardEl.textContent !== label) boardEl.textContent = label;
   }
   renderer.render(scene, camera);
 }
