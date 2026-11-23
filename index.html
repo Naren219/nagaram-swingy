@@ -4,8 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Nagaram — web-swing sandbox</title>
-<!-- gopuram mark, inline so the page still makes zero extra requests -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20fill=%22%231d1320%22/%3E%3Cpath%20d=%22M6%2027h20L22%209h-3l-1-4h-4l-1%204H10z%22%20fill=%22%23d8a83c%22/%3E%3Crect%20x=%2214%22%20y=%2215%22%20width=%224%22%20height=%2212%22%20fill=%22%23b0263a%22/%3E%3C/svg%3E">
+<link rel="icon" id="icon">
 <!-- Anek Tamil (OFL, see vendor/anek-tamil.LICENSE): one family whose Latin
      was drawn to sit with its Tamil. Subset to Latin + Tamil, weight 400–800. -->
 <link rel="preload" href="vendor/anek-tamil.woff2" as="font" type="font/woff2" crossorigin>
@@ -14,24 +13,29 @@
     font-weight:400 800;font-style:normal;font-display:swap}
   /* Kanchipuram silk: an aubergine ground, a zari-gold border, a peacock
      inner line and arakku red, the way a pattu saree is put together. */
+  /* Every colour on the page is one of these, or mixed from one of them; the
+     minimap and the tab icon read them too (cssToken, below). */
   :root{
+    --night:#0b070d;                /* behind everything */
     --ground:#1d1320;               /* aubergine silk */
     --ink:rgba(40,19,40,.82);       /* panels */
     --silk:#f4ead2;                 /* raw silk, all text */
     --zari:#d8a83c;                 /* gold thread */
     --peacock:#127a74;              /* peacock teal */
     --peacock-lt:#4cc3b2;           /* the same, as text on the dark */
+    --bay:#0b3a3a;                  /* the sea, on the map */
     --arakku:#b0263a;               /* arakku red */
     --arakku-lt:#e8576b;            /* the same, as text on the dark */
-    --hair:rgba(216,168,60,.30);    /* a gold hairline */
-    --korvai:rgba(18,122,116,.60);  /* the contrasting inner border */
     --lock:#3ef0ff;                 /* target cyan — nothing else in the palette is this cool */
+    --ring:#ffb52e;                 /* a ring-run ring, the colour it is in the world (97-runs.js) */
+    --hair:color-mix(in srgb,var(--zari) 30%,transparent);    /* a gold hairline */
+    --korvai:color-mix(in srgb,var(--peacock) 60%,transparent);  /* the contrasting inner border */
     --font:"Anek Tamil","Noto Sans Tamil",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
     /* the zari border: temple teeth over a gold line, one 18px repeat */
     --zari-band:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='10'%3E%3Cpath d='M1 9L4 6H6L9 2L12 6H14L17 9Z' fill='%23d8a83c' fill-opacity='.85'/%3E%3Ccircle cx='9' cy='6.7' r='1.05' fill='%23b0263a'/%3E%3Crect y='9' width='18' height='1' fill='%23d8a83c'/%3E%3C/svg%3E");
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;overflow:hidden;background:#0b070d;color:var(--silk);
+  html,body{height:100%;overflow:hidden;background:var(--night);color:var(--silk);
     font-family:var(--font);font-feature-settings:"tnum";
     -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
   canvas{display:block}
@@ -39,12 +43,12 @@
 
   /* ---- speed vignette ---- */
   #rush{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:4;
-    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(14,6,14,.85) 100%);
+    background:radial-gradient(ellipse at center,transparent 38%,color-mix(in srgb,var(--night) 85%,transparent) 100%);
     transition:opacity .12s linear}
 
   /* ---- the band: readouts under a woven zari border ---- */
   #band{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:stretch;
-    height:74px;background:linear-gradient(0deg,rgba(22,13,24,.94),rgba(29,19,32,.55))}
+    height:74px;background:linear-gradient(0deg,color-mix(in srgb,var(--ground) 94%,transparent),color-mix(in srgb,var(--ground) 55%,transparent))}
   #band::before{content:"";position:absolute;top:-10px;left:0;right:0;height:10px;
     background:var(--zari-band) repeat-x;opacity:.9}
   .cell{flex:0 0 auto;padding:12px 20px 10px;border-right:1px solid var(--hair);min-width:118px}
@@ -71,13 +75,13 @@
   #cross i:nth-child(2){left:19px;bottom:0;width:2px;height:9px}
   #cross i:nth-child(3){top:19px;left:0;height:2px;width:9px}
   #cross i:nth-child(4){top:19px;right:0;height:2px;width:9px}
-  #cross.lock i{opacity:1;background:var(--lock);box-shadow:0 0 9px rgba(62,240,255,.85),0 0 2px rgba(0,0,0,.9)}
+  #cross.lock i{opacity:1;background:var(--lock);box-shadow:0 0 9px color-mix(in srgb,var(--lock) 85%,transparent),0 0 2px color-mix(in srgb,var(--night) 90%,transparent)}
   #cross.lock i:nth-child(1){height:5px}#cross.lock i:nth-child(2){height:5px}
   #cross.lock i:nth-child(3){width:5px}#cross.lock i:nth-child(4){width:5px}
   #cross b{position:absolute;left:18px;top:18px;width:4px;height:4px;border-radius:50%;
     background:var(--zari);opacity:0;transition:opacity .1s}
   #cross.web b{opacity:1}
-  #cross.miss i{background:var(--arakku-lt);opacity:.95;box-shadow:0 0 8px rgba(176,38,58,.85)}
+  #cross.miss i{background:var(--arakku-lt);opacity:.95;box-shadow:0 0 8px color-mix(in srgb,var(--arakku) 85%,transparent)}
   #cross.miss{animation:missPulse .22s ease-out}
   @keyframes missPulse{from{transform:scale(1.55)}to{transform:scale(1)}}
 
@@ -86,7 +90,7 @@
 
   /* ---- minimap ---- */
   #mapwrap{position:absolute;right:18px;top:18px;width:168px;height:168px;
-    background:rgba(30,16,32,.68);backdrop-filter:blur(3px)}
+    background:color-mix(in srgb,var(--ground) 68%,transparent);backdrop-filter:blur(3px)}
   #mapwrap canvas{width:100%;height:100%;opacity:.92}
   #mapwrap::after{content:"நகரம்";position:absolute;left:7px;bottom:7px;padding:2px 6px 1px;font-size:12px;font-weight:600;
     color:var(--zari);background:var(--ink);opacity:.9}
@@ -98,9 +102,9 @@
   #look .ring{position:absolute;left:50%;top:50%;width:15vmin;height:15vmin;margin:-7.5vmin 0 0 -7.5vmin;
     border:1px dashed var(--hair);border-radius:50%;opacity:.7}
   #look .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
-    background:var(--zari);box-shadow:0 0 10px rgba(216,168,60,.85);opacity:.9}
+    background:var(--zari);box-shadow:0 0 10px color-mix(in srgb,var(--zari) 85%,transparent);opacity:.9}
   #look .vec{position:absolute;left:50%;top:50%;height:1px;transform-origin:0 50%;
-    background:linear-gradient(90deg,rgba(216,168,60,0),rgba(216,168,60,.75))}
+    background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--zari) 75%,transparent))}
 
   /* ---- transient readout (sensitivity, mode changes) ---- */
   #toast{position:absolute;left:50%;top:16%;transform:translateX(-50%);
@@ -122,7 +126,7 @@
   #run .df.up{color:var(--peacock-lt)}
   #run .df:empty{display:none}
   #runarrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-9px 0 0 -8px;display:none;opacity:.9;
-    border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid #ffb52e}
+    border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid var(--ring)}
   #runarrow.on{display:block}
 
   /* ---- help ---- */
@@ -141,7 +145,7 @@
   /* ---- start / lock overlay ---- */
   #gate{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:2px;cursor:pointer;
-    background:radial-gradient(ellipse at 50% 62%,rgba(40,22,42,.55),rgba(11,6,13,.94) 70%);
+    background:radial-gradient(ellipse at 50% 62%,color-mix(in srgb,var(--ground) 55%,transparent),color-mix(in srgb,var(--night) 94%,transparent) 70%);
     backdrop-filter:blur(2px)}
   #gate h2{font-size:clamp(46px,8.5vw,104px);font-weight:800;line-height:1;letter-spacing:.005em}
   #gate .ta{font-size:clamp(18px,2.6vw,30px);font-weight:600;color:var(--zari);margin-top:4px}
@@ -154,7 +158,7 @@
 
   /* ---- pause ---- */
   #pbtn{position:absolute;top:16px;right:16px;z-index:14;pointer-events:auto;cursor:pointer;
-    width:34px;height:34px;border:1px solid var(--hair);background:rgba(29,19,32,.65);
+    width:34px;height:34px;border:1px solid var(--hair);background:color-mix(in srgb,var(--ground) 65%,transparent);
     display:flex;align-items:center;justify-content:center;gap:4px;transition:border-color .15s}
   #pbtn:hover{border-color:var(--zari)}
   #pbtn i{width:3px;height:13px;background:var(--zari);opacity:.9}
@@ -163,12 +167,12 @@
   #pbtn.on i:last-child{display:none}
   #pause{position:fixed;inset:0;z-index:24;display:none;flex-direction:column;
     align-items:center;justify-content:center;gap:6px;cursor:pointer;
-    background:rgba(18,10,20,.76);backdrop-filter:blur(3px)}
+    background:color-mix(in srgb,var(--night) 76%,transparent);backdrop-filter:blur(3px)}
   #pause.on{display:flex}
   #pause h3{font-size:clamp(26px,4.4vw,42px);font-weight:700}
   #pause p{margin-top:10px;font-size:15px;opacity:.7}
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
-    background:#0b070d;font-size:15px;opacity:.8}
+    background:var(--night);font-size:15px;opacity:.8}
   #load.gone{display:none}
   /* ---- in flight the readouts step back; they return faster than they left ---- */
   #band,#tbar,#help,#mapwrap{transition:opacity .35s}
@@ -191,16 +195,16 @@
   /* The stick visual is display-only: the whole left region of the screen is
      the stick zone, and the base floats to wherever the thumb lands. */
   #tStick{position:absolute;left:max(26px,env(safe-area-inset-left));bottom:106px;width:120px;height:120px;
-    border:1px solid var(--hair);border-radius:50%;background:rgba(29,19,32,.32);
+    border:1px solid var(--hair);border-radius:50%;background:color-mix(in srgb,var(--ground) 32%,transparent);
     opacity:.55;transition:opacity .18s;pointer-events:none}
   #tStick.live{opacity:1;transition:none}
   #tStick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-    border-radius:50%;background:rgba(216,168,60,.42);border:1px solid var(--zari)}
+    border-radius:50%;background:color-mix(in srgb,var(--zari) 42%,transparent);border:1px solid var(--zari)}
   .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
-    display:flex;align-items:center;justify-content:center;background:rgba(29,19,32,.48);
+    display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--ground) 48%,transparent);
     color:var(--silk);font:600 13px/1 var(--font);
     -webkit-user-select:none;user-select:none;touch-action:none}
-  .tbtn.on{background:rgba(216,168,60,.35);border-color:var(--zari)}
+  .tbtn.on{background:color-mix(in srgb,var(--zari) 35%,transparent);border-color:var(--zari)}
   /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
      which double as aim surfaces while held. Everything a player needs DURING
      a swing — zip and dive — sits on the left, because the right thumb is
@@ -220,7 +224,7 @@
 
   /* ---- landscape only on touch ---- */
   #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
-    justify-content:center;gap:18px;background:#0b070d}
+    justify-content:center;gap:18px;background:var(--night)}
   #rotate .ph{width:64px;height:38px;border:2px solid var(--zari);border-radius:7px;
     animation:phTurn 1.8s ease-in-out infinite}
   @keyframes phTurn{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
@@ -232,6 +236,15 @@
   /* phone landscape: the minimap would sit on the button cluster */
   @media (max-height:500px){body.touch #mapwrap{display:none}}
 </style>
+<script>
+/* the palette lives in :root above; script reads it from there */
+function cssToken(name) { return getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim(); }
+/* the gopuram mark, inline so the page still makes zero extra requests */
+document.getElementById('icon').href = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="' + cssToken('ground') +
+  '"/><path d="M6 27h20L22 9h-3l-1-4h-4l-1 4H10z" fill="' + cssToken('zari') +
+  '"/><rect x="14" y="15" width="4" height="12" fill="' + cssToken('arakku') + '"/></svg>');
+</script>
 </head>
 <body>
 <div id="load">Generating Nagaram…</div>
@@ -258,6 +271,7 @@
       <tr><td>Shift</td><td>Tuck &amp; dive</td></tr>
       <tr><td>Q</td><td>Zip to anchor</td></tr>
       <tr><td>E</td><td>Cling to wall &middot; board an aircraft</td></tr>
+      <tr><td>E aboard</td><td>Fly it: A/D turn &middot; W/S climb and dive</td></tr>
       <tr><td>T / F / M</td><td>Time of day · assist · mute</td></tr>
       <tr><td>G / N / X</td><td>Ring run: start · next course · leave</td></tr>
       <tr><td>B</td><td>Trial: the line bends round corners</td></tr>
@@ -458,16 +472,17 @@ function districtAt(x, z) {
   if (Math.hypot(x, z) < 300) return 'oldtown';
   return 'mid';
 }
-const ZONE_NAME = {
-  temple: 'Temple Ward', oldtown: 'Old Bazaar', mid: 'Midtown', tech: 'Tech Park',
-  apartments: 'North Blocks', chettinad: 'Chettinad Quarter',
-  beach: 'The Marina', river: 'Riverside', sea: 'Bay of Bengal'
-};
-/* the same districts as the city calls them, shown beside the English */
-const ZONE_TAMIL = {
-  temple: 'கோயில் பகுதி', oldtown: 'கடைவீதி', mid: 'நகர மையம்', tech: 'தொழில்நுட்பப் பூங்கா',
-  apartments: 'வடக்குக் குடியிருப்பு', chettinad: 'செட்டிநாடு',
-  beach: 'மெரினா', river: 'ஆற்றங்கரை', sea: 'வங்கக் கடல்'
+/* what each district is called, in English and as the city calls it */
+const ZONES = {
+  temple:     { en: 'Temple Ward',       ta: 'கோயில் பகுதி' },
+  oldtown:    { en: 'Old Bazaar',        ta: 'கடைவீதி' },
+  mid:        { en: 'Midtown',           ta: 'நகர மையம்' },
+  tech:       { en: 'Tech Park',         ta: 'தொழில்நுட்பப் பூங்கா' },
+  apartments: { en: 'North Blocks',      ta: 'வடக்குக் குடியிருப்பு' },
+  chettinad:  { en: 'Chettinad Quarter', ta: 'செட்டிநாடு' },
+  beach:      { en: 'The Marina',        ta: 'மெரினா' },
+  river:      { en: 'Riverside',         ta: 'ஆற்றங்கரை' },
+  sea:        { en: 'Bay of Bengal',     ta: 'வங்கக் கடல்' }
 };
 
 const PALETTE = {
@@ -1777,14 +1792,16 @@ const V_PLANE = mergeGeos([
 ]);
 const PLANE_HX = 13.0, PLANE_HY = 3.4, PLANE_HZ = 12.0;   // AABB half-extents
 const DECK_Y = 1.45;     // top of the fuselage, where a rider stands
+const PLANE_BANK = 0.22; // the roll an aircraft holds round its circuit
 const planes = [];
 {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   for (let i = 0; i < 5; i++) {
     const mesh = new THREE.Mesh(V_PLANE, mat);
     mesh.castShadow = true; mesh.frustumCulled = false;
+    mesh.rotation.order = 'YXZ';   // heading, then nose up/down, then bank: how planePoint turns it too
     scene.add(mesh);
-    planes.push({
+    const pl = {
       kind: 'plane', step: flyPlane, mesh,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
@@ -1794,24 +1811,35 @@ const planes = [];
       p: V3(), v: V3(), yaw: 0,
       /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
          its box, how generously a web may find it, and where a rider walks */
-      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
-    });
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5,
+      /* the attitude the hull is drawn and ridden at; flown by hand, it can be (89-pilot.js) */
+      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0
+    };
+    pl.cruise = pl.r * Math.abs(pl.w);   // the speed it flies its circuit at, and is flown at
+    planes.push(pl);
   }
 }
 /* every carrier moves itself: the aircraft here, the train in 76-metro.js,
    boats, kites, crane jibs and the wheel's cars (77-cranes-wheel.js) */
 for (const b of boats) planes.push(b);
 for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
+/* the autopilot. A hull being flown by hand steps with flyByHand instead (89-pilot.js) */
 function flyPlane(pl, dt) {
   pl.ph += pl.w * dt;
+  pl.oy *= Math.exp(-dt / 7);            // a hand-back off its circuit's height eases back onto it
   const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6 + pl.oy;
   pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
   pl.p.set(px, py, pz);
   /* nose points along the tangent; bank into the turn */
   pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.pitch = damp(pl.pitch, 0, 1.6, dt);
+  pl.roll = damp(pl.roll, pl.w > 0 ? -PLANE_BANK : PLANE_BANK, 1.6, dt);
+  drawPlane(pl);
+}
+function drawPlane(pl) {
   pl.mesh.position.copy(pl.p);
-  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+  pl.mesh.rotation.set(-pl.pitch, pl.yaw, pl.roll);
 }
 /* afloat, a boat sails its circle and rides the swell; beached, it sits */
 function sailBoat(b, dt) {
@@ -1853,22 +1881,37 @@ function flyKite(k, dt) {
 function updatePlanes(dt) {
   for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
-/* local offset -> world, so a latched anchor rides the hull */
-function planePoint(pl, lx, ly, lz, out) {
+/* A hull's frame. Every carrier turns about the vertical (yaw); an aircraft
+   also has an attitude, pitch nose-up and roll right-wing-down, turned first
+   and in the order its mesh is (YXZ): bank, then nose, then heading. These
+   two turn a vector between the frames, an offset or a direction alike, so
+   riding, boarding, landing and aiming all see one and the same hull. */
+function hullToWorld(pl, x, y, z, out) {
+  if (pl.pitch || pl.roll) {
+    const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+    const x1 = x * cr - y * sr, y1 = x * sr + y * cr;
+    x = x1; y = y1 * cp + z * sp; z = z * cp - y1 * sp;
+  }
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-  return out.set(pl.p.x + lx * c + lz * sn, pl.p.y + ly, pl.p.z - lx * sn + lz * c);
+  return out.set(x * c + z * sn, y, z * c - x * sn);
 }
-function worldToPlane(pl, wx, wy, wz, out) {
+function worldToHull(pl, x, y, z, out) {
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-  const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
-  return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
+  const x1 = x * c - z * sn, z1 = x * sn + z * c;
+  if (!pl.pitch && !pl.roll) return out.set(x1, y, z1);
+  const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+  const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  return out.set(x1 * cr + y2 * sr, y2 * cr - x1 * sr, z2);
 }
+/* local offset -> world, so a latched anchor rides the hull, and back */
+function planePoint(pl, lx, ly, lz, out) { return hullToWorld(pl, lx, ly, lz, out).add(pl.p); }
+function worldToPlane(pl, wx, wy, wz, out) { return worldToHull(pl, wx - pl.p.x, wy - pl.p.y, wz - pl.p.z, out); }
 /* Slab test against each hull, in the hull's own frame: a crane jib is a long
    thin box turned to wherever it is pointing, and a world-aligned box round
    it would catch rays a jib's length away. A sphere round each hull turns
    most of them away before the slab test. No arrays: this runs for every aim
    ray, every frame. */
-const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null };
+const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null }, _rayO = V3(), _rayD = V3();
 function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
@@ -1878,12 +1921,12 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
     const tc = qx * dx + qy * dy + qz * dz, r2 = ex * ex + ey * ey + ez * ez;
     if (tc < -Math.sqrt(r2) || tc - Math.sqrt(r2) > best) continue;
     if (qx * qx + qy * qy + qz * qz - tc * tc > r2) continue;
-    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+    /* the ray in the hull's frame, about the hull's centre */
+    worldToHull(pl, -qx, -qy, -qz, _rayO); worldToHull(pl, dx, dy, dz, _rayD);
     let t0 = 0.02, t1 = best, ok = true;
     for (let a = 0; a < 3 && ok; a++) {
-      /* the ray in the hull's frame (worldToPlane), about the hull's centre */
-      const o = a === 0 ? -qx * c + qz * sn : a === 1 ? -qy : -qx * sn - qz * c;
-      const d = a === 0 ? dx * c - dz * sn : a === 1 ? dy : dx * sn + dz * c;
+      const o = a === 0 ? _rayO.x : a === 1 ? _rayO.y : _rayO.z;
+      const d = a === 0 ? _rayD.x : a === 1 ? _rayD.y : _rayD.z;
       const h = a === 0 ? ex : a === 1 ? ey : ez;
       if (Math.abs(d) < 1e-8) { if (o < -h || o > h) ok = false; continue; }
       const inv = 1 / d;
@@ -2156,7 +2199,7 @@ const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
+     board(plane)  helm(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
      land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
    The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
@@ -2334,6 +2377,12 @@ function boardablePlane(P) {
   }
   return near;
 }
+/* What E does right now: aboard something that can be flown, take or give
+   its controls (the hull you are riding); not aboard, board what is in reach
+   (another hull); otherwise nothing (null). The touch button shows this. */
+function mountTarget(P) {
+  return player.riding ? (player.riding.flyable ? player.riding : null) : boardablePlane(P);
+}
 /* aboard: on the deck where you are, held to its walkway */
 function boardCarrier(pl, P) {
   worldToPlane(pl, P.x, P.y, P.z, player.rideLo);
@@ -2386,12 +2435,10 @@ function stepPhysics(h, inp) {
   const P = player.p, V = player.v;
   _pp.copy(P);
 
-  /* ---- riding an aircraft ---- */
-  if (!player.riding && inp.mount) {
-    /* snap onto the spine of the hull rather than wherever you grabbed */
-    const near = boardablePlane(P);
-    if (near) boardCarrier(near, P);
-  }
+  /* ---- riding a carrier ---- */
+  const target = inp.mount ? mountTarget(P) : null;
+  if (target === player.riding) { if (target) emit('helm', target); }   // a hand on its controls, or off them (89-pilot.js)
+  else if (target) boardCarrier(target, P);   // snap onto the spine of the hull rather than wherever you grabbed
   if (player.riding) {
     const pl = player.riding;
     /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
@@ -3341,6 +3388,7 @@ function poseRig(dt, inp) {
 
   /* ---- heading ---- */
   if (player.clinging) turnHeading(-player.cn.x, -player.cn.z, 14, dt);
+  else if (riding && player.riding.flown) turnHeading(Math.sin(player.riding.yaw), Math.cos(player.riding.yaw), 8, dt);   // facing the nose
   else if (riding) { if (inp.mx || inp.mz) turnHeading(inp.mx, inp.mz, 8, dt); }
   else if (player.wallRun) turnHeading(V.x, V.z, 14, dt);
   else if (player.grounded) {
@@ -4058,6 +4106,144 @@ function applyWeather(dt) {
   }
 }
 /* =====================================================================
+   TAKING THE CONTROLS
+   ---------------------------------------------------------------------
+   Aboard an aircraft, E takes its controls: you go forward to the cockpit,
+   the view drops back to frame the whole airframe, and A/D turn it (it banks
+   into the turn) while W/S put the nose up and down. E again hands it back.
+   The aircraft keeps its own cruising speed; you only choose where it goes.
+
+   Two things it will not let you do. It will not fly into the city: it
+   looks down under itself and ahead of itself, and pulls up over whatever is
+   there. And it will not leave: past the edge of the map it turns itself back.
+
+   Handing back is seamless. The autopilot flies a circle (flyPlane), so it is
+   given a new one: the same size and the same turning sense, through where
+   the aircraft is and along the way it is pointing. Height is the one thing
+   that can be off from that circuit's band, and it is eased back in.
+
+   Physics only announces the press (emit('helm', hull)); this file decides
+   what it means. Taking the controls swaps the hull's step from flyPlane to
+   flyByHand, and handing back swaps it back: those two functions, and
+   nothing else, write `flown` and `step`. The stick is routed here too
+   (routeStick): on a hull being flown it steers the hull, and the walk input
+   the rider's walkway reads becomes a walk to the seat, so nothing
+   downstream needs to know you are flying.
+   ===================================================================== */
+const PILOT_TURN = 0.55;        // rad/s of heading at full stick
+const PILOT_BANK = 0.62;        // rad of roll at full stick
+const PILOT_PITCH = 0.32;       // rad of nose up or down at full stick
+const PILOT_CLEAR = 14;         // metres kept between the belly and any roof
+const PILOT_CEIL = 380;         // and no higher than this
+const PILOT_EDGE = 900;         // beyond this far from the centre it turns home
+const COCKPIT_Z = 7.4;          // where the pilot sits, forward along the spine
+const AUTO_LO = 78, AUTO_HI = 168;   // the band the autopilot's circuits fly in
+let pilotK = 0;                 // 0..1, how far the view has gone over to the chase camera
+let pilotEdgeSaid = false;
+
+listen('helm', (pl) => {
+  if (pl.flown) { handBack(pl); toast('Autopilot has it'); return; }
+  takeControls(pl);
+  toast(touchOn ? 'You have the controls · stick to steer · Let go to hand it back'
+                : 'You have the controls · A/D turn · W/S climb and dive · E to let go');
+  toastT = 3.5;
+});
+function takeControls(pl) {
+  pl.flown = true; pl.step = flyByHand; pl.turnRate = 0;
+  pilotEdgeSaid = false;
+}
+
+/* Aboard a hull being flown, the stick is the hull's (flyByHand reads
+   inp.rlRaw / inp.mzRaw), and the walk becomes a walk to the seat: a world
+   direction, as inp.mx/mz always are, slowing to nothing on arrival. */
+function routeStick(inp) {
+  const pl = player.riding;
+  if (!pl || !pl.flown) return;
+  const lx = -player.rideLo.x, lz = COCKPIT_Z - player.rideLo.z, d = Math.hypot(lx, lz);
+  const k = d < 0.01 ? 0 : Math.min(1, d / 0.35) / d;
+  const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+  inp.mx = (lx * c + lz * sn) * k; inp.mz = (lz * c - lx * sn) * k;
+}
+
+/* the top of whatever is solid under (x, z), or 0 for the street */
+function solidTop(x, z) {
+  const h = rayHit(x, 600, z, 0, -1, 0, 600);
+  return h ? 600 - h.t : 0;
+}
+
+function flyByHand(pl, dt) {
+  /* the hands have to be aboard to be on the controls */
+  if (player.riding !== pl) { handBack(pl); flyPlane(pl, dt); return; }
+  const turn = clamp(inp.rlRaw, -1, 1), climb = clamp(inp.mzRaw, -1, 1);
+  const spd = pl.cruise, hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+
+  /* D turns right, which is the heading angle going DOWN (75-traffic.js:
+     the nose points along (sin yaw, cos yaw)) */
+  let want = -turn * PILOT_TURN;
+  const out = Math.hypot(pl.p.x, pl.p.z);
+  if (out > PILOT_EDGE) {
+    /* steer for the centre: positive yaw rate swings the nose toward (cos yaw, -sin yaw) */
+    const k = clamp((out - PILOT_EDGE) / 150, 0, 1), cx = -pl.p.x / out, cz = -pl.p.z / out;
+    if (cx * hx + cz * hz < 0.95) want = lerp(want, Math.sign(cx * hz - cz * hx || 1) * PILOT_TURN, k);
+    if (!pilotEdgeSaid) { pilotEdgeSaid = true; toast('Turning back toward the city'); }
+  } else if (out < PILOT_EDGE - 100) pilotEdgeSaid = false;
+  pl.turnRate = damp(pl.turnRate, want, 3, dt);
+  pl.yaw += pl.turnRate * dt;
+
+  /* look under and ahead: anything closer than PILOT_CLEAR below the belly
+     lifts the nose, harder the closer it is */
+  const top = Math.max(solidTop(pl.p.x, pl.p.z),
+                       solidTop(pl.p.x + hx * spd * 1.2, pl.p.z + hz * spd * 1.2),
+                       solidTop(pl.p.x + hx * spd * 2.6, pl.p.z + hz * spd * 2.6));
+  const floor = top + PLANE_HY + PILOT_CLEAR;
+  let pitchWant = climb * PILOT_PITCH;
+  if (pl.p.y < floor + 10) pitchWant = Math.max(pitchWant, PILOT_PITCH * clamp((floor + 10 - pl.p.y) / 12, 0, 1.2));
+  if (pl.p.y > PILOT_CEIL - 20) pitchWant = Math.min(pitchWant, -PILOT_PITCH * clamp((pl.p.y - PILOT_CEIL + 20) / 20, 0, 1));
+  pl.pitch = damp(pl.pitch, pitchWant, 2.4, dt);
+  pl.roll = damp(pl.roll, -pl.turnRate / PILOT_TURN * PILOT_BANK, 3, dt);
+
+  const c = Math.cos(pl.pitch), x = pl.p.x + Math.sin(pl.yaw) * spd * c * dt, z = pl.p.z + Math.cos(pl.yaw) * spd * c * dt;
+  /* never through a roof, even if the pull-up was not enough */
+  const y = clamp(pl.p.y + spd * Math.sin(pl.pitch) * dt, top + PLANE_HY + 1, PILOT_CEIL);
+  pl.v.set(x - pl.p.x, y - pl.p.y, z - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
+  pl.p.set(x, y, z);
+  drawPlane(pl);
+}
+
+/* back to a circuit: through here, along the nose, at its old size */
+function handBack(pl) {
+  pl.flown = false; pl.step = flyPlane;
+  const s = Math.sign(pl.w), hx = Math.sin(pl.yaw), hz = Math.cos(pl.yaw);
+  /* flyPlane's nose is along w·(−sin ph, cos ph), so sin ph = −s·hx, cos ph = s·hz */
+  pl.ph = Math.atan2(-s * hx, s * hz);
+  pl.cx = pl.p.x - Math.cos(pl.ph) * pl.r;
+  pl.cz = pl.p.z - Math.sin(pl.ph) * pl.r;
+  const base = pl.p.y - Math.sin(pl.ph * 2.1) * 6;
+  pl.y = clamp(base, AUTO_LO, AUTO_HI);
+  pl.oy = base - pl.y;            // eased away by flyPlane
+}
+
+/* the chase view: the camera follows the nose, a little above it, unless you
+   have just looked somewhere yourself, and comes back to it a moment after */
+const PILOT_VIEW_PITCH = -0.16;
+let pilotLookYaw = 0, pilotLookPitch = 0, pilotLookIdle = 0;
+function pilotCamera(dt) {
+  const flown = !!(player.riding && player.riding.flown);
+  pilotK = damp(pilotK, flown ? 1 : 0, 2.2, dt);
+  if (!flown) { pilotLookIdle = 0; pilotLookYaw = yaw; pilotLookPitch = pitch; return; }
+  if (Math.abs(yaw - pilotLookYaw) > 1e-6 || Math.abs(pitch - pilotLookPitch) > 1e-6) pilotLookIdle = 0;
+  else pilotLookIdle += dt;
+  if (pilotLookIdle > 1.2) {
+    /* camFwd is (−sin yaw, ·, cos yaw); the nose is (sin pl.yaw, ·, cos pl.yaw) */
+    let d = -player.riding.yaw - yaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const k = 1 - Math.exp(-1.6 * dt);
+    yaw += d * k;
+    pitch += (PILOT_VIEW_PITCH + player.riding.pitch * 0.5 - pitch) * k;
+  }
+  pilotLookYaw = yaw; pilotLookPitch = pitch;
+}
+/* =====================================================================
    CAMERA
    ===================================================================== */
 const PITCH_MAX = 1.47;                  // ~84 deg, near-vertical either way
@@ -4096,14 +4282,17 @@ function updateCamera(dt) {
   const V = camVel, spd = V.length();
   camDip = damp(camDip, 0, 5.5, dt);
   pivot.copy(pRender);
-  pivot.y += 1.05 - camDip + perchK * 0.9;
+  pivot.y += 1.05 - camDip + perchK * 0.9 + pilotK * 3.4;
   pivot.addScaledVector(V, clamp(0.12 - spd * 0.0008, 0.02, 0.12));
 
   /* perched (91-perch.js) the camera backs off and lifts a little, so you sit
      lower in a wider frame; where it looks is still exactly where you aim */
-  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, BOOM_UP), cbp = Math.cos(bp);
+  /* flying (89-pilot.js), the boom never swings below the airframe: look up
+     and the view tilts up from behind and above, rather than from underneath */
+  const bp = clamp(pitch - perchK * 0.10, BOOM_DOWN, lerp(BOOM_UP, -0.14, pilotK)), cbp = Math.cos(bp);
   boomDir.set(-Math.sin(yaw) * cbp, Math.sin(bp), Math.cos(yaw) * cbp);
-  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT;
+  /* at the controls (89-pilot.js) the boom goes out past the tail, to frame the airframe */
+  const want = camDist + clamp(spd * 0.055, 0, 3.4) + perchK * PERCH_OUT + pilotK * 17;
   camPos.copy(pivot).addScaledVector(boomDir, -want);
   camPos.y += 0.55;
 
@@ -4642,26 +4831,6 @@ function gull(vol) {
     o.connect(f); f.connect(g); g.connect(master); o.start(st); o.stop(st + 0.18);
   }
 }
-/* auto-rickshaw horn — squared tone with a fast wobble */
-function honk(vol) {
-  if (!AC) return;
-  const t = AC.currentTime, dur = 0.18 + Math.random() * 0.22;
-  const o = AC.createOscillator(); o.type = 'square';
-  const base = 380 + Math.random() * 190;
-  o.frequency.setValueAtTime(base, t);
-  const lfo = AC.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7;
-  const lg = AC.createGain(); lg.gain.value = base * 0.03;
-  lfo.connect(lg); lg.connect(o.frequency);
-  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
-  const g = AC.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.09 * vol, t + 0.02);
-  g.gain.setValueAtTime(0.09 * vol, t + dur - 0.04);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(f); f.connect(g); g.connect(master);
-  o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
-}
-
 /* How much of the street reaches you, 0..1 and a little over. Everything on
    the ground thins out as you climb, unless you have stopped to listen
    (91-perch.js): then most of it comes back up to you. */
@@ -4669,7 +4838,7 @@ function ambAlt(y) {
   const alt = clamp(1 - (y - 22) / 230, 0, 1);
   return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
 }
-let tBell = 6, tGull = 3, tHonk = 2;
+let tBell = 6, tGull = 3;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
@@ -4718,7 +4887,7 @@ function updateAudio(dt) {
   updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */
-  tBell -= dt; tGull -= dt; tHonk -= dt;
+  tBell -= dt; tGull -= dt;
   if (tBell <= 0) {
     tBell = 11 + Math.random() * 26;
     if (templeN > 0.25 && alt > 0.12) bell(0.05 + 0.16 * templeN * alt);
@@ -4726,10 +4895,6 @@ function updateAudio(dt) {
   if (tGull <= 0) {
     tGull = 2.5 + Math.random() * 7;
     if (surfN > 0.45 && night < 0.5) gull(0.5 + 0.5 * surfN);
-  }
-  if (tHonk <= 0) {
-    tHonk = 1.4 + Math.random() * 5.5;
-    if (trafficN > 0.35 && alt > 0.35) honk((0.4 + 0.6 * trafficN) * alt * (1 - night * 0.6));
   }
 }
 
@@ -4936,29 +5101,33 @@ listen('bell', () => {
 const mapCan = document.getElementById('map'), mctx = mapCan.getContext('2d');
 const MAPR = 620;
 const mapBase = document.createElement('canvas'); mapBase.width = mapBase.height = 720;
+/* drawn once, in the page's palette (head.html :root, read with cssToken) */
+const MAP_ZARI = cssToken('zari');
 (function drawMap() {
   const c = mapBase.getContext('2d'), S = 720, f = S / (MAPR * 2), o = S / 2;
-  c.fillStyle = '#170f1a'; c.fillRect(0, 0, S, S);
-  c.fillStyle = '#0b3a3a'; c.fillRect(o + SEA_X * f, 0, S, S);
-  c.strokeStyle = '#0b3a3a'; c.lineWidth = RIVER_HW * 2 * f; c.beginPath();
+  const fill = (tok, a) => { c.fillStyle = cssToken(tok); c.globalAlpha = a; };
+  fill('ground', 1); c.fillRect(0, 0, S, S);
+  fill('bay', 1); c.fillRect(o + SEA_X * f, 0, S, S);
+  c.strokeStyle = cssToken('bay'); c.lineWidth = RIVER_HW * 2 * f; c.beginPath();
   for (let x = -MAPR; x <= MAPR; x += 20) { const z = riverZ(x); x === -MAPR ? c.moveTo(o + x * f, o + z * f) : c.lineTo(o + x * f, o + z * f); }
   c.stroke();
-  c.strokeStyle = 'rgba(216,168,60,0.10)'; c.lineWidth = 1;
+  c.strokeStyle = MAP_ZARI; c.globalAlpha = 0.10; c.lineWidth = 1;
   for (let k = -EXT; k <= EXT; k += PITCH) {
     c.beginPath(); c.moveTo(0, o + k * f); c.lineTo(S, o + k * f); c.stroke();
     c.beginPath(); c.moveTo(o + k * f, 0); c.lineTo(o + k * f, S); c.stroke();
   }
   for (const b of buildings) {
     const t = clamp(b.h / 90, 0.12, 1);
-    c.fillStyle = b.kind === 'glass' ? `rgba(90,190,180,${0.35 + t * 0.5})` : `rgba(244,234,210,${0.14 + t * 0.55})`;
+    if (b.kind === 'glass') fill('peacock-lt', 0.35 + t * 0.5); else fill('silk', 0.14 + t * 0.55);
     c.fillRect(o + (b.x - b.w / 2) * f, o + (b.z - b.d / 2) * f, Math.max(1, b.w * f), Math.max(1, b.d * f));
   }
-  c.fillStyle = 'rgba(176,38,58,0.75)';             // the metro line
+  fill('arakku', 0.75);                              // the metro line
   c.fillRect(o + METRO.x * f - 1, o + METRO.z0 * f, 2, (METRO.z1 - METRO.z0) * f);
-  c.fillStyle = '#d8a83c';
+  fill('zari', 1);
   c.fillRect(o - PW * f, o - PW * f, PW * 2 * f, PW * 2 * f);
-  c.fillStyle = '#d83a52';
+  fill('arakku-lt', 1);
   for (const g of GOPURAMS) c.fillRect(o + g.x * f - 3, o + g.z * f - 3, 6, 6);
+  c.globalAlpha = 1;
 })();
 function drawMinimap() {
   const S = mapCan.width, Z = 2.0;
@@ -4970,7 +5139,7 @@ function drawMinimap() {
   drawRunOnMap(mctx, 720 / (MAPR * 2));
   mctx.restore();
   mctx.save(); mctx.translate(S / 2, S / 2); mctx.rotate(yaw + PI);   /* arrow tracks camFwd on a north-up map */
-  mctx.fillStyle = '#d8a83c'; mctx.beginPath();
+  mctx.fillStyle = MAP_ZARI; mctx.beginPath();
   mctx.moveTo(0, -9); mctx.lineTo(6.5, 7); mctx.lineTo(0, 3.5); mctx.lineTo(-6.5, 7);
   mctx.closePath(); mctx.fill(); mctx.restore();
 }
@@ -4980,7 +5149,7 @@ const elSpd = document.querySelector('#vSpd .v'), elAlt = document.querySelector
 const elTen = document.querySelector('#vTen .v'), elLen = document.querySelector('#vLen .v');
 const elZone = document.querySelector('#zone .en'), elZoneTa = document.querySelector('#zone .ta');
 const elBar = document.getElementById('tbar'), elRush = document.getElementById('rush');
-let hudT = 0, aimOk = false, missFlash = 0;
+let hudT = 0, aimOk = false, missFlash = 0, zoneShown = null;
 listen('miss', () => { missFlash = 0.22; });
 const held = [false, false];
 let aimPt = null;
@@ -5009,8 +5178,11 @@ function updateHUD(dt) {
     ? Math.max(player.webs[0].on ? player.webs[0].len : 0, player.webs[1].on ? player.webs[1].len : 0).toFixed(0) + '<small>m</small>'
     : '—';
   elBar.style.width = clamp(tn / 14000, 0, 1) * 100 + '%';
-  const zk = player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z), z = ZONE_NAME[zk] || ZONE_NAME.mid;
-  if (elZone.textContent !== z) { elZone.textContent = z; elZoneTa.textContent = ZONE_TAMIL[zk] || ZONE_TAMIL.mid; if (hudQuiet) toast(z); }
+  const zone = ZONES[player.p.x > SEA_X ? 'sea' : districtAt(player.p.x, player.p.z)] || ZONES.mid;
+  if (zone !== zoneShown) {
+    zoneShown = zone; elZone.textContent = zone.en; elZoneTa.textContent = zone.ta;
+    if (hudQuiet) toast(zone.en);
+  }
   elRush.style.opacity = clamp((spd - 26) / 76, 0, 0.9);
   cross.classList.toggle('web', on);
   cross.classList.toggle('lock', aimOk);
@@ -5153,9 +5325,10 @@ function unpackGhost(s) {
 
 /* ---- what you see ---- */
 const RING_GEO = new THREE.TorusGeometry(RING_R, 0.42, 6, 30);
-const ringNow = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false }));
+const RING_C = cssToken('ring');   // one colour for the ring, its pointer and its dot on the map
+const ringNow = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: RING_C, fog: false, toneMapped: false }));
 const ringAfter = new THREE.Mesh(RING_GEO,
-  new THREE.MeshBasicMaterial({ color: 0xffb52e, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false }));
+  new THREE.MeshBasicMaterial({ color: RING_C, fog: false, toneMapped: false, transparent: true, opacity: 0.32, depthWrite: false }));
 /* a shaft of light over the next ring, so it can be found from across the city */
 const ringBeam = new THREE.Mesh(
   new THREE.CylinderGeometry(1.6, 1.6, 420, 8, 1, true).translate(0, 210 + RING_R, 0),
@@ -5325,9 +5498,10 @@ function drawRunOnMap(c, f) {
   if (!flying()) return;
   for (let i = COURSE_RINGS - 1; i >= run.next; i--) {
     const r = run.rings[i], first = i === run.next;
-    c.fillStyle = first ? '#ffb52e' : 'rgba(255,181,46,.4)';
+    c.fillStyle = RING_C; c.globalAlpha = first ? 1 : 0.4;
     c.beginPath(); c.arc((r.x - player.p.x) * f, (r.z - player.p.z) * f, first ? 3.2 : 1.8, 0, TAU); c.fill();
   }
+  c.globalAlpha = 1;
 }
 
 addEventListener('keydown', e => {
@@ -5345,7 +5519,7 @@ bindHold('tRunQuit', quitRun, () => {});
 const clock = new THREE.Clock();
 let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
-const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
+const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, rlRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
 
 document.getElementById('load').classList.add('gone');
@@ -5369,6 +5543,7 @@ function frame() {
   if (keys['ArrowUp']) pitch = clamp(pitch + 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   if (keys['ArrowDown']) pitch = clamp(pitch - 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   freeLookStep(dt);
+  pilotCamera(dt);
   updateCamDirs();
 
   /* ---- gather input ---- */
@@ -5378,12 +5553,13 @@ function frame() {
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
   if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
-  inp.mzRaw = fb;
+  inp.mzRaw = fb; inp.rlRaw = rl;
   let mfx = 0, mfz = 0;
   if (!anyWeb) { mfx += camFwd.x * fb; mfz += camFwd.z * fb; }
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
+  routeStick(inp);                  // flying, the stick is the aircraft's (89-pilot.js)
   /* Edges are only consumed by a physics step that actually saw them. A
      display faster than 120 Hz renders frames with no substep at all, and
      clearing the flag here threw the press away on every one of them. */
@@ -5492,10 +5668,12 @@ function frame() {
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
-  /* contextual board button: shown exactly when E would board */
+  /* contextual E button: shown exactly when E would do something, saying what */
   if (touchOn) {
-    const nearPl = !player.riding && !photoMode && !!boardablePlane(player.p);
-    if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
+    const t = photoMode ? null : mountTarget(player.p);
+    if (boardEl.classList.contains('show') !== !!t) boardEl.classList.toggle('show', !!t);
+    const label = !t ? boardEl.textContent : t !== player.riding ? 'Board' : t.flown ? 'Let go' : 'Fly';
+    if (boardEl.textContent !== label) boardEl.textContent = label;
   }
   renderer.render(scene, camera);
 }

@@ -158,14 +158,16 @@ const V_PLANE = mergeGeos([
 ]);
 const PLANE_HX = 13.0, PLANE_HY = 3.4, PLANE_HZ = 12.0;   // AABB half-extents
 const DECK_Y = 1.45;     // top of the fuselage, where a rider stands
+const PLANE_BANK = 0.22; // the roll an aircraft holds round its circuit
 const planes = [];
 {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   for (let i = 0; i < 5; i++) {
     const mesh = new THREE.Mesh(V_PLANE, mat);
     mesh.castShadow = true; mesh.frustumCulled = false;
+    mesh.rotation.order = 'YXZ';   // heading, then nose up/down, then bank: how planePoint turns it too
     scene.add(mesh);
-    planes.push({
+    const pl = {
       kind: 'plane', step: flyPlane, mesh,
       y: rnd(78, 168),
       r: rnd(210, 470),          // radius of the circuit it flies
@@ -175,24 +177,35 @@ const planes = [];
       p: V3(), v: V3(), yaw: 0,
       /* what makes a hull a carrier (the metro train is one too, 76-metro.js):
          its box, how generously a web may find it, and where a rider walks */
-      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5
-    });
+      hx: PLANE_HX, hy: PLANE_HY, hz: PLANE_HZ, reach: 2, deck: DECK_Y, walkX: 1.2, walkZ: 9.5,
+      /* the attitude the hull is drawn and ridden at; flown by hand, it can be (89-pilot.js) */
+      pitch: 0, roll: i % 2 ? PLANE_BANK : -PLANE_BANK, oy: 0, flyable: true, flown: false, turnRate: 0, cruise: 0
+    };
+    pl.cruise = pl.r * Math.abs(pl.w);   // the speed it flies its circuit at, and is flown at
+    planes.push(pl);
   }
 }
 /* every carrier moves itself: the aircraft here, the train in 76-metro.js,
    boats, kites, crane jibs and the wheel's cars (77-cranes-wheel.js) */
 for (const b of boats) planes.push(b);
 for (let i = 0; i < KITE_MAX; i++) { kites[i].off = i >= KITES_ON; planes.push(kites[i]); }
+/* the autopilot. A hull being flown by hand steps with flyByHand instead (89-pilot.js) */
 function flyPlane(pl, dt) {
   pl.ph += pl.w * dt;
+  pl.oy *= Math.exp(-dt / 7);            // a hand-back off its circuit's height eases back onto it
   const px = pl.cx + Math.cos(pl.ph) * pl.r, pz = pl.cz + Math.sin(pl.ph) * pl.r;
-  const py = pl.y + Math.sin(pl.ph * 2.1) * 6;
+  const py = pl.y + Math.sin(pl.ph * 2.1) * 6 + pl.oy;
   pl.v.set(px - pl.p.x, py - pl.p.y, pz - pl.p.z).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
   pl.p.set(px, py, pz);
   /* nose points along the tangent; bank into the turn */
   pl.yaw = Math.atan2(-Math.sin(pl.ph) * pl.w, Math.cos(pl.ph) * pl.w);
+  pl.pitch = damp(pl.pitch, 0, 1.6, dt);
+  pl.roll = damp(pl.roll, pl.w > 0 ? -PLANE_BANK : PLANE_BANK, 1.6, dt);
+  drawPlane(pl);
+}
+function drawPlane(pl) {
   pl.mesh.position.copy(pl.p);
-  pl.mesh.rotation.set(0, pl.yaw, pl.w > 0 ? -0.22 : 0.22);
+  pl.mesh.rotation.set(-pl.pitch, pl.yaw, pl.roll);
 }
 /* afloat, a boat sails its circle and rides the swell; beached, it sits */
 function sailBoat(b, dt) {
@@ -234,22 +247,37 @@ function flyKite(k, dt) {
 function updatePlanes(dt) {
   for (const pl of planes) if (!pl.off) pl.step(pl, dt);
 }
-/* local offset -> world, so a latched anchor rides the hull */
-function planePoint(pl, lx, ly, lz, out) {
+/* A hull's frame. Every carrier turns about the vertical (yaw); an aircraft
+   also has an attitude, pitch nose-up and roll right-wing-down, turned first
+   and in the order its mesh is (YXZ): bank, then nose, then heading. These
+   two turn a vector between the frames, an offset or a direction alike, so
+   riding, boarding, landing and aiming all see one and the same hull. */
+function hullToWorld(pl, x, y, z, out) {
+  if (pl.pitch || pl.roll) {
+    const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+    const x1 = x * cr - y * sr, y1 = x * sr + y * cr;
+    x = x1; y = y1 * cp + z * sp; z = z * cp - y1 * sp;
+  }
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-  return out.set(pl.p.x + lx * c + lz * sn, pl.p.y + ly, pl.p.z - lx * sn + lz * c);
+  return out.set(x * c + z * sn, y, z * c - x * sn);
 }
-function worldToPlane(pl, wx, wy, wz, out) {
+function worldToHull(pl, x, y, z, out) {
   const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
-  const dx = wx - pl.p.x, dy = wy - pl.p.y, dz = wz - pl.p.z;
-  return out.set(dx * c - dz * sn, dy, dx * sn + dz * c);
+  const x1 = x * c - z * sn, z1 = x * sn + z * c;
+  if (!pl.pitch && !pl.roll) return out.set(x1, y, z1);
+  const cr = Math.cos(pl.roll), sr = Math.sin(pl.roll), cp = Math.cos(pl.pitch), sp = Math.sin(pl.pitch);
+  const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  return out.set(x1 * cr + y2 * sr, y2 * cr - x1 * sr, z2);
 }
+/* local offset -> world, so a latched anchor rides the hull, and back */
+function planePoint(pl, lx, ly, lz, out) { return hullToWorld(pl, lx, ly, lz, out).add(pl.p); }
+function worldToPlane(pl, wx, wy, wz, out) { return worldToHull(pl, wx - pl.p.x, wy - pl.p.y, wz - pl.p.z, out); }
 /* Slab test against each hull, in the hull's own frame: a crane jib is a long
    thin box turned to wherever it is pointing, and a world-aligned box round
    it would catch rays a jib's length away. A sphere round each hull turns
    most of them away before the slab test. No arrays: this runs for every aim
    ray, every frame. */
-const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null };
+const _ph2 = { t: 0, x: 0, y: 0, z: 0, pl: null }, _rayO = V3(), _rayD = V3();
 function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
   let best = maxT, hitPl = null;
   for (const pl of planes) {
@@ -259,12 +287,12 @@ function rayHitPlanes(ox, oy, oz, dx, dy, dz, maxT) {
     const tc = qx * dx + qy * dy + qz * dz, r2 = ex * ex + ey * ey + ez * ez;
     if (tc < -Math.sqrt(r2) || tc - Math.sqrt(r2) > best) continue;
     if (qx * qx + qy * qy + qz * qz - tc * tc > r2) continue;
-    const c = Math.cos(pl.yaw), sn = Math.sin(pl.yaw);
+    /* the ray in the hull's frame, about the hull's centre */
+    worldToHull(pl, -qx, -qy, -qz, _rayO); worldToHull(pl, dx, dy, dz, _rayD);
     let t0 = 0.02, t1 = best, ok = true;
     for (let a = 0; a < 3 && ok; a++) {
-      /* the ray in the hull's frame (worldToPlane), about the hull's centre */
-      const o = a === 0 ? -qx * c + qz * sn : a === 1 ? -qy : -qx * sn - qz * c;
-      const d = a === 0 ? dx * c - dz * sn : a === 1 ? dy : dx * sn + dz * c;
+      const o = a === 0 ? _rayO.x : a === 1 ? _rayO.y : _rayO.z;
+      const d = a === 0 ? _rayD.x : a === 1 ? _rayD.y : _rayD.z;
       const h = a === 0 ? ex : a === 1 ? ey : ez;
       if (Math.abs(d) < 1e-8) { if (o < -h || o > h) ok = false; continue; }
       const inv = 1 / d;

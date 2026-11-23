@@ -4,8 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Nagaram — web-swing sandbox</title>
-<!-- gopuram mark, inline so the page still makes zero extra requests -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20fill=%22%231d1320%22/%3E%3Cpath%20d=%22M6%2027h20L22%209h-3l-1-4h-4l-1%204H10z%22%20fill=%22%23d8a83c%22/%3E%3Crect%20x=%2214%22%20y=%2215%22%20width=%224%22%20height=%2212%22%20fill=%22%23b0263a%22/%3E%3C/svg%3E">
+<link rel="icon" id="icon">
 <!-- Anek Tamil (OFL, see vendor/anek-tamil.LICENSE): one family whose Latin
      was drawn to sit with its Tamil. Subset to Latin + Tamil, weight 400–800. -->
 <link rel="preload" href="vendor/anek-tamil.woff2" as="font" type="font/woff2" crossorigin>
@@ -14,24 +13,29 @@
     font-weight:400 800;font-style:normal;font-display:swap}
   /* Kanchipuram silk: an aubergine ground, a zari-gold border, a peacock
      inner line and arakku red, the way a pattu saree is put together. */
+  /* Every colour on the page is one of these, or mixed from one of them; the
+     minimap and the tab icon read them too (cssToken, below). */
   :root{
+    --night:#0b070d;                /* behind everything */
     --ground:#1d1320;               /* aubergine silk */
     --ink:rgba(40,19,40,.82);       /* panels */
     --silk:#f4ead2;                 /* raw silk, all text */
     --zari:#d8a83c;                 /* gold thread */
     --peacock:#127a74;              /* peacock teal */
     --peacock-lt:#4cc3b2;           /* the same, as text on the dark */
+    --bay:#0b3a3a;                  /* the sea, on the map */
     --arakku:#b0263a;               /* arakku red */
     --arakku-lt:#e8576b;            /* the same, as text on the dark */
-    --hair:rgba(216,168,60,.30);    /* a gold hairline */
-    --korvai:rgba(18,122,116,.60);  /* the contrasting inner border */
     --lock:#3ef0ff;                 /* target cyan — nothing else in the palette is this cool */
+    --ring:#ffb52e;                 /* a ring-run ring, the colour it is in the world (97-runs.js) */
+    --hair:color-mix(in srgb,var(--zari) 30%,transparent);    /* a gold hairline */
+    --korvai:color-mix(in srgb,var(--peacock) 60%,transparent);  /* the contrasting inner border */
     --font:"Anek Tamil","Noto Sans Tamil",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
     /* the zari border: temple teeth over a gold line, one 18px repeat */
     --zari-band:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='10'%3E%3Cpath d='M1 9L4 6H6L9 2L12 6H14L17 9Z' fill='%23d8a83c' fill-opacity='.85'/%3E%3Ccircle cx='9' cy='6.7' r='1.05' fill='%23b0263a'/%3E%3Crect y='9' width='18' height='1' fill='%23d8a83c'/%3E%3C/svg%3E");
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;overflow:hidden;background:#0b070d;color:var(--silk);
+  html,body{height:100%;overflow:hidden;background:var(--night);color:var(--silk);
     font-family:var(--font);font-feature-settings:"tnum";
     -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
   canvas{display:block}
@@ -39,12 +43,12 @@
 
   /* ---- speed vignette ---- */
   #rush{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:4;
-    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(14,6,14,.85) 100%);
+    background:radial-gradient(ellipse at center,transparent 38%,color-mix(in srgb,var(--night) 85%,transparent) 100%);
     transition:opacity .12s linear}
 
   /* ---- the band: readouts under a woven zari border ---- */
   #band{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:stretch;
-    height:74px;background:linear-gradient(0deg,rgba(22,13,24,.94),rgba(29,19,32,.55))}
+    height:74px;background:linear-gradient(0deg,color-mix(in srgb,var(--ground) 94%,transparent),color-mix(in srgb,var(--ground) 55%,transparent))}
   #band::before{content:"";position:absolute;top:-10px;left:0;right:0;height:10px;
     background:var(--zari-band) repeat-x;opacity:.9}
   .cell{flex:0 0 auto;padding:12px 20px 10px;border-right:1px solid var(--hair);min-width:118px}
@@ -71,13 +75,13 @@
   #cross i:nth-child(2){left:19px;bottom:0;width:2px;height:9px}
   #cross i:nth-child(3){top:19px;left:0;height:2px;width:9px}
   #cross i:nth-child(4){top:19px;right:0;height:2px;width:9px}
-  #cross.lock i{opacity:1;background:var(--lock);box-shadow:0 0 9px rgba(62,240,255,.85),0 0 2px rgba(0,0,0,.9)}
+  #cross.lock i{opacity:1;background:var(--lock);box-shadow:0 0 9px color-mix(in srgb,var(--lock) 85%,transparent),0 0 2px color-mix(in srgb,var(--night) 90%,transparent)}
   #cross.lock i:nth-child(1){height:5px}#cross.lock i:nth-child(2){height:5px}
   #cross.lock i:nth-child(3){width:5px}#cross.lock i:nth-child(4){width:5px}
   #cross b{position:absolute;left:18px;top:18px;width:4px;height:4px;border-radius:50%;
     background:var(--zari);opacity:0;transition:opacity .1s}
   #cross.web b{opacity:1}
-  #cross.miss i{background:var(--arakku-lt);opacity:.95;box-shadow:0 0 8px rgba(176,38,58,.85)}
+  #cross.miss i{background:var(--arakku-lt);opacity:.95;box-shadow:0 0 8px color-mix(in srgb,var(--arakku) 85%,transparent)}
   #cross.miss{animation:missPulse .22s ease-out}
   @keyframes missPulse{from{transform:scale(1.55)}to{transform:scale(1)}}
 
@@ -86,7 +90,7 @@
 
   /* ---- minimap ---- */
   #mapwrap{position:absolute;right:18px;top:18px;width:168px;height:168px;
-    background:rgba(30,16,32,.68);backdrop-filter:blur(3px)}
+    background:color-mix(in srgb,var(--ground) 68%,transparent);backdrop-filter:blur(3px)}
   #mapwrap canvas{width:100%;height:100%;opacity:.92}
   #mapwrap::after{content:"நகரம்";position:absolute;left:7px;bottom:7px;padding:2px 6px 1px;font-size:12px;font-weight:600;
     color:var(--zari);background:var(--ink);opacity:.9}
@@ -98,9 +102,9 @@
   #look .ring{position:absolute;left:50%;top:50%;width:15vmin;height:15vmin;margin:-7.5vmin 0 0 -7.5vmin;
     border:1px dashed var(--hair);border-radius:50%;opacity:.7}
   #look .dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
-    background:var(--zari);box-shadow:0 0 10px rgba(216,168,60,.85);opacity:.9}
+    background:var(--zari);box-shadow:0 0 10px color-mix(in srgb,var(--zari) 85%,transparent);opacity:.9}
   #look .vec{position:absolute;left:50%;top:50%;height:1px;transform-origin:0 50%;
-    background:linear-gradient(90deg,rgba(216,168,60,0),rgba(216,168,60,.75))}
+    background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--zari) 75%,transparent))}
 
   /* ---- transient readout (sensitivity, mode changes) ---- */
   #toast{position:absolute;left:50%;top:16%;transform:translateX(-50%);
@@ -122,7 +126,7 @@
   #run .df.up{color:var(--peacock-lt)}
   #run .df:empty{display:none}
   #runarrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-9px 0 0 -8px;display:none;opacity:.9;
-    border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid #ffb52e}
+    border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid var(--ring)}
   #runarrow.on{display:block}
 
   /* ---- help ---- */
@@ -141,7 +145,7 @@
   /* ---- start / lock overlay ---- */
   #gate{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:2px;cursor:pointer;
-    background:radial-gradient(ellipse at 50% 62%,rgba(40,22,42,.55),rgba(11,6,13,.94) 70%);
+    background:radial-gradient(ellipse at 50% 62%,color-mix(in srgb,var(--ground) 55%,transparent),color-mix(in srgb,var(--night) 94%,transparent) 70%);
     backdrop-filter:blur(2px)}
   #gate h2{font-size:clamp(46px,8.5vw,104px);font-weight:800;line-height:1;letter-spacing:.005em}
   #gate .ta{font-size:clamp(18px,2.6vw,30px);font-weight:600;color:var(--zari);margin-top:4px}
@@ -154,7 +158,7 @@
 
   /* ---- pause ---- */
   #pbtn{position:absolute;top:16px;right:16px;z-index:14;pointer-events:auto;cursor:pointer;
-    width:34px;height:34px;border:1px solid var(--hair);background:rgba(29,19,32,.65);
+    width:34px;height:34px;border:1px solid var(--hair);background:color-mix(in srgb,var(--ground) 65%,transparent);
     display:flex;align-items:center;justify-content:center;gap:4px;transition:border-color .15s}
   #pbtn:hover{border-color:var(--zari)}
   #pbtn i{width:3px;height:13px;background:var(--zari);opacity:.9}
@@ -163,12 +167,12 @@
   #pbtn.on i:last-child{display:none}
   #pause{position:fixed;inset:0;z-index:24;display:none;flex-direction:column;
     align-items:center;justify-content:center;gap:6px;cursor:pointer;
-    background:rgba(18,10,20,.76);backdrop-filter:blur(3px)}
+    background:color-mix(in srgb,var(--night) 76%,transparent);backdrop-filter:blur(3px)}
   #pause.on{display:flex}
   #pause h3{font-size:clamp(26px,4.4vw,42px);font-weight:700}
   #pause p{margin-top:10px;font-size:15px;opacity:.7}
   #load{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
-    background:#0b070d;font-size:15px;opacity:.8}
+    background:var(--night);font-size:15px;opacity:.8}
   #load.gone{display:none}
   /* ---- in flight the readouts step back; they return faster than they left ---- */
   #band,#tbar,#help,#mapwrap{transition:opacity .35s}
@@ -191,16 +195,16 @@
   /* The stick visual is display-only: the whole left region of the screen is
      the stick zone, and the base floats to wherever the thumb lands. */
   #tStick{position:absolute;left:max(26px,env(safe-area-inset-left));bottom:106px;width:120px;height:120px;
-    border:1px solid var(--hair);border-radius:50%;background:rgba(29,19,32,.32);
+    border:1px solid var(--hair);border-radius:50%;background:color-mix(in srgb,var(--ground) 32%,transparent);
     opacity:.55;transition:opacity .18s;pointer-events:none}
   #tStick.live{opacity:1;transition:none}
   #tStick .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-    border-radius:50%;background:rgba(216,168,60,.42);border:1px solid var(--zari)}
+    border-radius:50%;background:color-mix(in srgb,var(--zari) 42%,transparent);border:1px solid var(--zari)}
   .tbtn{position:absolute;border:1px solid var(--hair);border-radius:50%;pointer-events:auto;
-    display:flex;align-items:center;justify-content:center;background:rgba(29,19,32,.48);
+    display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--ground) 48%,transparent);
     color:var(--silk);font:600 13px/1 var(--font);
     -webkit-user-select:none;user-select:none;touch-action:none}
-  .tbtn.on{background:rgba(216,168,60,.35);border-color:var(--zari)}
+  .tbtn.on{background:color-mix(in srgb,var(--zari) 35%,transparent);border-color:var(--zari)}
   /* Hand roles: the right thumb owns the two held primaries (web, jump/glide),
      which double as aim surfaces while held. Everything a player needs DURING
      a swing — zip and dive — sits on the left, because the right thumb is
@@ -220,7 +224,7 @@
 
   /* ---- landscape only on touch ---- */
   #rotate{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;
-    justify-content:center;gap:18px;background:#0b070d}
+    justify-content:center;gap:18px;background:var(--night)}
   #rotate .ph{width:64px;height:38px;border:2px solid var(--zari);border-radius:7px;
     animation:phTurn 1.8s ease-in-out infinite}
   @keyframes phTurn{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
@@ -232,6 +236,15 @@
   /* phone landscape: the minimap would sit on the button cluster */
   @media (max-height:500px){body.touch #mapwrap{display:none}}
 </style>
+<script>
+/* the palette lives in :root above; script reads it from there */
+function cssToken(name) { return getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim(); }
+/* the gopuram mark, inline so the page still makes zero extra requests */
+document.getElementById('icon').href = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="' + cssToken('ground') +
+  '"/><path d="M6 27h20L22 9h-3l-1-4h-4l-1 4H10z" fill="' + cssToken('zari') +
+  '"/><rect x="14" y="15" width="4" height="12" fill="' + cssToken('arakku') + '"/></svg>');
+</script>
 </head>
 <body>
 <div id="load">Generating Nagaram…</div>
@@ -258,6 +271,7 @@
       <tr><td>Shift</td><td>Tuck &amp; dive</td></tr>
       <tr><td>Q</td><td>Zip to anchor</td></tr>
       <tr><td>E</td><td>Cling to wall &middot; board an aircraft</td></tr>
+      <tr><td>E aboard</td><td>Fly it: A/D turn &middot; W/S climb and dive</td></tr>
       <tr><td>T / F / M</td><td>Time of day · assist · mute</td></tr>
       <tr><td>G / N / X</td><td>Ring run: start · next course · leave</td></tr>
       <tr><td>B</td><td>Trial: the line bends round corners</td></tr>

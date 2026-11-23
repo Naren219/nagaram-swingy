@@ -290,6 +290,7 @@ function poseRig(dt, inp) {
 
   /* ---- heading ---- */
   if (player.clinging) turnHeading(-player.cn.x, -player.cn.z, 14, dt);
+  else if (riding && player.riding.flown) turnHeading(Math.sin(player.riding.yaw), Math.cos(player.riding.yaw), 8, dt);   // facing the nose
   else if (riding) { if (inp.mx || inp.mz) turnHeading(inp.mx, inp.mz, 8, dt); }
   else if (player.wallRun) turnHeading(V.x, V.z, 14, dt);
   else if (player.grounded) {

@@ -82,26 +82,6 @@ function gull(vol) {
     o.connect(f); f.connect(g); g.connect(master); o.start(st); o.stop(st + 0.18);
   }
 }
-/* auto-rickshaw horn — squared tone with a fast wobble */
-function honk(vol) {
-  if (!AC) return;
-  const t = AC.currentTime, dur = 0.18 + Math.random() * 0.22;
-  const o = AC.createOscillator(); o.type = 'square';
-  const base = 380 + Math.random() * 190;
-  o.frequency.setValueAtTime(base, t);
-  const lfo = AC.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7;
-  const lg = AC.createGain(); lg.gain.value = base * 0.03;
-  lfo.connect(lg); lg.connect(o.frequency);
-  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
-  const g = AC.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.09 * vol, t + 0.02);
-  g.gain.setValueAtTime(0.09 * vol, t + dur - 0.04);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(f); f.connect(g); g.connect(master);
-  o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
-}
-
 /* How much of the street reaches you, 0..1 and a little over. Everything on
    the ground thins out as you climb, unless you have stopped to listen
    (91-perch.js): then most of it comes back up to you. */
@@ -109,7 +89,7 @@ function ambAlt(y) {
   const alt = clamp(1 - (y - 22) / 230, 0, 1);
   return (alt + (1 - alt) * 0.55 * perchK) * (1 + 0.5 * perchK);
 }
-let tBell = 6, tGull = 3, tHonk = 2;
+let tBell = 6, tGull = 3;
 function updateAudio(dt) {
   if (!AC || !ambBus) return;
   const p = player.p;
@@ -158,7 +138,7 @@ function updateAudio(dt) {
   updateMotionAudio(dt);
 
   /* one-shots, scheduled by where you are */
-  tBell -= dt; tGull -= dt; tHonk -= dt;
+  tBell -= dt; tGull -= dt;
   if (tBell <= 0) {
     tBell = 11 + Math.random() * 26;
     if (templeN > 0.25 && alt > 0.12) bell(0.05 + 0.16 * templeN * alt);
@@ -166,10 +146,6 @@ function updateAudio(dt) {
   if (tGull <= 0) {
     tGull = 2.5 + Math.random() * 7;
     if (surfN > 0.45 && night < 0.5) gull(0.5 + 0.5 * surfN);
-  }
-  if (tHonk <= 0) {
-    tHonk = 1.4 + Math.random() * 5.5;
-    if (trafficN > 0.35 && alt > 0.35) honk((0.4 + 0.6 * trafficN) * alt * (1 - night * 0.6));
   }
 }
 

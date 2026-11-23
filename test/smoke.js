@@ -445,10 +445,27 @@ const fixedStep = require('./fixed-step');
       document.body.dispatchEvent(new PointerEvent('pointerup', { pointerId: 13, pointerType: 'touch', bubbles: true }));
     });
     const boarded = await page.waitForFunction(
-      () => player.riding !== null && !document.getElementById('tBoard').classList.contains('show'),
+      () => player.riding !== null && document.getElementById('tBoard').textContent === 'Fly',
       null, { timeout: 25000 }
     ).then(() => true).catch(() => false);
-    check('tap boards the aircraft, button hides', boarded);
+    check('tap boards the aircraft, and the button offers its controls', boarded);
+    /* the same button takes them, and gives them back */
+    const tapBoard = () => page.evaluate(() => {
+      const el = document.getElementById('tBoard');
+      el.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 13, pointerType: 'touch', bubbles: true }));
+      document.body.dispatchEvent(new PointerEvent('pointerup', { pointerId: 13, pointerType: 'touch', bubbles: true }));
+    });
+    await tapBoard();
+    const flying = await page.waitForFunction(
+      () => player.riding && player.riding.flown && document.getElementById('tBoard').textContent === 'Let go',
+      null, { timeout: 25000 }
+    ).then(() => true).catch(() => false);
+    await tapBoard();
+    const handed = await page.waitForFunction(
+      () => player.riding && !player.riding.flown && document.getElementById('tBoard').textContent === 'Fly',
+      null, { timeout: 25000 }
+    ).then(() => true).catch(() => false);
+    check('tap Fly takes the controls, Let go hands them back', flying && handed, 'flying ' + flying + ', handed back ' + handed);
 
     await page.waitForTimeout(1000);
     check('touch sim stays finite', await page.evaluate(() => [player.p.x, player.p.y, player.p.z].every(Number.isFinite)));

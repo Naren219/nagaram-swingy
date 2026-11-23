@@ -4,7 +4,7 @@
 const clock = new THREE.Clock();
 let acc = 0, T = 0;
 const pPrev = V3(0, 0, 0), pRender = V3(0, 0, 0);
-const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
+const inp = { fwd: V3(), mx: 0, mz: 0, mzRaw: 0, rlRaw: 0, jump: false, glide: false, tuck: false, reelIn: false, reelOut: false, zip: false, cling: false };
 const sunOff = V3();
 
 document.getElementById('load').classList.add('gone');
@@ -28,6 +28,7 @@ function frame() {
   if (keys['ArrowUp']) pitch = clamp(pitch + 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   if (keys['ArrowDown']) pitch = clamp(pitch - 1.7 * dt, -PITCH_MAX, PITCH_MAX);
   freeLookStep(dt);
+  pilotCamera(dt);
   updateCamDirs();
 
   /* ---- gather input ---- */
@@ -37,12 +38,13 @@ function frame() {
   if (tstick.id !== -1) { fb = -tstick.y; rl = tstick.x; }   // stick overrides keys
   if (pad.lx || pad.ly) { fb = -pad.ly; rl = pad.lx; }       // and so does a gamepad's
   inp.fwd.copy(camFwd);
-  inp.mzRaw = fb;
+  inp.mzRaw = fb; inp.rlRaw = rl;
   let mfx = 0, mfz = 0;
   if (!anyWeb) { mfx += camFwd.x * fb; mfz += camFwd.z * fb; }
   mfx += camRight.x * rl; mfz += camRight.z * rl;
   const ml = Math.hypot(mfx, mfz);
   inp.mx = ml > 0.001 ? mfx / ml : 0; inp.mz = ml > 0.001 ? mfz / ml : 0;
+  routeStick(inp);                  // flying, the stick is the aircraft's (89-pilot.js)
   /* Edges are only consumed by a physics step that actually saw them. A
      display faster than 120 Hz renders frames with no substep at all, and
      clearing the flag here threw the press away on every one of them. */
@@ -151,10 +153,12 @@ function frame() {
   if (envDirty) { envDirty = false; envCam.position.copy(camera.position); envCam.update(renderer, envScene); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.classList.remove('on'); }
   if (!photoMode) { drawMinimap(); updateHUD(dt); }
-  /* contextual board button: shown exactly when E would board */
+  /* contextual E button: shown exactly when E would do something, saying what */
   if (touchOn) {
-    const nearPl = !player.riding && !photoMode && !!boardablePlane(player.p);
-    if (boardEl.classList.contains('show') !== nearPl) boardEl.classList.toggle('show', nearPl);
+    const t = photoMode ? null : mountTarget(player.p);
+    if (boardEl.classList.contains('show') !== !!t) boardEl.classList.toggle('show', !!t);
+    const label = !t ? boardEl.textContent : t !== player.riding ? 'Board' : t.flown ? 'Let go' : 'Fly';
+    if (boardEl.textContent !== label) boardEl.textContent = label;
   }
   renderer.render(scene, camera);
 }

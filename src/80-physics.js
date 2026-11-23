@@ -30,7 +30,7 @@ const WALL_KICK = 10, WALL_HOP = 9.5;    // m/s off the wall, and up, on a jump
    the rig and the water effects itself, which tied the simulation to the DOM.
    Whoever cares subscribes: listen('splash', fn). Dispatch is synchronous, so
    a listener sees the state exactly as it was when the thing happened.
-     board(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
+     board(plane)  helm(plane)  splash(x, y, z, closingSpeed)  miss()  flip(turns)  attach(hand)
      land(closingSpeed, normalY, rolling)  release(speed, secondsOnTheLine)
    The rig joins in for the one thing only it knows: step(stride 0..1.1). */
 const listeners = Object.create(null);
@@ -208,6 +208,12 @@ function boardablePlane(P) {
   }
   return near;
 }
+/* What E does right now: aboard something that can be flown, take or give
+   its controls (the hull you are riding); not aboard, board what is in reach
+   (another hull); otherwise nothing (null). The touch button shows this. */
+function mountTarget(P) {
+  return player.riding ? (player.riding.flyable ? player.riding : null) : boardablePlane(P);
+}
 /* aboard: on the deck where you are, held to its walkway */
 function boardCarrier(pl, P) {
   worldToPlane(pl, P.x, P.y, P.z, player.rideLo);
@@ -260,12 +266,10 @@ function stepPhysics(h, inp) {
   const P = player.p, V = player.v;
   _pp.copy(P);
 
-  /* ---- riding an aircraft ---- */
-  if (!player.riding && inp.mount) {
-    /* snap onto the spine of the hull rather than wherever you grabbed */
-    const near = boardablePlane(P);
-    if (near) boardCarrier(near, P);
-  }
+  /* ---- riding a carrier ---- */
+  const target = inp.mount ? mountTarget(P) : null;
+  if (target === player.riding) { if (target) emit('helm', target); }   // a hand on its controls, or off them (89-pilot.js)
+  else if (target) boardCarrier(target, P);   // snap onto the spine of the hull rather than wherever you grabbed
   if (player.riding) {
     const pl = player.riding;
     /* inp.mx/mz are a WORLD direction, so rotate them into the hull's frame
