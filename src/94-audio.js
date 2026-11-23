@@ -82,24 +82,56 @@ function gull(vol) {
     o.connect(f); f.connect(g); g.connect(master); o.start(st); o.stop(st + 0.18);
   }
 }
-/* auto-rickshaw horn — squared tone with a fast wobble */
+/* auto-rickshaw horn. A disc horn is a diaphragm slapping a pole: a buzzy,
+   nasal note, and they are fitted in pairs pitched about a third apart. So:
+   two saws a third apart, driven into a soft clip for the rasp, through the
+   two nasal peaks of the horn's bell and nothing below the note. It takes a
+   moment to come up to pitch, and a driver seldom presses only once. A
+   farther horn is quieter and duller, and comes from somewhere. */
+let hornCurve = null;
 function honk(vol) {
   if (!AC) return;
-  const t = AC.currentTime, dur = 0.18 + Math.random() * 0.22;
-  const o = AC.createOscillator(); o.type = 'square';
-  const base = 380 + Math.random() * 190;
-  o.frequency.setValueAtTime(base, t);
-  const lfo = AC.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7;
-  const lg = AC.createGain(); lg.gain.value = base * 0.03;
-  lfo.connect(lg); lg.connect(o.frequency);
-  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
-  const g = AC.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.09 * vol, t + 0.02);
-  g.gain.setValueAtTime(0.09 * vol, t + dur - 0.04);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(f); f.connect(g); g.connect(master);
-  o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
+  if (!hornCurve) {
+    hornCurve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) hornCurve[i] = Math.tanh(2.6 * (i / 511.5 - 1));
+  }
+  const t0 = AC.currentTime, base = 405 + Math.random() * 105, r = Math.random();
+  const taps = r < 0.45 ? [[0, 0.11], [0.18, 0.14]]                 // paam-paam
+             : r < 0.8 ? [[0, 0.17 + Math.random() * 0.12]]           // one press
+             : [[0, 0.4 + Math.random() * 0.25]];                    // leaning on it
+  const end = t0 + taps[taps.length - 1][0] + taps[taps.length - 1][1] + 0.06;
+  const near = Math.min(vol, 1);
+  const pre = AC.createGain(); pre.gain.value = 0.55;
+  const clip = AC.createWaveShaper(); clip.curve = hornCurve;
+  const hp = AC.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300; hp.Q.value = 0.7;
+  const f1 = AC.createBiquadFilter(); f1.type = 'peaking'; f1.frequency.value = 1150; f1.Q.value = 2.5; f1.gain.value = 8;
+  const f2 = AC.createBiquadFilter(); f2.type = 'peaking'; f2.frequency.value = 2650; f2.Q.value = 3.5; f2.gain.value = 6;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1900 + 2600 * near; lp.Q.value = 0.5;
+  const g = AC.createGain(); g.gain.value = 0;
+  pre.connect(clip); clip.connect(hp); hp.connect(f1); f1.connect(f2); f2.connect(lp); lp.connect(g);
+  if (AC.createStereoPanner) {
+    const pan = AC.createStereoPanner(); pan.pan.value = (Math.random() * 2 - 1) * 0.7;
+    g.connect(pan); pan.connect(master);
+  } else g.connect(master);
+  const peak = 0.06 * vol;
+  for (const ratio of [1, 1.26]) {
+    const o = AC.createOscillator(); o.type = 'sawtooth';
+    const f = base * ratio * (1 + (Math.random() - 0.5) * 0.006);
+    for (const [at, dur] of taps) {
+      o.frequency.setValueAtTime(f * 0.93, t0 + at);
+      o.frequency.exponentialRampToValueAtTime(f, t0 + at + 0.035);
+    }
+    o.connect(pre); o.start(t0); o.stop(end);
+  }
+  g.gain.setValueAtTime(0, t0);
+  for (const [at, dur] of taps) {
+    const a = t0 + at;
+    g.gain.setValueAtTime(0.0001, a);
+    g.gain.exponentialRampToValueAtTime(peak, a + 0.012);
+    g.gain.setValueAtTime(peak, a + dur - 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, a + dur);
+    g.gain.setValueAtTime(0, a + dur + 0.001);
+  }
 }
 
 /* How much of the street reaches you, 0..1 and a little over. Everything on
