@@ -62,7 +62,7 @@ gate.addEventListener('click', () => {
       if (fs && fs.then) fs.then(lock, lock); else lock();
     } catch (err) {}
     gate.classList.add('gone');
-    toast('left: move · drag: look · hold web to swing');
+    toast('Left: move · drag: look · hold web to swing');
     toastT = 4.5;
     return;                              // no pointer lock on touch
   }
@@ -79,13 +79,13 @@ gate.addEventListener('click', () => {
 const toastEl = document.getElementById('toast');
 let toastT = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('on'); toastT = 1.6; }
-listen('board', () => toast(touchOn ? 'riding · jump to drop · stick to walk' : 'riding · space to drop · A/D to walk'));
+listen('board', () => toast(touchOn ? 'Riding · jump to drop · stick to walk' : 'Riding · space to drop · A/D to walk'));
 function setFreeLook(on) {
   if (on && touchOn) return;   // drag-look serves touch; the cursor ring would fight it
   freeLook = on;
   lookEl.classList.toggle('on', on);
   document.body.classList.toggle('freelook', on);
-  if (on) toast('steer with cursor · [ ] sensitivity');
+  if (on) toast('Steer with cursor · [ ] sensitivity');
 }
 const lookEl = document.getElementById('look');
 const lookDot = lookEl.querySelector('.dot'), lookVec = lookEl.querySelector('.vec');
@@ -149,7 +149,7 @@ let photoMode = false;
 function setPhoto(on) {
   photoMode = on;
   document.body.classList.toggle('photo', on);
-  toast(on ? 'photo mode · C to exit' : 'photo mode off');
+  toast(on ? 'Photo mode · C to exit' : 'Photo mode off');
 }
 
 /* ---------------------------------------------------------------
@@ -292,7 +292,7 @@ function pollPad(dt) {
     const on = B[i].pressed || B[i].value > 0.35 ? 1 : 0;
     if (on !== pad.was[i]) {
       pad.was[i] = on; padButton(i, !!on);
-      if (on && !pad.hello && started) { pad.hello = true; toast('gamepad · triggers fire the webs'); toastT = 3; }
+      if (on && !pad.hello && started) { pad.hello = true; toast('Gamepad · triggers fire the webs'); toastT = 3; }
     }
   }
   if (paused || !started) { pad.lx = pad.ly = 0; return; }
@@ -359,7 +359,7 @@ addEventListener('keydown', e => {
       saveSettings();
     }
     if (e.code === 'KeyF') { assist = !assist; saveSettings(); }
-    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'the line bends round corners' : 'the line goes straight'); saveSettings(); }
+    if (e.code === 'KeyB') { ropeWrap = !ropeWrap; toast(ropeWrap ? 'The line bends round corners' : 'The line goes straight'); saveSettings(); }
     if (e.code === 'KeyC') setPhoto(!photoMode);
     if (e.code === 'KeyH') { document.getElementById('help').classList.toggle('hide'); flowT = 0; saveSettings(); }
     if (e.code === 'KeyM') { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; saveSettings(); }
@@ -367,7 +367,7 @@ addEventListener('keydown', e => {
     if (e.code === 'KeyR') respawn();
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
       sens = clamp(sens * (e.code === 'BracketRight' ? 1.18 : 1 / 1.18), 0.0009, 0.0130);
-      toast('look sensitivity ' + Math.round(sens / 0.0034 * 100) + '%');
+      toast('Look sensitivity ' + Math.round(sens / 0.0034 * 100) + '%');
       saveSettings();
     }
   }

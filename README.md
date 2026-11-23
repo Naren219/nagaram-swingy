@@ -179,6 +179,15 @@ The parts share a single runtime scope, exactly as they did when this was one fi
 
 Built output also depends on `vendor/three.min.js` (Three.js r128, MIT — extracted verbatim from npm `three@0.128.0`, license at `vendor/three.LICENSE`). Upgrading past r128 is a real migration, not a drop-in: the facade shader injects into Lambert/Phong chunks, and colour-management defaults changed in later revisions.
 
+The interface font is `vendor/anek-tamil.woff2`: Anek Tamil (OFL, licence at `vendor/anek-tamil.LICENSE`), cut down from the Google Fonts variable build to Latin + Tamil, weight 400–800, width axis pinned at 100 (the width axis alone doubled the file). Rebuild it with fontTools:
+
+```bash
+python3 -m fontTools.varLib.instancer 'AnekTamil[wdth,wght].ttf' wght=400:800 wdth=100 -o inst.ttf
+pyftsubset inst.ttf --unicodes='U+0020-007E,U+00A0-00FF,U+2013-2014,U+2018-201D,U+2022,U+2026,U+20B9,U+2190-2193,U+2212,U+25CC,U+00B7,U+0B80-0BFF,U+200C-200D' --layout-features='*' --flavor=woff2 --output-file=vendor/anek-tamil.woff2
+```
+
+The interface palette is Kanchipuram silk (aubergine ground, zari gold, peacock teal, arakku red), defined as tokens at the top of `head.html`. The aim cyan stays the only cool colour on screen, and the ring-run orange matches the rings in the world.
+
 ### Things that must not be broken
 
 - **Physics is position-based dynamics at a fixed 120 Hz.** The web is a hard distance constraint, not a spring, and velocity is *derived from the position delta* after the constraint solve — never integrated forward. Do not convert it to a conventional integrator; energy conservation, taut-rope behavior, and aircraft towing all depend on it.
